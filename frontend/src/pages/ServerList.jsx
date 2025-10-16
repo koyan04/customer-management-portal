@@ -2,16 +2,25 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import ConfirmModal from '../components/ConfirmModal';
-import EditServerModal from '../components/EditServerModal';
+import { FaCog, FaTrashAlt } from 'react-icons/fa'; // Correct icon names
+// Corrected import paths below
+import ConfirmModal from '../components/ConfirmModal.jsx';
+import EditServerModal from '../components/EditServerModal.jsx';
 
 function ServerList({ servers, fetchServers }) {
   const [serverToDelete, setServerToDelete] = useState(null);
   const [serverToEdit, setServerToEdit] = useState(null);
+  // get current user role from local storage or AuthContext if available
+  let role = null;
+  try { role = JSON.parse(localStorage.getItem('user'))?.role || (localStorage.getItem('user') || null); } catch(e) { role = null; }
 
   const handleDelete = async (id) => {
     try {
-      await axios.delete(`http://localhost:3001/api/servers/${id}`);
+      const token = localStorage.getItem('token');
+      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      await axios.delete(`${backendOrigin}/api/servers/${id}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       fetchServers();
     } catch (error) {
       console.error('Error deleting server:', error);
@@ -26,8 +35,7 @@ function ServerList({ servers, fetchServers }) {
 
   return (
     <div>
-      <h2>Server List</h2>
-      {servers.length === 0 && <p>No servers found. Add one using the form above!</p>}
+      {servers.length === 0 && <p className="no-users-message">No servers found. Click "Add New Server" to begin.</p>}
       
       <ul className="server-list">
         <AnimatePresence>
@@ -49,8 +57,16 @@ function ServerList({ servers, fetchServers }) {
                 </div>
               </div>
               <div className="server-actions">
-                <button onClick={() => setServerToEdit(server)} className="edit-btn">Edit</button>
-                <button onClick={() => setServerToDelete(server)} className="delete-btn">Delete</button>
+                { (role === 'ADMIN') && (
+                  <>
+                    <button onClick={() => setServerToEdit(server)} className="icon-btn edit-btn">
+                      <FaCog />
+                    </button>
+                    <button onClick={() => setServerToDelete(server)} className="icon-btn delete-btn">
+                      <FaTrashAlt />
+                    </button>
+                  </>
+                ) }
               </div>
             </motion.li>
           ))}
@@ -63,7 +79,7 @@ function ServerList({ servers, fetchServers }) {
         onConfirm={() => handleDelete(serverToDelete.id)}
         title="Confirm Deletion"
       >
-        Are you sure you want to delete the server "{serverToDelete?.server_name}"? This action cannot be undone.
+        Are you sure you want to delete the server "{serverToDelete?.server_name}"?
       </ConfirmModal>
 
       <EditServerModal

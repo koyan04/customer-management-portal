@@ -22,7 +22,9 @@ function AddServerForm({ onServerAdded, onCancel }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await axios.post('http://localhost:3001/api/servers', formData);
+  const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+  const token = localStorage.getItem('token');
+  await axios.post(backendOrigin + '/api/servers', formData, { headers: { Authorization: `Bearer ${token}` } });
       onServerAdded(); // This now calls handleServerAdded in App.jsx
     } catch (error) {
       console.error('Error adding server:', error);

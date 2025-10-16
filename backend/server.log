@@ -1,0 +1,21 @@
+[dotenv@17.2.3] injecting env (6) from .env -- tip: ⚙️  override existing env vars with { override: true }
+Registered mounts: [
+  {
+    "mount": "/api/servers",
+    "loaded": true
+  },
+  {
+    "mount": "/api/users",
+    "loaded": true
+  },
+  {
+    "mount": "/api/auth",
+    "loaded": true
+  },
+  {
+    "mount": "/api/admin",
+    "loaded": true
+  }
+]
+Express router stack length: 0
+🚀 Server is running on http://localhost:3001

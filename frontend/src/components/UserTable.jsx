@@ -24,7 +24,12 @@ const formatDuration = (expireDate) => {
     return `${days}d ${hours}h`;
 };
 
-function UserTable({ users, onEdit, onDelete }) {
+function UserTable({ users, onEdit, onDelete, canManageUsers = null }) {
+  // determine role from localStorage as a fallback to AuthContext
+  let role = null;
+  try { role = JSON.parse(localStorage.getItem('user'))?.role || (localStorage.getItem('user') || null); } catch(e) { role = null; }
+  const allowActions = canManageUsers !== null ? canManageUsers : (role === 'ADMIN');
+
   return (
     <div className="user-table-container">
       <table className="user-table">
@@ -69,8 +74,14 @@ function UserTable({ users, onEdit, onDelete }) {
                   </td>
                   <td data-label="Actions">
                     <div className="user-actions">
-                      <button onClick={() => onEdit(user)} className="icon-btn edit-btn"><FaCog /></button>
-                      <button onClick={() => onDelete(user)} className="icon-btn delete-btn"><FaTrashAlt /></button>
+                      { allowActions ? (
+                        <>
+                          <button onClick={() => onEdit(user)} className="icon-btn edit-btn"><FaCog /></button>
+                          <button onClick={() => onDelete(user)} className="icon-btn delete-btn"><FaTrashAlt /></button>
+                        </>
+                      ) : (
+                        <span style={{ color: '#888' }}>No actions</span>
+                      ) }
                     </div>
                   </td>
                 </motion.tr>

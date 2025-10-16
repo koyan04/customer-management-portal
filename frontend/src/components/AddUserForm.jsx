@@ -34,7 +34,9 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
         server_id: serverId,
         data_limit_gb: formData.account_type === 'Unlimited' ? null : formData.data_limit_gb,
       };
-      await axios.post('http://localhost:3001/api/users', dataToSubmit);
+  const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+  const token = localStorage.getItem('token');
+  await axios.post(backendOrigin + '/api/users', dataToSubmit, { headers: { Authorization: `Bearer ${token}` } });
       onUserAdded();
       setFormData(initialFormState);
     } catch (error) {

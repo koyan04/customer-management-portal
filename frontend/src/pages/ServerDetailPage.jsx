@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
+import { useAuth } from '../context/AuthContext';
 import { FaServer, FaUser, FaCheckCircle, FaExclamationTriangle, FaTimesCircle } from 'react-icons/fa';
 import AddUserForm from '../components/AddUserForm.jsx';
 import ConfirmModal from '../components/ConfirmModal.jsx';
@@ -14,11 +15,15 @@ function ServerDetailPage() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [userServerAdminFor, setUserServerAdminFor] = useState([]);
   
   const [userToDelete, setUserToDelete] = useState(null);
   const [userToEdit, setUserToEdit] = useState(null);
   const [isFormVisible, setIsFormVisible] = useState(false);
   const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' ? window.innerWidth >= 1000 : false);
+  // prefer AuthContext for token/user info
+  const { token: authToken, user: authUser } = useAuth();
+  const role = authUser?.user?.role || authUser?.role || null;
 
   useEffect(() => {
     const onResize = () => setIsDesktop(window.innerWidth >= 1000);
@@ -29,12 +34,23 @@ function ServerDetailPage() {
   const fetchPageData = async () => {
     try {
       setLoading(true);
+  const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+  const token = authToken || localStorage.getItem('token');
       const [serverResponse, usersResponse] = await Promise.all([
-        axios.get(`http://localhost:3001/api/servers/${id}`),
-        axios.get(`http://localhost:3001/api/users/server/${id}`),
+        axios.get(`${backendOrigin}/api/servers/${id}`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${backendOrigin}/api/users/server/${id}`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       setServer(serverResponse.data);
       setUsers(usersResponse.data);
+      // fetch server-admin assignments for current user
+      try {
+        const myAdminRes = await axios.get(`${backendOrigin}/api/my-server-admins`, { headers: { Authorization: `Bearer ${token}` } });
+        const list = myAdminRes && myAdminRes.data ? (Array.isArray(myAdminRes.data.server_admin_for) ? myAdminRes.data.server_admin_for : (myAdminRes.data.server_admin_for || [])) : [];
+        setUserServerAdminFor(list);
+      } catch (e) { 
+        console.debug('Failed to fetch my-server-admins', e && e.response ? e.response.status : e);
+        setUserServerAdminFor([]); 
+      }
       setError('');
     } catch (err) {
       console.error("Error fetching data:", err);
@@ -50,7 +66,9 @@ function ServerDetailPage() {
   
   const handleDelete = async () => {
     try {
-      await axios.delete(`http://localhost:3001/api/users/${userToDelete.id}`);
+      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const token = localStorage.getItem('token');
+      await axios.delete(`${backendOrigin}/api/users/${userToDelete.id}`, { headers: { Authorization: `Bearer ${token}` } });
       setUserToDelete(null);
       fetchPageData();
     } catch (err) {
@@ -96,14 +114,14 @@ function ServerDetailPage() {
           <div className="stat-card"><FaExclamationTriangle className="icon-soon"/><div><span>Expire Soon</span><strong>{stats.soon}</strong></div></div>
           <div className="stat-card"><FaTimesCircle className="icon-expired"/><div><span>Expired</span><strong>{stats.expired}</strong></div></div>
           {/* Place the section header under the stats column when on desktop and the add form is open */}
-          {isDesktop && isFormVisible && (
+              {isDesktop && isFormVisible && (
             <motion.div className="user-list-header desktop-left" initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }}>
               <h2><FaUser style={{ marginRight: '0.5rem' }} />User Accounts</h2>
-              {!isFormVisible && (
-                <button onClick={() => setIsFormVisible(true)} className="add-user-btn">
-                  + Add New User
-                </button>
-              )}
+                  {!isFormVisible && (role === 'ADMIN' || userServerAdminFor.includes(Number(id))) && (
+                    <button onClick={() => setIsFormVisible(true)} className="add-user-btn">
+                      + Add New User
+                    </button>
+                  )}
             </motion.div>
           )}
         </div>
@@ -122,7 +140,7 @@ function ServerDetailPage() {
               {!(isDesktop && isFormVisible) && (
                 <motion.div className="user-list-header" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6 }}>
                   <h2><FaUser style={{ marginRight: '0.5rem' }} />User Accounts</h2>
-                  {!isFormVisible && (
+                  {!isFormVisible && (role === 'ADMIN' || userServerAdminFor.includes(Number(id))) && (
                     <button onClick={() => setIsFormVisible(true)} className="add-user-btn">
                       + Add New User
                     </button>
@@ -131,9 +149,9 @@ function ServerDetailPage() {
               )}
 
               {users.length > 0 ? (
-                <UserTable users={users} onEdit={setUserToEdit} onDelete={setUserToDelete} />
+                <UserTable users={users} onEdit={setUserToEdit} onDelete={setUserToDelete} canManageUsers={(role === 'ADMIN') || (userServerAdminFor.includes(Number(id)))} />
               ) : (
-                <p className="no-users-message">No users found for this server. Click "Add New User" to begin.</p>
+                <p className="no-users-message">No users found for this server. { (role === 'ADMIN' || userServerAdminFor.includes(Number(id))) ? 'Click "Add New User" to begin.' : '' }</p>
               )}
             </div>
           </>
@@ -142,7 +160,7 @@ function ServerDetailPage() {
             <div className="user-list-container">
               <motion.div className="user-list-header" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
                 <h2><FaUser style={{ marginRight: '0.5rem' }} />User Accounts</h2>
-                {!isFormVisible && (
+                {!isFormVisible && (role === 'ADMIN' || userServerAdminFor.includes(Number(id))) && (
                   <button onClick={() => setIsFormVisible(true)} className="add-user-btn">
                     + Add New User
                   </button>
@@ -157,9 +175,9 @@ function ServerDetailPage() {
               )}
 
               {users.length > 0 ? (
-                <UserTable users={users} onEdit={setUserToEdit} onDelete={setUserToDelete} />
+                <UserTable users={users} onEdit={setUserToEdit} onDelete={setUserToDelete} canManageUsers={(role === 'ADMIN') || (userServerAdminFor.includes(Number(id)))} />
               ) : (
-                <p className="no-users-message">No users found for this server. Click "Add New User" to begin.</p>
+                <p className="no-users-message">No users found for this server. { (role === 'ADMIN' || userServerAdminFor.includes(Number(id))) ? 'Click "Add New User" to begin.' : '' }</p>
               )}
             </div>
           </div>

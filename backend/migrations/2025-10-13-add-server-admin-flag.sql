@@ -1,0 +1,3 @@
+-- Migration intentionally neutralized during revert on 2025-10-13
+-- This file previously added is_server_admin to viewer_server_permissions
+-- It's been neutralized to avoid applying changes; delete if you want to fully remove.

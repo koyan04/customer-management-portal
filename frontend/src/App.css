@@ -145,6 +145,11 @@ body {
   box-shadow: none;
 }
 
+/* show pointer cursor for cancel button in add-user form to indicate clickability */
+.add-user-form .form-buttons .btn-secondary:hover {
+  cursor: pointer;
+}
+
 /* Cancel button hover animation for inline forms and modal actions */
 .add-user-form .form-buttons .btn-secondary,
 .modal-form .form-buttons .btn-secondary,
@@ -183,6 +188,173 @@ body {
   padding: 0;
 }
 
+/* --- Account grid for Admin Panel --- */
+.account-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+}
+
+.account-card {
+  background-color: #122333;
+  border: 1px solid #1a3245;
+  border-radius: 8px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 120px;
+  position: relative;
+  cursor: pointer;
+}
+
+.account-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #083a32 0%, #0b5246 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #e6fff6;
+  font-weight: 800;
+  font-size: 1.1rem;
+}
+
+/* ensure avatar images fill the circular frame and are cropped nicely */
+.account-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 999px;
+  display: block;
+}
+
+/* preview used in editor form should match avatar sizing when shown */
+.avatar-preview {
+  width: 96px;
+  height: 96px;
+  border-radius: 999px;
+  overflow: hidden;
+  display: inline-block;
+}
+.avatar-preview img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.avatar-initials { letter-spacing: 0.5px; }
+
+.account-info {
+  text-align: center;
+  margin-top: 0.5rem;
+}
+
+/* Glass/frosted profile border for avatars */
+.account-avatar,
+.avatar-preview {
+  position: relative; /* create stacking context for the glass ring */
+  z-index: 0;
+}
+.account-avatar::after,
+.avatar-preview::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(100% + 6px); /* even thinner ring */
+  height: calc(100% + 6px);
+  border-radius: 999px;
+  pointer-events: none;
+  z-index: 0;
+  /* brighter glass gradient + slightly stronger highlight */
+  background: linear-gradient(120deg, rgba(255,255,255,0.14), rgba(255,255,255,0.06));
+  border: 1px solid rgba(255,255,255,0.18); /* brighter edge */
+  box-shadow: 0 6px 12px rgba(2,8,12,0.42), 0 0 10px rgba(0,191,165,0.06), inset 0 1px 0 rgba(255,255,255,0.12);
+  transition: box-shadow 160ms ease, transform 160ms ease;
+  backdrop-filter: blur(4px) saturate(1.05);
+}
+/* ensure avatar image/initials sit above the glass ring */
+.account-avatar img,
+.avatar-preview img,
+.account-avatar .avatar-initials,
+.avatar-preview .avatar-initials {
+  position: relative;
+  z-index: 1;
+}
+/* hover/active glow to subtly emphasize selected/hovered avatars */
+.account-card:hover .account-avatar::after,
+.account-card:focus .account-avatar::after,
+.modal-header .avatar-preview:hover::after {
+  box-shadow: 0 14px 40px rgba(2,8,12,0.45), 0 0 46px rgba(0,191,165,0.22);
+  transform: translate(-50%, -50%) scale(1.03);
+}
+
+.account-display {
+  font-weight: 700;
+  color: #eafaf1;
+}
+
+.account-role {
+  color: #9fb3ad;
+  font-size: 0.85rem;
+}
+
+/* Badge that indicates a SERVER ADMIN account and shows assigned server count */
+.server-admin-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0,191,165,0.12);
+  color: #00e6c1;
+  border: 1px solid rgba(0,191,165,0.16);
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  display: inline-flex;
+  gap: 0.5rem;
+  align-items: center;
+  z-index: 4;
+}
+.server-admin-badge strong { font-weight: 700; letter-spacing: 0.4px; }
+.server-admin-count {
+  background: rgba(0,191,165,0.18);
+  color: #052018;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-weight: 800;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.account-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+/* Hover and focus styles for accessibility */
+.account-card:hover {
+  box-shadow: 0 8px 20px rgba(0,0,0,0.45);
+  transform-origin: center center;
+}
+
+.account-card:focus {
+  outline: 3px solid rgba(0,191,165,0.25);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+
+@media (max-width: 1000px) {
+  .account-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 700px) {
+  .account-grid { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 420px) {
+  .account-grid { grid-template-columns: 1fr; }
+}
+
 .server-list-item {
   background-color: #122333;
   border: 1px solid #1a3245;
@@ -217,6 +389,268 @@ body {
   gap: 0.5rem;
 }
 
+/* Admin link in main header */
+.admin-link {
+  color: #fff;
+  background-color: #2b6f5d;
+  padding: 0.5rem 0.8rem;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+/* --- Admin Panel Header --- */
+.admin-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.admin-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.admin-header-icon {
+  color: #00bfa5;
+  background: rgba(0, 191, 165, 0.12);
+  border: 1px solid rgba(0, 191, 165, 0.22);
+  border-radius: 8px;
+  padding: 0.4rem;
+  font-size: 1.1rem;
+}
+.admin-title {
+  margin: 0;
+}
+.admin-subtitle {
+  margin: 0.15rem 0 0 0;
+  color: #9fb3ad;
+  font-size: 0.92rem;
+}
+.admin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+}
+.add-viewer-btn.icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  color: #00e6c1;
+  background: rgba(0, 191, 165, 0.12);
+  border: 1px solid rgba(0, 191, 165, 0.22);
+}
+.add-viewer-btn.icon-btn:hover {
+  background: rgba(0, 191, 165, 0.18);
+}
+.admin-search {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: #0d1a26;
+  border: 1px solid #1a3245;
+  border-radius: 999px;
+  padding: 0.35rem 0.6rem;
+}
+.admin-search .search-icon {
+  color: #8fbdb6;
+  font-size: 0.95rem;
+}
+.admin-search-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #e0e0e0;
+  min-width: 220px;
+}
+@media (max-width: 520px) {
+  .admin-search-input { min-width: 140px; width: 100%; }
+}
+
+/* On mobile, move add icon and search box to the left and allow search to expand */
+@media (max-width: 768px) {
+  .admin-header { align-items: stretch; }
+  .admin-header-actions {
+    margin-left: 0;            /* stop pushing to the right */
+    width: 100%;               /* take full row when wrapped */
+    justify-content: flex-start;
+  }
+  .admin-search { flex: 1; }
+  .admin-search-input { min-width: 0; width: 100%; }
+}
+
+/* Header avatar (banner) */
+.header-avatar {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  overflow: visible;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.header-avatar-img {
+  width: 40px;
+  height: 40px;
+  display: block;
+  object-fit: cover;
+  border-radius: 999px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+/* small circular overlay button bottom-left of avatar */
+.header-avatar-overlay {
+  position: absolute;
+  left: -4px;
+  bottom: -4px;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+  border: 1px solid rgba(255,255,255,0.08);
+  backdrop-filter: blur(6px) saturate(1.05);
+  cursor: pointer;
+  box-shadow: 0 6px 10px rgba(2,8,12,0.5);
+  transition: transform 140ms ease, background-color 120ms ease;
+}
+.header-avatar-overlay:hover { transform: translateY(-2px) scale(1.02); }
+.header-overlay-icon { display: block; }
+
+/* Avatar menu */
+.avatar-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 160px;
+  background: rgba(10,22,24,0.55); /* semi-transparent glass */
+  backdrop-filter: blur(8px) saturate(1.05);
+  -webkit-backdrop-filter: blur(8px) saturate(1.05);
+  border-radius: 10px;
+  padding: 6px;
+  box-shadow: 0 12px 28px rgba(2,8,12,0.7), 0 2px 8px rgba(0,0,0,0.35);
+  border: 1px solid rgba(255,255,255,0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 60;
+  transform-origin: top right;
+  animation: menu-pop 140ms cubic-bezier(.2,.9,.3,1);
+}
+.avatar-menu::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  right: 14px;
+  width: 12px;
+  height: 12px;
+  background: rgba(10,22,24,0.55);
+  transform: rotate(45deg);
+  border-radius: 2px;
+  box-shadow: -2px -2px 6px rgba(0,0,0,0.25);
+}
+.avatar-menu-item {
+  background: transparent;
+  color: #c8fff4;
+  border: none;
+  text-align: left;
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.95rem;
+  transition: background 120ms ease, transform 120ms ease;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.avatar-menu-item:hover { background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(0,191,165,0.06)); transform: translateY(-2px); color: #00e6c1; }
+/* size and tone for icons inside avatar menu */
+.avatar-menu-item .menu-icon { width: 16px; height: 16px; opacity: 0.95; }
+
+@keyframes menu-pop {
+  from { opacity: 0; transform: translateY(-6px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* remove old logout button (if present) styles to avoid double controls */
+.logout-btn { display: none; }
+
+/* --- Header avatar (banner) --- */
+.header-avatar {
+  position: relative;
+  width: 40px; /* larger container to allow padding / outer ring */
+  height: 40px;
+  border-radius: 50%;
+  padding: 6px; /* space for the outer ring */
+  background-color: #374151; /* dark outer border like reference */
+  display: inline-block;
+  margin-left: 0.25rem;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.header-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
+}
+.header-avatar::after {
+  /* subtle inner ring to give a framed look */
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: calc(100% + 6px);
+  height: calc(100% + 6px);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 0;
+  background: linear-gradient(120deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+  border: 1px solid rgba(229,231,235,0.08); /* light edge */
+}
+.header-avatar-img, .header-avatar .header-avatar-overlay { position: relative; z-index: 2; }
+
+/* small white circular camera overlay positioned bottom-right */
+.header-avatar-overlay {
+  position: absolute;
+  left: 30px; /* moved to lower-left */
+  bottom: 8px;
+  width: 20px; /* reduced size */
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.499); /* lighter glass */
+  color: #062226; /* dark icon color */
+  backdrop-filter: blur(6px) saturate(1.05);
+  -webkit-backdrop-filter: blur(6px) saturate(1.05);
+  border: 1px solid rgba(2,8,12,0.06);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 120ms ease, background-color 180ms ease-in-out;
+  padding: 0;
+}
+.header-avatar-overlay:hover { transform: translateY(-3px) scale(1.03); background: rgba(255,255,255,0.9); }
+.header-avatar-overlay:active { transform: translateY(-1px) scale(0.99); }
+.header-avatar-overlay .header-overlay-icon { color: inherit; }
+.header-avatar-overlay svg { display: block; }
+
+@media (max-width: 720px) {
+  .header-avatar { width: 56px; height: 56px; padding: 4px; }
+  .header-avatar-img { width: 100%; height: 100%; }
+  .header-avatar-overlay { width: 28px; height: 28px; left: 6px; bottom: 6px; }
+}
+.admin-link:hover { background-color: #24624f; }
+
 /* --- Modal Styles --- */
 .modal-backdrop {
   position: fixed;
@@ -242,14 +676,293 @@ body {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
 }
 
+/* Let modal body use available height; specific overrides added for Add Viewer */
+.modal-content .modal-form { display: flex; flex-direction: column; min-height: 0; }
+.modal-content .modal-header { flex: 0 0 auto; }
+.modal-content .form-group { flex: 0 0 auto; }
+.modal-content .modal-actions { flex: 0 0 auto; margin-top: 1rem; }
+
+/* Add Viewer: allow only permissions list to scroll on desktop so whole modal fits */
+@media (min-width: 1025px) {
+  .modal-content.add-viewer-wide { max-height: 96vh; display: flex; flex-direction: column; }
+  .modal-content.add-viewer-wide .modal-form { flex: 1 1 auto; min-height: 0; }
+  .modal-content.add-viewer-wide .permissions-group { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .modal-content.add-viewer-wide .permissions-group .permissions-grid { flex: 1 1 auto; overflow: auto; }
+
+  /* Reduce label/input sizes and spacing to fit more content vertically */
+  .modal-content.add-viewer-wide { padding: 1.25rem; }
+  .modal-content.add-viewer-wide .modal-title h3 { padding-bottom: 0.5rem; margin-bottom: 0.5rem; }
+  .modal-content.add-viewer-wide .form-group { gap: 0.3rem; }
+  .modal-content.add-viewer-wide .modal-form label { font-size: 0.82rem; }
+  .modal-content.add-viewer-wide .modal-form input,
+  .modal-content.add-viewer-wide .modal-form select {
+    padding: 0.5rem 0.65rem;
+    font-size: 0.92rem;
+  }
+  .modal-content.add-viewer-wide .permissions-grid { gap: 0.35rem; }
+  .modal-content.add-viewer-wide .permission-label { font-size: 0.78rem; padding: 0.24rem 0.4rem; }
+}
+
+/* make modal-content positioning relative so overlays can position correctly */
+.modal-content { position: relative; }
+
 .modal-content h3 {
   color: #fff;
   font-weight: 600;
   letter-spacing: 0.5px;
   border-bottom: 1px solid #1a3245;
-  padding-bottom: 1rem;
-  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  margin-bottom: 0.75rem;
   margin-top: 0;
+  /* keep header to single line and ellipsize if long */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 1.05rem; /* slightly smaller to help fit on one line */
+}
+
+/* Subtitle under the header line used in profile modal to show the name */
+.modal-title .modal-subtitle {
+  margin-top: 0.08rem; /* nudge upward a bit more */
+  color: #cfd8dc;
+  font-weight: 700;
+  font-size: 0.98rem;
+  line-height: 1.25;
+  /* allow long names to wrap, but avoid overflow */
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Align the two header lines (title and subtitle) to the same left edge */
+.profile-modal .modal-title {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start; /* force left alignment for children */
+}
+.profile-modal .modal-title h3,
+.profile-modal .modal-title .modal-subtitle {
+  margin-left: 0;
+  padding-left: 0;
+  text-align: left;
+  width: 100%; /* use full title area width for consistent alignment */
+}
+
+/* Modal header with avatar and title */
+.modal-header {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+.modal-header .avatar-preview { width: 96px; height: 96px; border-radius: 999px; overflow: visible; border: 4px solid rgba(0,0,0,0.45); box-shadow: 0 6px 18px rgba(0,0,0,0.45); position: relative; box-sizing: border-box; }
+.modal-title h3 { margin: 0; font-size: 1.25rem; }
+
+/* Normalize Admin Panel edit modal header font-size to match Viewer edits */
+.modal-content.edit-sized .modal-title h3 {
+  font-size: 1.25rem !important; /* enforce same as viewer/server-admin edits */
+  line-height: 1.2;
+}
+
+/* Profile modal specific tweaks: limit header width and capitalization */
+.profile-modal .modal-title { width: 50%; }
+/* Header text case is handled in JSX; avoid CSS-based capitalization here */
+.profile-modal .modal-title h3 {
+  text-transform: none;
+  /* Scale title size to help fit full text on one line within 50% width */
+  font-size: clamp(0.84rem, 2.2vw, 0.98rem);
+  letter-spacing: 0.2px; /* slightly tighter tracking for longer titles */
+  /* Do not trim: override base nowrap/ellipsis to show full text */
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  /* Ensure very long strings still display without clipping */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  /* tighten space below the header line slightly so subtitle sits closer */
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Ensure admin profile edit header uses same visual size as other edit modals */
+.modal-content.admin-profile-edit .modal-title h3 {
+  font-size: 1.25rem !important;
+  line-height: 1.2;
+}
+
+/* On narrow viewports, shrink the profile modal header a bit more */
+@media (max-width: 480px) {
+  .profile-modal .modal-title h3 {
+    font-size: 0.86rem;
+    letter-spacing: 0.1px;
+  }
+}
+
+/* iOS Safari: force dynamic viewport height to remove bottom gap on mobile */
+@supports (-webkit-touch-callout: none) {
+  @media (max-width: 640px) {
+    .modal-content.edit-sized {
+      height: 100dvh !important;
+      max-height: 100dvh !important;
+    }
+  }
+}
+
+/* Ultra-compact devices: shrink a bit more */
+@media (max-width: 360px) {
+  .profile-modal .modal-title h3 {
+    font-size: 0.82rem;
+  }
+}
+
+/* Compact modal variant for smaller edit dialogs (scale ~70%)
+   Match the Modal component which toggles the 'compact-form' class */
+.modal-content.compact-form {
+  transform: scale(0.70);
+  transform-origin: top center;
+  /* slightly increased padding for readability when scaled */
+  padding: 1.5rem;
+  max-width: 560px; /* slightly narrower when compact */
+  /* increase the internal font-size a touch so scaled text remains legible */
+  font-size: 1rem;
+}
+
+/* --- Profile modal: mobile-friendly layout --- */
+@media (max-width: 640px) {
+  /* Make the backdrop allow the modal to stretch full height */
+  .modal-backdrop { align-items: stretch; }
+  /* Edge-to-edge profile modal with single scroll container */
+  .modal-content.profile-modal {
+    width: 100vw;
+    max-width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border-radius: 0;
+    padding: 1rem;
+    box-sizing: border-box;
+    overflow: auto; /* single scroll container */
+  }
+  /* Disable internal scrolling inside the form to avoid double scrollbars */
+  .modal-content.profile-modal .modal-form { max-height: none; overflow: visible; }
+  /* Let the title use full width on mobile (not 50%) */
+  .profile-modal .modal-title { width: 100%; }
+  /* Tighter header spacing and smaller avatar on mobile */
+  .modal-content.profile-modal .modal-header { gap: 0.75rem; margin-bottom: 0.75rem; }
+  .modal-content.profile-modal .modal-header .avatar-preview { width: 72px; height: 72px; border-width: 3px; }
+  /* Slightly smaller labels and inputs to fit better on small screens */
+  .modal-content.profile-modal label { font-size: 0.85rem; }
+  .modal-content.profile-modal input,
+  .modal-content.profile-modal select {
+    padding: 0.6rem 0.7rem;
+    font-size: 0.95rem;
+  }
+  .modal-content.profile-modal .form-group { gap: 0.4rem; }
+}
+
+/* Avatar camera overlay button (circular icon) */
+.avatar-camera-btn {
+  position: absolute;
+  right: 6px; /* slightly inside the avatar edge */
+  bottom: 6px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.95);
+  color: #222;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(0,0,0,0.12);
+  cursor: pointer;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+  box-shadow: 0 6px 12px rgba(0,0,0,0.25);
+  overflow: visible; /* ensure entire button is visible */
+  z-index: 6; /* sit above avatar ring */
+}
+.avatar-camera-btn:hover { transform: translateY(-3px) scale(1.04); box-shadow: 0 8px 18px rgba(0,0,0,0.28); }
+.avatar-camera-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; }
+
+/* Keyboard focus-visible for camera button */
+.avatar-camera-btn:focus {
+  outline: none;
+}
+.avatar-camera-btn:focus-visible {
+  box-shadow: 0 0 0 4px rgba(0,191,165,0.25);
+  transform: translateY(-2px) scale(1.02);
+  z-index: 8;
+}
+
+/* Make sure the image inside avatar-preview stays clipped inside the circular boundary */
+.modal-header .avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 999px;
+  box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+}
+
+/* Place the camera button inside the avatar-preview wrapper */
+.modal-header .avatar-preview { position: relative; }
+.modal-header .avatar-preview .avatar-camera-btn { position: absolute; right: -6px; bottom: -6px; }
+
+/* Permission labels: default styling (size controlled per-context below) */
+
+/* Permissions grid */
+.permissions-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+.permission-label { display: flex; gap: 0.4rem; align-items: center; background: rgba(255,255,255,0.02); padding: 0.28rem 0.45rem; border-radius: 6px; cursor: pointer; }
+.modal-content .modal-form .permission-label { font-size: 0.75rem; }
+.modal-content.compact-form .permission-label { font-size: 0.65rem; padding: 0.22rem 0.4rem; gap: 0.35rem; }
+.modal-content.compact-form .modal-form { gap: 0.6rem; }
+.modal-content.compact-form .modal-header { gap: 0.8rem; }
+.modal-content.compact-form .permissions-grid { gap: 0.5rem; grid-template-columns: repeat(2, 1fr); }
+.modal-content.compact-form .permission-label { font-size: 0.85rem; padding: 0.35rem 0.5rem; }
+.permission-label input { margin: 0; }
+
+/* Read-only servers list used in profile modal for viewer/server-admin */
+.readonly-servers-list ul {
+  list-style: none;
+  padding: 0;
+  margin: 0.4rem 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.readonly-servers-list li {
+  background: rgba(255,255,255,0.02);
+  padding: 0.45rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  color: #e0e0e0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.readonly-servers-list .server-icon { color: #00c4ab; opacity: 0.9; }
+.readonly-servers-list .muted { color: #9aa6a6; font-size: 0.95rem; padding-top: 0.4rem; }
+
+@media (max-width: 700px) { .permissions-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 420px) { .permissions-grid { grid-template-columns: 1fr; } }
+
+/* Reset password button */
+.reset-btn { background: #c43d3d; color: white; border: none; padding: 0.45rem 0.8rem; border-radius: 6px; cursor: pointer; }
+.reset-btn:hover { background: #a63232; }
+
+/* Upload progress bar */
+.upload-progress {
+  width: 100%;
+  height: 8px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 6px;
+  overflow: hidden;
+  margin-top: 0.5rem;
+}
+.upload-progress > .bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg,#00bfa5,#38c18f);
+  transition: width 200ms linear;
 }
 
 .modal-actions {
@@ -278,9 +991,9 @@ body {
 /* Ensure cancel and save buttons in modals are the same size */
 .modal-actions button {
   /* allow buttons to grow equally but not take the whole row */
-  flex: 1 1 140px;
-  max-width: 220px;
-  min-width: 120px;
+  flex: 0 0 auto;
+  max-width: none;
+  min-width: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -323,6 +1036,133 @@ body {
   border: none;
 }
 
+/* Spinner used inline or in overlays */
+.spinner {
+  --size: 16px; /* slightly smaller */
+  display: inline-block;
+  width: var(--size);
+  height: var(--size);
+  position: relative;
+  vertical-align: middle;
+}
+.spinner.small { --size: 12px; }
+
+/* Softer loader: muted teal arc and slower pulses */
+.spinner::before,
+.spinner::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+}
+.spinner::before {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  border: 2px solid rgba(255,255,255,0.04);
+  animation: pulse-ring 1400ms cubic-bezier(.2,.8,.2,1) infinite;
+}
+.spinner::after {
+  width: 70%;
+  height: 70%;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border-top: 2px solid rgba(0,191,165,0.85); /* muted teal */
+  border-right: 2px solid rgba(255,255,255,0.06);
+  border-bottom: 2px solid rgba(255,255,255,0.06);
+  border-left: 2px solid rgba(255,255,255,0.06);
+  animation: spin 1200ms linear infinite; /* slower */
+}
+
+@keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
+@keyframes pulse-ring {
+  0% { transform: translate(-50%, -50%) scale(0.9); opacity: 0.5; }
+  50% { transform: translate(-50%, -50%) scale(1.05); opacity: 0.28; }
+  100% { transform: translate(-50%, -50%) scale(1.25); opacity: 0; }
+}
+
+/* visually-hidden helper for aria-live announcements */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0;
+}
+
+/* Loading overlay inside modal during save */
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 8, 12, 0.45);
+  border-radius: 8px;
+  z-index: 60;
+  backdrop-filter: blur(4px);
+  pointer-events: none; /* do not block hover/animation; actions are explicitly disabled via buttons */
+}
+.loading-overlay .label { color: #fff; margin-left: 0.75rem; font-weight: 700; }
+
+/* Modal-level busy overlay (single, consistent) */
+.modal-busy-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, rgba(0,0,0,0.25), rgba(0,0,0,0.45));
+  border-radius: 8px;
+  z-index: 65;
+  pointer-events: none; /* allow visual only; individual buttons are disabled explicitly */
+}
+.modal-busy-overlay .label { color: #fff; font-weight: 700; }
+
+/* ensure hover animations still apply by not overlaying the entire card area with pointer-events */
+.account-card:hover {
+  box-shadow: 0 8px 20px rgba(0,0,0,0.45);
+  transform-origin: center center;
+}
+
+/* small top-right toast inside modals */
+.save-toast {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(0,0,0,0.8);
+  color: #eafff6;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  box-shadow: 0 6px 14px rgba(0,0,0,0.4);
+  z-index: 60;
+  transform-origin: top right;
+  animation: toast-in 220ms cubic-bezier(.2,.9,.3,1);
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(-6px) scale(0.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+.error-toast {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  background: linear-gradient(180deg, rgba(201,60,60,0.95), rgba(166,50,50,0.95));
+  color: #fff;
+  padding: 0.6rem 0.85rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  box-shadow: 0 10px 24px rgba(0,0,0,0.45);
+  z-index: 70;
+  transform-origin: top left;
+}
+
+/* ensure buttons expose busy state visually */
+.modal-actions button[aria-busy="true"] {
+  opacity: 0.8;
+  pointer-events: none;
+}
+
 .modal-actions .submit-btn:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px 0 rgba(0, 191, 165, 0.4);
@@ -357,7 +1197,7 @@ body {
 .modal-actions .submit-btn {
   font-weight: 600; /* slightly lighter for better optical balance */
   letter-spacing: 0.2px;
-  padding: 0 1.25rem;
+  padding: 0 1rem;
   height: 44px;
   border-radius: 6px;
   box-shadow: 0 3px 8px rgba(0,0,0,0.18);
@@ -384,9 +1224,9 @@ body {
   /* reset any margins coming from global .submit-btn rules */
   margin: 0;
   box-sizing: border-box;
-  height: 44px;
-  min-height: 44px;
-  padding: 0 1.25rem; /* consistent horizontal padding */
+  height: 44px !important;
+  min-height: 44px !important;
+  padding: 0 1rem !important; /* consistent horizontal padding */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -402,9 +1242,15 @@ body {
 /* Ensure modal-specific submit style doesn't add extra padding or margin */
 .modal-content .modal-actions > .submit-btn {
   margin: 0;
-  padding: 0 1.25rem;
+  padding: 0 1rem !important;
   background-image: linear-gradient(to right, #00bfa5 0%, #06a07f 100%);
   color: #fff;
+}
+
+/* Above very small phones, avoid forced full-width buttons */
+@media (min-width: 421px) {
+  .modal-actions { flex-direction: row; }
+  .modal-actions button { width: auto; max-width: none; }
 }
 
 
@@ -417,9 +1263,39 @@ body {
   background-color: #486581;
 }
 
+/* Make all secondary buttons show pointer cursor to indicate they are clickable */
+.btn-secondary {
+  cursor: pointer;
+}
+
 .btn-danger {
   background-color: #c93c3c;
   color: #fff;
+}
+
+.btn-danger:hover {
+  background-color: #a63232;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(166,50,50,0.2);
+}
+
+/* Confirmation modal specific tweaks */
+.confirm-title { font-size: 1.05rem; margin-bottom: 0.5rem; color: #fff; }
+.confirm-body { color: #cfd8dc; margin-bottom: 0.5rem; }
+
+/* Semi-transparent confirmation modal variant */
+.modal-content.confirm-modal {
+  background: rgba(15, 31, 46, 0.55); /* semi-transparent base */
+  backdrop-filter: blur(6px) saturate(1.05);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.modal-content.confirm-modal h3 {
+  color: #ffdddd;
+}
+
+.modal-content.confirm-modal .confirm-body {
+  color: #ffe6e6;
 }
 
 /* --- Server Detail Page Layout --- */
@@ -609,6 +1485,17 @@ body {
   transition: all 0.2s ease-in-out;
 }
 
+/* Checkbox sizing: prevent checkboxes from inheriting width:100% from the generic input rule.
+   Make checkboxes take ~20% width in form rows / permission labels so labels can sit alongside. */
+.add-user-form input[type="checkbox"],
+.modal-form input[type="checkbox"],
+.permission-label input[type="checkbox"] {
+  width: auto; /* use native checkbox sizing */
+  box-sizing: content-box;
+  padding: 0; /* keep box compact */
+  margin: 0 0.35rem 0 0; /* small right margin to separate from label text */
+}
+
 .add-user-form input:focus, .add-user-form select:focus,
 .modal-form input:focus, .modal-form select:focus {
     outline: none;
@@ -665,6 +1552,124 @@ textarea {
 /* Allow modal content to scroll internally if viewport is short */
 .modal-content {
   box-sizing: border-box;
+}
+
+/* Resize all non-profile edit modals: -20% width vs baseline and +5% height */
+.modal-content.edit-sized {
+  width: 88%;           /* base was 90%; slightly narrower */
+  max-width: 560px;     /* baseline 700px - 20% */
+  max-height: 87vh;     /* +3% height increase */
+  overflow: auto;       /* allow internal scroll when taller */
+  transform: none;
+}
+.modal-content.edit-sized.compact-form {
+  max-width: 560px;
+  max-height: 87vh;     /* +3% height increase */
+  transform: none;
+}
+@media (max-width: 640px) {
+  .modal-content.edit-sized {
+    width: 95%;
+    max-width: min(560px, 95vw);
+  }
+}
+
+/* Desktop: widen Add Viewer modal to 60% of viewport, with a generous max width */
+.modal-content.add-viewer-wide {
+  width: 60vw;
+  max-width: 860px;
+}
+/* Keep height behavior consistent with edit-sized */
+.modal-content.add-viewer-wide {
+  max-height: 87vh;
+  overflow: auto;
+}
+/* Ensure compact variant doesn't shrink width below intent */
+.modal-content.add-viewer-wide.compact-form {
+  width: 60vw;
+  max-width: 860px;
+}
+/* On tablets, cap a bit narrower */
+@media (max-width: 1024px) {
+  .modal-content.add-viewer-wide { width: 70vw; max-width: 780px; }
+}
+/* On small screens, just use the normal responsive modal behavior */
+@media (max-width: 640px) {
+  /* Use full width on mobile to avoid any viewport rounding gaps */
+  .modal-content.add-viewer-wide { width: 100%; max-width: 100%; }
+  /* Edit modals: edge-to-edge and single scroll container on mobile */
+  .modal-backdrop { align-items: stretch; }
+  .modal-content.edit-sized {
+    /* avoid horizontal overflow on iOS: prefer percentage over vw */
+    width: 100%;
+    max-width: 100%;
+    /* fallback then modern dynamic viewport units for iOS Safari */
+    height: 100vh;
+    max-height: 100vh;
+    height: 100svh;
+    max-height: 100svh;
+    height: 100dvh;
+    max-height: 100dvh;
+    display: flex;            /* allow vertical layout to stretch */
+    flex-direction: column;
+    border-radius: 0;
+    /* respect notches/home indicator with safe-area padding */
+    padding: calc(1rem + env(safe-area-inset-top)) 1rem calc(1rem + env(safe-area-inset-bottom));
+    box-sizing: border-box;
+    overflow: auto; /* single scroll container */
+    -webkit-overflow-scrolling: touch; /* momentum scroll on iOS */
+  }
+  /* Stretch the form to fill, so actions can sit at the bottom */
+  .modal-content.edit-sized .modal-form { flex: 1 1 auto; min-height: 0; }
+  /* Anchor action buttons to the bottom of the viewport on mobile */
+  .modal-content.edit-sized .modal-actions { margin-top: auto; }
+  /* Compact variant can shrink the modal via transform on desktop; disable on mobile */
+  .modal-content.compact-form {
+    transform: none !important;
+    transform-origin: center center;
+    width: 100% !important;
+    max-width: 100% !important;
+    border-radius: 0;
+    padding: 1rem;
+  }
+  /* Avoid inner scroll for the form; let outer modal scroll */
+  .modal-content.edit-sized .modal-form { max-height: none; overflow: visible; }
+  /* Tighten header and avatar for mobile fit */
+  .modal-content.edit-sized .modal-header { gap: 0.75rem; margin-bottom: 0.75rem; }
+  .modal-content.edit-sized .modal-header .avatar-preview { width: 72px; height: 72px; border-width: 3px; }
+  .modal-content.edit-sized label { font-size: 0.85rem; }
+  .modal-content.edit-sized input, .modal-content.edit-sized select { padding: 0.6rem 0.7rem; font-size: 0.95rem; }
+  .modal-content.edit-sized .form-group { gap: 0.4rem; }
+
+  /* Normalize modal action buttons to "normal" size on mobile */
+  .modal-content .modal-actions { gap: 0.75rem; }
+  .modal-content .modal-actions > button,
+  .modal-content .modal-actions > .btn-secondary,
+  .modal-content .modal-actions > .submit-btn {
+    height: 44px !important;
+    min-height: 44px !important;
+    padding: 0 1rem !important;
+    font-size: 1rem !important;
+    margin: 0 !important;
+    box-sizing: border-box;
+  }
+}
+
+/* Ensure permissions grid uses 3 columns for Add Viewer on desktop */
+.modal-content.add-viewer-wide .permissions-grid {
+  grid-template-columns: repeat(3, 1fr);
+}
+/* Tablet: 2 columns for readability */
+@media (max-width: 700px) {
+  .modal-content.add-viewer-wide .permissions-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+/* Phone: single column */
+@media (max-width: 420px) {
+  .modal-content.add-viewer-wide .permissions-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Responsive adjustments */
@@ -816,6 +1821,48 @@ input[type='number'] {
 .icon-btn.delete-btn:hover {
   background-color: rgba(201, 60, 60, 0.2); /* Hover effect for delete */
 }
+
+/* reset button when placed in header */
+.header-reset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.42rem 0.7rem;
+  border-radius: 8px;
+  background: rgba(231, 76, 60, 0.12); /* red glass */
+  color: #fff;
+  border: 1px solid rgba(231, 76, 60, 0.22);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 2px 6px rgba(231, 76, 60, 0.08);
+  cursor: pointer;
+}
+.header-reset-btn svg { color: #fff; }
+.header-reset-btn:hover {
+  background: rgba(231, 76, 60, 0.18);
+}
+
+/* keep existing account-card visuals; only make it a containing block for corner controls */
+.account-card {
+  position: relative;
+}
+
+/* delete-icon: circular red icon positioned bottom-right */
+.delete-icon {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.5rem;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  background-color: #e74c3c; /* red */
+  border: 2px solid rgba(0,0,0,0.06);
+}
+.delete-icon:hover { filter: brightness(0.95); }
+
 
 
 /* --- Responsive Media Query for Mobile --- */
@@ -1203,4 +2250,113 @@ textarea {
     overflow: auto;
   }
 }
+
+/* --- Login Page Styles --- */
+.login-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  /* Use the global background color, but this ensures it covers the full page */
+  background-color: #0d1a26;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+.login-card {
+  background-color: #122333;
+  padding: 2.5rem;
+  border-radius: 12px;
+  border: 1px solid #1a3245;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+}
+
+.login-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.login-header .lock-icon {
+  font-size: 2rem;
+  color: #00bfa5;
+  margin-bottom: 1rem;
+}
+
+.login-header h2 {
+  margin: 0;
+  color: #fff;
+  font-weight: 600;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.login-btn {
+  margin-top: 1rem;
+}
+
+.error-message {
+  color: #e57373;
+  background-color: rgba(229, 115, 115, 0.1);
+  border: 1px solid rgba(229, 115, 115, 0.2);
+  padding: 0.75rem;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+/* --- Main App Header and Logout Button --- */
+.main-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #1a3245;
+}
+
+.main-header h1 {
+  margin: 0; /* Remove default h1 margin */
+}
+
+.logout-btn {
+  background-color: transparent;
+  color: #a0a0a0;
+  border: 1px solid #334e68;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.logout-btn:hover {
+  background-color: #334e68;
+  color: #fff;
+}
+
+.main-title-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+/* Profile avatar + dropdown menu used in header */
+.profile-menu { display: none !important; }
+.account-avatar.small { display: none !important; }
+.menu-button { display: none !important; }
+.profile-dropdown { display: none !important; }
+
+/* bright glass ring around avatar */
+.account-avatar.small::after { content: ''; position: absolute; inset: 0; border-radius: 999px; pointer-events: none; /* remove shadow to avoid large halo */ border: 1px solid rgba(255,255,255,0.06); box-shadow: none; }
+.menu-button { z-index: 8; }
+
+.logout-btn { display: inline-block; background-color: transparent; color: #a0a0a0; border: 1px solid #334e68; padding: 0.5rem 1rem; border-radius: 6px; font-weight: bold; cursor: pointer; transition: all 0.2s; }
+.logout-btn:hover { background-color: #334e68; color: #fff; }
 

@@ -3,29 +3,19 @@ import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 
 function EditUserModal({ user, onClose, onSave }) {
-  const initialFormState = {
-    account_name: '',
-    service_type: 'X-Ray',
-    account_type: 'Basic',
-    expire_date: '',
-    total_devices: 1,
-    data_limit_gb: 100,
-    remark: '',
-  };
-  const [formData, setFormData] = useState(initialFormState);
+  const [formData, setFormData] = useState({});
 
   useEffect(() => {
     if (user) {
-      setFormData(prev => ({
-        ...prev,
-        account_name: user.account_name ?? prev.account_name,
-        service_type: user.service_type ?? prev.service_type,
-        account_type: user.account_type ?? prev.account_type,
-        expire_date: user.expire_date ? new Date(user.expire_date).toISOString().split('T')[0] : prev.expire_date,
-        total_devices: user.total_devices ?? prev.total_devices,
-        data_limit_gb: user.data_limit_gb !== null && user.data_limit_gb !== undefined ? user.data_limit_gb : prev.data_limit_gb,
-        remark: user.remark ?? prev.remark,
-      }));
+      setFormData({
+        account_name: user.account_name || '',
+        service_type: user.service_type || 'X-Ray',
+        account_type: user.account_type || 'Basic',
+        expire_date: user.expire_date ? new Date(user.expire_date).toISOString().split('T')[0] : '',
+        total_devices: user.total_devices || 1,
+        data_limit_gb: user.data_limit_gb !== null ? user.data_limit_gb : '',
+        remark: user.remark || '',
+      });
     }
   }, [user]);
 
@@ -58,7 +48,7 @@ function EditUserModal({ user, onClose, onSave }) {
   return (
     <AnimatePresence>
       <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
-        <motion.div className="modal-content compact-form" initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 50, opacity: 0 }} onClick={(e) => e.stopPropagation()}>
+        <motion.div className="modal-content" initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 50, opacity: 0 }} onClick={(e) => e.stopPropagation()}>
           <form onSubmit={handleSubmit} className="modal-form">
             <h3>Edit User: {user.account_name}</h3>
             

@@ -66,3 +66,38 @@ Content-Type: application/json
 ### Get all users for a specific server
 # Change the '1' to a valid server ID
 GET http://localhost:3001/api/users/server/1
+
+
+
+---
+### Step 4: Test Your New Endpoints
+
+Finally, let's test the new API routes to make sure they work. Add the following to your **`backend/test.http`** file.
+
+```http
+### --------------------------------- ###
+###           AUTH ROUTES             ###
+### --------------------------------- ###
+
+### Register your FIRST admin account
+# NOTE: This will only work once per username.
+POST http://localhost:3001/api/auth/register
+Content-Type: application/json
+
+{
+  "display_name": "Ko Yan",
+  "username": "admin",
+  "password": "‌admin",
+  "role": "ADMIN"
+}
+
+###
+
+### Login as an admin
+POST http://localhost:3001/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "your_strong_password"
+}
