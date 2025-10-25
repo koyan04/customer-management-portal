@@ -1,15 +1,6 @@
-const { main } = require('../scripts/backfill_pricing_audit');
-
-jest.mock('../db', () => {
-  // we'll override implementation in tests if needed
-  return {};
-});
-
 describe('backfill_pricing_audit script', () => {
-  let realDb;
   beforeEach(() => {
     jest.resetModules();
-    realDb = require('../db');
   });
 
   test('dry-run does not perform UPDATE', async () => {
