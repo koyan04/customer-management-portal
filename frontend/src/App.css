@@ -580,6 +580,23 @@ body:not(.theme-light) .monthly-table .table-currency { color: #bfeaff; }
 .monthly-table tfoot td strong { font-weight: 700; }
 .monthly-table tfoot td:first-child { color: rgba(255,255,255,0.92); }
 
+/* Light-mode: improve visibility of Totals/footer row on bright backgrounds */
+body.theme-light .monthly-table tfoot td {
+  background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,255,255,0.96));
+  border-top-color: rgba(11,124,117,0.08);
+  color: #083d36; /* dark mint for readable text */
+}
+body.theme-light .monthly-table tfoot td:first-child {
+  color: #063b33; /* stronger label color for Totals */
+  font-weight: 800;
+}
+/* Accent numeric totals in green to match stat banners */
+body.theme-light .monthly-table tfoot td:nth-child(n+3) {
+  color: #0b6b5c; /* green for amounts */
+  font-weight: 700;
+}
+
+
 /* Financial layout grid: chart + table side-by-side at larger viewports */
 .financial-grid { display: grid; /* equal halves for chart + table */
   grid-template-columns: 50% 50%;
