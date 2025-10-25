@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import AdminEditorForm from '../components/AdminEditorForm.jsx';
-import { FaTrashAlt, FaUserPlus, FaTools, FaSearch } from 'react-icons/fa';
+import { FaTrashAlt, FaUserPlus, FaTools, FaSearch, FaInfoCircle } from 'react-icons/fa';
 import Modal from '../components/Modal.jsx';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -79,6 +79,7 @@ function AdminPanelPage() {
 
   // helper to fetch server-admin count for an account; cache locally to avoid spamming
   const [serverAdminCounts, setServerAdminCounts] = useState({});
+  const [lastSeenMap, setLastSeenMap] = useState({}); // { [adminId]: { ts: string, location?: string, ip?: string } }
   useEffect(() => {
     // fetch counts for visible accounts on the current page
     (async () => {
@@ -103,6 +104,42 @@ function AdminPanelPage() {
     })();
   }, [filteredAndPaged, token]);
 
+  // Fetch last seen audit entry for visible accounts (one call per visible id, cached)
+  useEffect(() => {
+    (async () => {
+      try {
+        const ids = filteredAndPaged.filter(a => a && a.id).map(a => a.id).filter(id => typeof lastSeenMap[id] === 'undefined');
+        if (!ids.length) return;
+        const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+        const reqs = ids.map(id => axios.get(backendOrigin + `/api/admin/accounts/${id}/login-audit`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => ({ data: [] })));
+        const res = await Promise.all(reqs);
+        const updates = {};
+        ids.forEach((id, i) => {
+          const rows = Array.isArray(res[i]?.data) ? res[i].data : (Array.isArray(res[i]?.data?.rows) ? res[i].data.rows : []);
+          if (rows && rows.length > 0) {
+            const r0 = rows[0];
+            updates[id] = { ts: r0.created_at, location: r0.location || null, ip: r0.ip || null };
+          } else {
+            updates[id] = null;
+          }
+        });
+        setLastSeenMap(prev => ({ ...prev, ...updates }));
+      } catch (e) {
+        // non-fatal
+      }
+    })();
+  }, [filteredAndPaged, token, lastSeenMap]);
+
+  const fmtLastSeen = (iso) => {
+    try {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return null;
+      const now = new Date();
+      const sameDay = d.toDateString() === now.toDateString();
+      return sameDay ? ('Today ' + d.toLocaleTimeString()) : d.toLocaleString();
+    } catch (_) { return null; }
+  };
+
   const handleDelete = async (acct) => {
     // legacy fallback; prefer confirmation modal
     if (!acct) return;
@@ -112,6 +149,36 @@ function AdminPanelPage() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState(null);
+
+  // Info modal state
+  const [infoTarget, setInfoTarget] = useState(null);
+  const [infoOpen, setInfoOpen] = useState(false);
+  const [auditRows, setAuditRows] = useState([]);
+  const [auditPage, setAuditPage] = useState(1);
+  const auditPerPage = 5;
+  const [loadingAudit, setLoadingAudit] = useState(false);
+  const [auditErr, setAuditErr] = useState(null);
+
+  const openInfo = async (acct) => {
+    if (!acct) return;
+    setInfoTarget(acct);
+    setInfoOpen(true);
+    setLoadingAudit(true);
+    setAuditErr(null);
+    setAuditRows([]);
+    try {
+      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const r = await axios.get(backendOrigin + `/api/admin/accounts/${acct.id}/login-audit`, { headers: { Authorization: `Bearer ${token}` } });
+      const rows = Array.isArray(r.data) ? r.data : (Array.isArray(r.data?.rows) ? r.data.rows : []);
+      setAuditRows(rows);
+    } catch (err) {
+      console.error('Failed to load audit:', err);
+      const msg = err.response?.data?.msg || err.message || 'Failed to load';
+      setAuditErr(msg);
+    } finally {
+      setLoadingAudit(false);
+    }
+  };
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
@@ -210,6 +277,15 @@ function AdminPanelPage() {
               <div className="account-info">
                 <div className="account-display">{a.display_name || a.username}</div>
                   <div className="account-role">{a.role === 'SERVER_ADMIN' ? 'SERVER ADMIN' : a.role}</div>
+                  {/* Last seen pill under role (if we have recent audit) */}
+                  {lastSeenMap[a.id] && lastSeenMap[a.id]?.ts && (
+                    <div
+                      className="last-seen-pill"
+                      title={(lastSeenMap[a.id]?.ip ? `IP: ${lastSeenMap[a.id].ip}` : '') + (lastSeenMap[a.id]?.location ? `  Loc: ${lastSeenMap[a.id].location}` : '')}
+                    >
+                      Last seen: {fmtLastSeen(lastSeenMap[a.id].ts)}
+                    </div>
+                  )}
                   {/* small badge in top-right of account card showing server-admin status/count */}
                   {a.role === 'SERVER_ADMIN' && (
                     <div className="server-admin-badge" title={serverAdminCounts[a.id] ? `${serverAdminCounts[a.id]} assigned server(s)` : 'Server admin'}>
@@ -222,14 +298,24 @@ function AdminPanelPage() {
               </div>
               {/* Delete icon positioned at lower-right of the card */}
               { (user && (user.user?.role || user.role) === 'ADMIN') && (
-                <button
-                  title={`Delete ${a.display_name || a.username}`}
-                  aria-label={`Delete ${a.display_name || a.username}`}
-                  className="icon-btn delete-icon"
-                  onClick={(e) => { e.stopPropagation(); handleDelete(a); }}
-                >
-                  <FaTrashAlt />
-                </button>
+                <>
+                  <button
+                    title={`Info for ${a.display_name || a.username}`}
+                    aria-label={`Info for ${a.display_name || a.username}`}
+                    className="icon-btn info-icon"
+                    onClick={(e) => { e.stopPropagation(); openInfo(a); }}
+                  >
+                    <FaInfoCircle />
+                  </button>
+                  <button
+                    title={`Delete ${a.display_name || a.username}`}
+                    aria-label={`Delete ${a.display_name || a.username}`}
+                    className="icon-btn delete-icon small"
+                    onClick={(e) => { e.stopPropagation(); handleDelete(a); }}
+                  >
+                    <FaTrashAlt />
+                  </button>
+                </>
               ) }
             </motion.div>
           );
@@ -262,51 +348,60 @@ function AdminPanelPage() {
         <div className="confirm-body">This will permanently remove the account <strong>{deleteTarget ? (deleteTarget.display_name || deleteTarget.username) : ''}</strong> and cannot be undone.</div>
         {deleteError && <div className="error-toast" role="alert">{deleteError}</div>}
       </Modal>
+
+      {/* Info modal showing recent login/IP/location */}
+      <Modal
+        isOpen={infoOpen}
+        onClose={() => setInfoOpen(false)}
+        title={infoTarget ? `${infoTarget.display_name || infoTarget.username} — Recent activity` : 'Recent activity'}
+        className="info-modal"
+        compact
+        busy={loadingAudit}
+        actions={<button className="btn-secondary" onClick={() => setInfoOpen(false)}>Close</button>}
+      >
+        {auditErr && <div className="error-toast" role="alert">{auditErr}</div>}
+        {loadingAudit && (
+          <div className="modal-busy-overlay">
+            <div className="spinner" />
+            <div>Loading…</div>
+          </div>
+        )}
+        {!loadingAudit && !auditErr && (
+          <div className="audit-list">
+            {auditRows.length === 0 ? (
+              <div className="muted">No recent login activity.</div>
+            ) : (
+                  <>
+                    <ul className="audit-ul">
+                      {auditRows.slice((auditPage - 1) * auditPerPage, (auditPage - 1) * auditPerPage + auditPerPage).map(row => (
+                        <li key={row.id} className="audit-li">
+                          <div className="audit-line">
+                            <span className="audit-time">{new Date(row.created_at).toLocaleString()}</span>
+                            <span className="audit-role">{row.role_at_login}</span>
+                          </div>
+                          <div className="audit-meta">
+                            <span className="audit-ip">IP: {row.ip || '—'}</span>
+                            <span className="audit-loc">Loc: {row.location || '—'}</span>
+                          </div>
+                          {row.user_agent && <div className="audit-ua" title={row.user_agent}>{row.user_agent}</div>}
+                        </li>
+                      ))}
+                    </ul>
+                    {auditRows.length > auditPerPage && (
+                      <div className="modal-pagination" style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center', marginTop: '0.5rem' }}>
+                        <button className="icon-btn" onClick={() => setAuditPage(p => Math.max(1, p - 1))} disabled={auditPage === 1}>Prev</button>
+                        <div>Page {auditPage} of {Math.ceil(auditRows.length / auditPerPage)}</div>
+                        <button className="icon-btn" onClick={() => setAuditPage(p => Math.min(Math.ceil(auditRows.length / auditPerPage), p + 1))} disabled={auditPage >= Math.ceil(auditRows.length / auditPerPage)}>Next</button>
+                      </div>
+                    )}
+                  </>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
 
 export default AdminPanelPage;
-
-
-function InlineEditableAccount({ account, onSaved, token }) {
-  const { user } = useAuth();
-  const role = user?.user?.role || user?.role;
-  const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ display_name: account.display_name, role: account.role });
-
-  useEffect(() => {
-    setForm({ display_name: account.display_name, role: account.role });
-  }, [account]);
-
-  const saveInline = async () => {
-    try {
-      await axios.put(`/api/admin/accounts/${account.id}`, { display_name: form.display_name, role: form.role }, { headers: { Authorization: `Bearer ${token}` } });
-      setEditing(false);
-      onSaved();
-    } catch (err) {
-      console.error(err);
-      alert('Failed to save');
-    }
-  };
-
-  if (!editing) {
-    return (
-      <div style={{ fontWeight: 700 }} onDoubleClick={() => { if (role === 'ADMIN') setEditing(true); }}>
-        {form.display_name} <small style={{ color: '#a0a0a0' }}>({form.role === 'SERVER_ADMIN' ? 'SERVER ADMIN' : form.role})</small>
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-      <input value={form.display_name} onChange={e => setForm(f => ({ ...f, display_name: e.target.value }))} />
-      <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))}>
-        <option value="VIEWER">VIEWER</option>
-        <option value="ADMIN">ADMIN</option>
-      </select>
-      <button className="icon-btn" onClick={saveInline}>Save</button>
-      <button className="icon-btn" onClick={() => { setEditing(false); setForm({ display_name: account.display_name, role: account.role }); }}>Cancel</button>
-    </div>
-  );
-}
+ 

@@ -4,14 +4,14 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "jest --runInBand",
     "check-migrations": "node check_migrations.js",
     "migrate": "node run_migrations.js",
     "seed-admin": "node seedAdmin.js",
     "setup-db": "node run_migrations.js && node seedAdmin.js",
     "test-api-shapes": "node tests/check_api_shapes.test.js",
     "smoke": "node smoke_runner.js",
-  "cleanup-uploads": "node scripts/cleanup_uploads.js",
+    "cleanup-uploads": "node scripts/cleanup_uploads.js",
     "test-unit": "jest --runInBand"
   },
   "keywords": [],
@@ -19,17 +19,23 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "axios": "^1.12.2",
     "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "form-data": "^4.0.4",
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "sharp": "^0.33.5",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "jest": "^29.6.1",
-    "nodemon": "^3.1.10"
+    "nodemon": "^3.1.10",
+    "supertest": "^7.0.0",
+    "pg-mem": "^2.1.0"
   }
 }

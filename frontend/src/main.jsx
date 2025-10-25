@@ -9,7 +9,10 @@ import ServerDetailPage from './pages/ServerDetailPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import AdminPanelPage from './pages/AdminPanelPage.jsx';
 import ServerListPage from './pages/ServerListPage.jsx';
+import FinancialPage from './pages/FinancialPage.jsx';
 import AdminOnlyRoute from './components/AdminOnlyRoute.jsx';
+import ChangePasswordPage from './pages/ChangePasswordPage.jsx';
+import SettingsPage from './pages/SettingsPage.jsx';
 import './index.css';
 
 // This new Root component will provide the AuthContext to all other routes
@@ -41,8 +44,20 @@ const router = createBrowserRouter([
                 element: <DashboardPage />,
               },
               {
+                path: 'financial',
+                element: <FinancialPage />,
+              },
+              {
                 path: 'server-list',
                 element: <ServerListPage />,
+              },
+              // Admin-only Settings section
+              {
+                path: 'settings',
+                element: <AdminOnlyRoute />,
+                children: [
+                  { index: true, element: <SettingsPage /> },
+                ]
               },
               {
                 path: "servers/:id",
@@ -58,7 +73,7 @@ const router = createBrowserRouter([
                   }
                 ]
               },
-              {/* change-password page moved inside the Admin panel */}
+              /* change-password page moved inside the Admin panel */
             ],
           },
         ],

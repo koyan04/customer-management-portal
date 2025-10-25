@@ -1,7 +1,26 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
+import { FaTimes } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function Modal({ isOpen, onClose, title, children, compact, actions, className, busy }) {
+  const closeRef = useRef(null);
+
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    // focus the close button when modal opens
+    const t = setTimeout(() => closeRef.current?.focus(), 0);
+    const onKey = (e) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        if (onClose) onClose();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      clearTimeout(t);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [isOpen, onClose]);
+
   if (!isOpen) return null;
 
   // subtle scale animation for compact modals to smooth the transform effect
@@ -25,7 +44,18 @@ export default function Modal({ isOpen, onClose, title, children, compact, actio
             {/* Visual busy overlay is intentionally not rendered here to avoid duplicate overlays.
                 Child content (modal body) should render the .modal-busy-overlay inside .modal-content
                 when appropriate. Modal still exposes aria-busy and an sr-only live region for screen readers. */}
-            {title && <h3>{title}</h3>}
+            <div className="modal-title" role="presentation">
+              {title ? <h3>{title}</h3> : <h3 />}
+              <button
+                type="button"
+                aria-label="Close"
+                className="modal-close"
+                onClick={(e) => { e.stopPropagation(); if (onClose) onClose(); }}
+                ref={closeRef}
+              >
+                <FaTimes />
+              </button>
+            </div>
             <div className="modal-body">
               {children}
               <div className="sr-only" aria-live="polite">{busy ? 'Processing, please wait.' : ''}</div>

@@ -42,9 +42,12 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
       // fetch assigned servers for this editor (viewer/server permissions)
       (async () => {
         try {
-          // When editing own profile, directly use the self endpoint to avoid 403 noise
-          const url = isProfile ? '/api/admin/permissions/me' : `/api/admin/permissions/${account.id}`;
-          const res = await axios.get(url, { headers: { Authorization: `Bearer ${token}` } });
+          // When editing own profile, directly use the self endpoint; otherwise use specific id if available
+          const targetId = account?.id;
+          const url = isProfile ? '/api/admin/permissions/me' : (targetId ? `/api/admin/permissions/${targetId}` : null);
+          if (!url) { setSelectedServers([]); return; }
+          const res = await axios.get(url, { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true });
+          if (res.status === 401 || res.status === 403) { setSelectedServers([]); return; }
           const d = res.data;
           const normalized = Array.isArray(d) ? d : (d && Array.isArray(d.data) ? d.data : []);
           if (account.role === 'ADMIN') {
@@ -157,7 +160,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
         }, 'image/jpeg', 0.8);
       } catch (err) { URL.revokeObjectURL(url); reject(err); }
     };
-    img.onerror = (e) => { URL.revokeObjectURL(url); reject(new Error('Image load error')); };
+  img.onerror = (_e) => { URL.revokeObjectURL(url); reject(new Error('Image load error')); };
     img.src = url;
   });
 
@@ -335,7 +338,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
               <div className="modal-busy-overlay" aria-hidden>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                   <div className="spinner" />
-                  <div className="label">Saving...</div>
+                  <div className="label">{uploadProgress != null ? `Uploading ${uploadProgress}%` : 'Saving...'}</div>
                 </div>
               </div>
             )}

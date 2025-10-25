@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 
 let serverRoutes, userRoutes, authRoutes, adminRoutes;
 try {
@@ -28,7 +29,16 @@ const path = require('path');
 const fs = require('fs');
 const getRawBody = require('raw-body');
 const app = express();
-app.use(cors());
+// Allow credentials for cookie-based refresh tokens in development when frontend runs on a different port
+app.use(cors({ origin: (origin, cb) => {
+	// allow undefined origin (e.g., same-origin requests from tests or tools)
+	if (!origin) return cb(null, true);
+	// allow localhost frontend during development
+	if (origin.includes('localhost:5174') || origin.includes('127.0.0.1:5174')) return cb(null, true);
+	return cb(null, true);
+}, credentials: true }));
+
+app.use(cookieParser());
 
 // Early logger to help trace incoming requests before other middleware
 app.use((req, res, next) => {
@@ -127,6 +137,27 @@ try {
 	console.warn('Failed to ensure uploads directory:', e && e.message ? e.message : e);
 }
 app.use('/uploads', express.static(uploadsDir));
+
+// Serve any static assets from backend/public (e.g., favicon.ico)
+try {
+	const publicDir = path.join(__dirname, 'public');
+	// Ensure public dir exists
+	try { if (!fs.existsSync(publicDir)) fs.mkdirSync(publicDir, { recursive: true }); } catch (_) {}
+	// Drop a tiny default favicon if missing (1x1 transparent PNG; browsers accept PNG at .ico path)
+	try {
+		const favPath = path.join(publicDir, 'favicon.ico');
+		if (!fs.existsSync(favPath)) {
+			const b64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=';
+			fs.writeFileSync(favPath, Buffer.from(b64, 'base64'));
+		}
+	} catch (_) {}
+	app.use(express.static(publicDir));
+} catch (e) {
+	console.warn('Failed to mount static public dir:', e && e.message ? e.message : e);
+}
+
+// Fallback for favicon requests to avoid noisy 404s when no icon is present
+app.get('/favicon.ico', (req, res) => res.status(204).end());
 
 const pool = require('./db');
 const bcrypt = require('bcrypt');

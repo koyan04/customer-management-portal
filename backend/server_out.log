@@ -1,0 +1,292 @@
+[dotenv@17.2.3] injecting env (1) from .env -- tip: 🔄 add secrets lifecycle management: https://dotenvx.com/ops
+Registered mounts: [
+  {
+    "mount": "/api/servers",
+    "loaded": true
+  },
+  {
+    "mount": "/api/users",
+    "loaded": true
+  },
+  {
+    "mount": "/api/auth",
+    "loaded": true
+  },
+  {
+    "mount": "/api/admin",
+    "loaded": true
+  }
+]
+Express router stack length: 0
+🚀 Server is running on http://localhost:3001
+[EARLY-REQ]  POST /api/auth/login  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=POST url=/api/auth/login Content-Length=41 Transfer-Encoding=undefined
+[REQ] POST /api/auth/login
+Body: { username: 'admin', password: 'koyan04' }
+[EARLY-REQ]  GET /api/admin/permissions/me  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/permissions/me Content-Length=undefined Transfer-Encoding=undefined
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/public/settings/general  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/public/settings/general Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/permissions/me  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/permissions/me Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/public/settings/general
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/public/settings/general  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/public/settings/general Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/public/settings/general
+[EARLY-REQ]  GET /api/servers/summary  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/servers/summary Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/servers/summary
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/servers  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/servers Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/servers/summary  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/servers/summary Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/servers
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/servers/summary
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/accounts/me  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/accounts/me Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/accounts/me
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/servers  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/servers Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/servers
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /uploads/1760874080714-144002460-140x140.png  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760874080714-144002460-140x140.png Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/accounts/me  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/accounts/me Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/accounts/me
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/permissions/me  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/permissions/me Content-Length=undefined Transfer-Encoding=undefined
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  HEAD /uploads/1760421461568-507783096.jpg?v=1760602577866  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=HEAD url=/uploads/1760421461568-507783096.jpg?v=1760602577866 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /uploads/1760421461568-507783096.jpg?v=1760602577866  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760421461568-507783096.jpg?v=1760602577866 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/accounts  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/accounts Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/accounts
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/accounts  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/accounts Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/accounts
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/servers  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/servers Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/servers
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/servers  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/servers Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/servers
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /uploads/1760421593293-736879596.jpg?v=0  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760421593293-736879596.jpg?v=0 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /uploads/1760290314081-568559682.jpg?v=0  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760290314081-568559682.jpg?v=0 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /uploads/1760289163929-567584350.jpg?v=0  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760289163929-567584350.jpg?v=0 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /uploads/1760271987355-445580970.jpg?v=0  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760271987355-445580970.jpg?v=0 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /uploads/1760421461568-507783096.jpg?v=0  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760421461568-507783096.jpg?v=0 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/9  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/9 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/6  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/6 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/4  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/4 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/2  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/2 Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/server-admins/9
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/6
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/4
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/2
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/server-admins/1  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/1 Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/server-admins/1
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/server-admins/6  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/6 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/9  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/9 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/4  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/4 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/2  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/2 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/1  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/1 Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/server-admins/6
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/9
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/4
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/2
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/1
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/accounts/1/login-audit  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/accounts/1/login-audit Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/accounts/1/login-audit
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/permissions/me  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/permissions/me Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/accounts  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/accounts Content-Length=undefined Transfer-Encoding=undefined
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/accounts
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/permissions/me  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/permissions/me Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/accounts  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/accounts Content-Length=undefined Transfer-Encoding=undefined
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/accounts
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/public/settings/general  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/public/settings/general Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/public/settings/general  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/public/settings/general Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/public/settings/general
+[REQ] GET /api/admin/public/settings/general
+[EARLY-REQ]  GET /api/servers  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/servers Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/servers  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/servers Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/servers
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/servers
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /uploads/1760421593293-736879596.jpg?v=0  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760421593293-736879596.jpg?v=0 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /uploads/1760271987355-445580970.jpg?v=0  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760271987355-445580970.jpg?v=0 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /uploads/1760289163929-567584350.jpg?v=0  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760289163929-567584350.jpg?v=0 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /uploads/1760290314081-568559682.jpg?v=0  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760290314081-568559682.jpg?v=0 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /uploads/1760421461568-507783096.jpg?v=0  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760421461568-507783096.jpg?v=0 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /uploads/1760874080714-144002460-140x140.png  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760874080714-144002460-140x140.png Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/accounts/me  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/accounts/me Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/accounts/me  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/accounts/me Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/accounts/me
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/accounts/me
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/permissions/me  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/permissions/me Content-Length=undefined Transfer-Encoding=undefined
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/permissions/me  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/permissions/me Content-Length=undefined Transfer-Encoding=undefined
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/servers  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/servers Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/servers  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/servers Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/9  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/9 Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/servers
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/servers
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/9
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/server-admins/6  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/6 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/4  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/4 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/2  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/2 Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/server-admins/6
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/4
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/2
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/server-admins/1  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/1 Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/server-admins/1
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/server-admins/6  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/6 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/9  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/9 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/4  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/4 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/2  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/2 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/server-admins/1  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/server-admins/1 Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/server-admins/6
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/9
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/4
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/2
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/server-admins/1
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  HEAD /uploads/1760421461568-507783096.jpg?v=1760602577866  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=HEAD url=/uploads/1760421461568-507783096.jpg?v=1760602577866 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  HEAD /uploads/1760421461568-507783096.jpg?v=1760602577866  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=HEAD url=/uploads/1760421461568-507783096.jpg?v=1760602577866 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /uploads/1760421461568-507783096.jpg?v=1760602577866  headers: { origin: undefined, host: 'localhost:3001' }
+[INCOMING] method=GET url=/uploads/1760421461568-507783096.jpg?v=1760602577866 Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/accounts/1/login-audit  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/accounts/1/login-audit Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/accounts/1/login-audit
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/settings/database  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/settings/database Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/settings/telegram  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/settings/telegram Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/settings/remoteServer  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/settings/remoteServer Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/settings/general  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/settings/general Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/db/status  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/db/status Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/settings/database
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/settings/telegram
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/settings/remoteServer
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/settings/general
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/db/status
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/settings/telegram  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/settings/telegram Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/settings/telegram
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/settings/database  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/settings/database Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/settings/database
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/settings/remoteServer  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/settings/remoteServer Content-Length=undefined Transfer-Encoding=undefined
+[EARLY-REQ]  GET /api/admin/settings/general  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/settings/general Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/settings/remoteServer
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[REQ] GET /api/admin/settings/general
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }
+[EARLY-REQ]  GET /api/admin/db/status  headers: { origin: 'http://localhost:5173', host: 'localhost:3001' }
+[INCOMING] method=GET url=/api/admin/db/status Content-Length=undefined Transfer-Encoding=undefined
+[REQ] GET /api/admin/db/status
+[auth] token decoded (unsafe): { user: { id: 1, role: 'ADMIN' }, iat: 1760980003, exp: 1761066403 }

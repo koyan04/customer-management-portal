@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-function ConfirmModal({ isOpen, onClose, onConfirm, title, children }) {
+function ConfirmModal({ isOpen, onClose, onConfirm, title, children, confirmLabel = 'Confirm Delete', confirmClassName = 'btn-danger' }) {
   if (!isOpen) return null;
 
   return (
@@ -29,7 +29,7 @@ function ConfirmModal({ isOpen, onClose, onConfirm, title, children }) {
             <p>{children}</p>
             <div className="modal-actions">
               <button onClick={onClose} className="btn-secondary">Cancel</button>
-              <button onClick={onConfirm} className="btn-danger">Confirm Delete</button>
+              <button onClick={onConfirm} className={confirmClassName}>{confirmLabel}</button>
             </div>
           </motion.div>
         </motion.div>

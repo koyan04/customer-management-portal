@@ -1,12 +1,180 @@
-import { Outlet, Link } from 'react-router-dom';
+import { Outlet, Link, NavLink } from 'react-router-dom';
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from './context/AuthContext';
 import './App.css';
+import { ToastProvider } from './context/ToastContext.jsx';
+import { FaArrowUp } from 'react-icons/fa';
 import AdminEditorForm from './components/AdminEditorForm';
-import { FaUser, FaSignOutAlt } from 'react-icons/fa';
+import { FaUser, FaSignOutAlt, FaLeaf, FaMoon, FaSun, FaDesktop, FaCheck } from 'react-icons/fa';
 import axios from 'axios';
+import ConfirmModal from './components/ConfirmModal.jsx';
+import IdleToast from './components/IdleToast.jsx';
+
+function BackToTop() {
+  const [visible, setVisible] = React.useState(false);
+  React.useEffect(() => {
+    const onScroll = () => setVisible(window.scrollY > 200);
+    window.addEventListener('scroll', onScroll);
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+  const goTop = () => {
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch (_) { window.scrollTo(0, 0); }
+  };
+  return (
+    <div aria-hidden className="back-to-top-wrap">
+      {visible && (
+        <button type="button" onClick={goTop} title="Back to top" className="back-to-top-btn">
+          <FaArrowUp aria-hidden />
+        </button>
+      )}
+    </div>
+  );
+}
 
 function App() {
+  // App title and theme from General settings
+  const [appTitle, setAppTitle] = useState('YN Paradise Customer Management Portal');
+  const [appTheme, setAppTheme] = useState('system'); // 'system' | 'dark' | 'light'
+
+  // helper to apply theme to <body> respecting system preference
+  useEffect(() => {
+    const applyTheme = (preferred) => {
+      const isSystemDark = (() => {
+        try { return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (_) { return true; }
+      })();
+      const effective = preferred === 'system' ? (isSystemDark ? 'dark' : 'light') : preferred;
+      if (effective === 'light') {
+        document.body.classList.add('theme-light');
+      } else {
+        document.body.classList.remove('theme-light');
+      }
+    };
+    applyTheme(appTheme);
+    // react to system changes when in system mode
+    let mm;
+    if (appTheme === 'system') {
+      try {
+        mm = window.matchMedia('(prefers-color-scheme: dark)');
+        const listener = () => applyTheme('system');
+        if (mm && mm.addEventListener) mm.addEventListener('change', listener);
+        else if (mm && mm.addListener) mm.addListener(listener);
+        return () => {
+          if (mm && mm.removeEventListener) mm.removeEventListener('change', listener);
+          else if (mm && mm.removeListener) mm.removeListener(listener);
+        };
+      } catch (_) { /* ignore */ }
+    }
+    return undefined;
+  }, [appTheme]);
+
+  // On mount, apply local theme override if present
+  useEffect(() => {
+    try {
+      const override = localStorage.getItem('themeOverride');
+      if (override === 'dark' || override === 'light' || override === 'system') {
+        setAppTheme(override);
+      }
+    } catch (_) {}
+  }, []);
+
+  // Fetch General settings (public)
+  useEffect(() => {
+    const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? `${window.location.protocol}//${window.location.hostname}:3001` : '';
+    const applyGeneral = (general) => {
+      if (general && typeof general.title === 'string' && general.title.trim()) {
+        setAppTitle(general.title);
+        try { document.title = general.title; } catch (_) {}
+      }
+      if (general && general.theme) {
+        try {
+          const override = localStorage.getItem('themeOverride');
+          if (override === 'dark' || override === 'light' || override === 'system') {
+            setAppTheme(override);
+          } else {
+            setAppTheme(general.theme);
+          }
+        } catch (_) {
+          setAppTheme(general.theme);
+        }
+      }
+      // Persist auto-logout minutes when the public general settings include a non-null value
+      try {
+        if (general && general.autoLogoutMinutes != null) {
+          const parsed = Number(general.autoLogoutMinutes);
+          if (!Number.isNaN(parsed) && Number.isFinite(parsed)) {
+            try { localStorage.setItem('autoLogoutMinutes', String(parsed)); } catch (_) {}
+          }
+        }
+      } catch (_) {}
+      try {
+        const el = document.querySelector('.main-logo');
+        if (el) {
+          const hasLogoField = general && (Object.prototype.hasOwnProperty.call(general, 'logo_url') || Object.prototype.hasOwnProperty.call(general, 'logo_url_2x'));
+          if (hasLogoField) {
+            // If event explicitly includes logo fields, update the header image accordingly
+            el.setAttribute('data-has-logo', general && general.logo_url ? '1' : '0');
+            el.setAttribute('data-logo-url', general && general.logo_url ? general.logo_url : '');
+            const img = el.querySelector('.main-logo-img');
+            if (img) {
+              const origin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? `${window.location.protocol}//${window.location.hostname}:3001` : '';
+              const url1x = general && general.logo_url ? (origin + general.logo_url) : '';
+              const url2x = general && general.logo_url_2x ? (origin + general.logo_url_2x) : '';
+              if (url1x) {
+                img.src = url1x;
+                if (url2x) img.srcset = `${url1x} 1x, ${url2x} 2x`; else img.removeAttribute('srcset');
+              } else {
+                // explicit clear
+                img.removeAttribute('src');
+                img.removeAttribute('srcset');
+              }
+            }
+          } else {
+            // No logo fields in payload: don't change existing logo. Optionally, you can trigger a refresh fetch here.
+          }
+        }
+      } catch (_) {}
+    };
+    const fetchGeneral = async () => {
+      try {
+        const res = await fetch(backendOrigin + '/api/admin/public/settings/general');
+        if (!res.ok) return;
+        const data = await res.json();
+        const general = data && data.data ? data.data : {};
+        applyGeneral(general);
+      } catch (_) { /* ignore */ }
+    };
+    // initial load
+    fetchGeneral();
+    // react to storage signal (cross-tab or same-tab)
+    const onStorage = (e) => {
+      try {
+        if (e && e.key === 'general_refresh') {
+          fetchGeneral();
+        }
+      } catch (_) {}
+    };
+    window.addEventListener('storage', onStorage);
+    // react to in-app event with payload
+    const onGeneralEvent = (e) => {
+      try { applyGeneral(e && e.detail ? e.detail : null); } catch (_) {}
+    };
+    window.addEventListener('general-settings-updated', onGeneralEvent);
+    // Listen for theme override changes from other tabs/windows
+    const onStorageTheme = (e) => {
+      try {
+        if (e && e.key === 'themeOverride') {
+          const val = e.newValue;
+          if (val === 'dark' || val === 'light' || val === 'system') setAppTheme(val);
+        }
+      } catch (_) {}
+    };
+    window.addEventListener('storage', onStorageTheme);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('general-settings-updated', onGeneralEvent);
+      window.removeEventListener('storage', onStorageTheme);
+    };
+  }, []);
   const { logout, user, token } = useAuth();
   // decoded token may include { user: {...} } or be the user object itself; normalize
   let profile = user && user.user ? user.user : user;
@@ -19,6 +187,62 @@ function App() {
   }
   const [menuOpen, setMenuOpen] = useState(false);
   const [accountProfile, setAccountProfile] = useState(null);
+  // idle warning modal state
+  const [idleWarning, setIdleWarning] = useState({ show: false, remainingMs: 0 });
+  useEffect(() => {
+    let countdownInterval = null;
+    const handler = (e) => {
+      const rem = e && e.detail && typeof e.detail.remainingMs === 'number' ? e.detail.remainingMs : 60000;
+      setIdleWarning({ show: true, remainingMs: rem });
+      if (countdownInterval) clearInterval(countdownInterval);
+      countdownInterval = setInterval(() => {
+        setIdleWarning(prev => {
+          if (!prev.show) return prev;
+          const next = Math.max(0, prev.remainingMs - 1000);
+          return { ...prev, remainingMs: next };
+        });
+      }, 1000);
+    };
+    window.addEventListener('idle-warning', handler);
+    // also update localStorage when general settings broadcast to ensure AuthContext sees change
+    const onGeneralEvent = (e) => {
+      try {
+        const g = e && e.detail ? e.detail : null;
+        // Only update autoLogoutMinutes when the payload explicitly includes the setting
+        if (g && Object.prototype.hasOwnProperty.call(g, 'autoLogoutMinutes')) {
+          try {
+            const val = typeof g.autoLogoutMinutes === 'number' ? g.autoLogoutMinutes : (g.autoLogoutMinutes ? Number(g.autoLogoutMinutes) : 0);
+            localStorage.setItem('autoLogoutMinutes', String(Number.isNaN(val) ? 0 : val));
+          } catch (_) {}
+        }
+      } catch (_) {}
+    };
+    window.addEventListener('general-settings-updated', onGeneralEvent);
+    return () => {
+      window.removeEventListener('idle-warning', handler);
+      window.removeEventListener('general-settings-updated', onGeneralEvent);
+      if (countdownInterval) clearInterval(countdownInterval);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!idleWarning.show) return;
+    if (idleWarning.remainingMs <= 0) {
+      setIdleWarning({ show: false, remainingMs: 0 });
+    }
+  }, [idleWarning.show, idleWarning.remainingMs]);
+
+  const { replaceToken, refreshWithCookie } = useAuth();
+  const extendSession = async () => {
+    try {
+      const newToken = await refreshWithCookie();
+      if (newToken) {
+        try { replaceToken(newToken); } catch (_) {}
+      }
+    } catch (_) {}
+    try { window.dispatchEvent(new Event('extend-session')); } catch (_) {}
+    setIdleWarning({ show: false, remainingMs: 0 });
+  };
   // small SVG fallback (data URI) used when no avatar is found
   const FALLBACK_AVATAR = 'data:image/svg+xml;utf8,' + encodeURIComponent(`
     <svg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 24 24' fill='none'>
@@ -95,7 +319,7 @@ function App() {
 
   // debug: show what profile and avatar src resolve to in the browser console
   try {
-    // eslint-disable-next-line no-console
+     
     console.debug('[App] effectiveProfile:', effectiveProfile, ' avatarSrc:', getAvatarSrc(effectiveProfile) || FALLBACK_AVATAR);
   } catch (e) {}
 
@@ -147,6 +371,7 @@ function App() {
       } else {
         setAvatarSrc(FALLBACK_AVATAR);
       }
+      // do not persist settings here; general settings are broadcast via events elsewhere
     };
 
     checkWithRetry();
@@ -161,7 +386,8 @@ function App() {
       try {
         if (!token) return;
         const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
-        const rs = await axios.get(backendOrigin + '/api/servers', { headers: { Authorization: `Bearer ${token}` } });
+  const rs = await axios.get(backendOrigin + '/api/servers', { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true });
+  if (rs.status === 401 || rs.status === 403) return;
         if (cancelled) return;
         const d2 = rs.data;
         const normalized2 = Array.isArray(d2) ? d2 : (d2 && Array.isArray(d2.data) ? d2.data : (d2 && Array.isArray(d2.servers) ? d2.servers : []));
@@ -232,18 +458,40 @@ function App() {
     leaveTimerRef.current = setTimeout(() => setMenuOpen(false), 220);
   };
 
+  // Theme selection helpers
+  const setThemeOverride = (mode) => {
+    if (!['system','dark','light'].includes(mode)) return;
+    try { localStorage.setItem('themeOverride', mode); } catch (_) {}
+    setAppTheme(mode);
+  };
+
   return (
+    <ToastProvider>
     <div className="app-container">
       {/* This is the single, main header for the entire application */}
       <div className="main-header">
-        <Link to="/" className="main-title-link">
-          <h1>YN Paradise Customer Management Portal</h1>
+  {/* Brand logo on the far left (70x70). If a logo_url exists in General settings, render an <img>; else render blank circle with subtle icon */}
+        <Link to="/" className="main-logo" aria-label="Home">
+          {/* runtime swap handled via CSS & data attributes; render both for simplicity */}
+          <span className="main-logo-circle" aria-hidden="true" />
+          <img className="main-logo-img" alt="Logo" sizes="70px" />
+          <FaLeaf className="main-logo-fallback" aria-hidden="true" />
         </Link>
-        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-          <Link to="/server-list" className="server-list-link">Server List</Link>
-                  {role === 'ADMIN' && <Link to="/admin" className="admin-link">Admin</Link>}
-          {/* Logout moved into avatar menu */}
-          {/* Avatar on the right side of the banner */}
+        <Link to="/" className="main-title-link">
+          <div className="main-title" role="heading" aria-level={1}>
+            <span className="brand">{appTitle || 'YN Paradise'}</span>
+            <span className="sub">Customer Management Portal</span>
+          </div>
+        </Link>
+        <nav className="main-nav" aria-label="Primary">
+          <NavLink to="/" end className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>Dashboard</NavLink>
+          <NavLink to="/financial" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>Financial</NavLink>
+          <NavLink to="/server-list" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>Server List</NavLink>
+          {role === 'ADMIN' && <NavLink to="/admin" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>Admin</NavLink>}
+          {role === 'ADMIN' && <NavLink to="/settings" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>Settings</NavLink>}
+        </nav>
+        {/* Logout moved into avatar menu */}
+        {/* Avatar on the right side of the banner */}
           <div ref={avatarRef} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave} className="header-avatar" title={(effectiveProfile && (effectiveProfile.name || effectiveProfile.display_name || effectiveProfile.email)) || 'Profile'}>
             <img
               src={avatarSrc}
@@ -277,6 +525,44 @@ function App() {
                   <FaUser className="menu-icon" aria-hidden />
                   <span>Profile</span>
                 </button>
+                <div className="avatar-menu-divider" aria-hidden="true" />
+                <div className="avatar-menu-subheader" aria-hidden="true">Theme</div>
+                <div className="avatar-menu-group" role="group" aria-label="Theme">
+                  <button
+                    type="button"
+                    className="avatar-menu-item"
+                    role="menuitemradio"
+                    aria-checked={appTheme === 'system'}
+                    onClick={(e) => { e.stopPropagation(); setThemeOverride('system'); }}
+                  >
+                    <FaDesktop className="menu-icon" aria-hidden />
+                    <span>System</span>
+                    {appTheme === 'system' && <FaCheck className="menu-check" aria-hidden />}
+                  </button>
+                  <button
+                    type="button"
+                    className="avatar-menu-item"
+                    role="menuitemradio"
+                    aria-checked={appTheme === 'dark'}
+                    onClick={(e) => { e.stopPropagation(); setThemeOverride('dark'); }}
+                  >
+                    <FaMoon className="menu-icon" aria-hidden />
+                    <span>Dark</span>
+                    {appTheme === 'dark' && <FaCheck className="menu-check" aria-hidden />}
+                  </button>
+                  <button
+                    type="button"
+                    className="avatar-menu-item"
+                    role="menuitemradio"
+                    aria-checked={appTheme === 'light'}
+                    onClick={(e) => { e.stopPropagation(); setThemeOverride('light'); }}
+                  >
+                    <FaSun className="menu-icon" aria-hidden />
+                    <span>Light</span>
+                    {appTheme === 'light' && <FaCheck className="menu-check" aria-hidden />}
+                  </button>
+                </div>
+                <div className="avatar-menu-divider" aria-hidden="true" />
                 <button type="button" className="avatar-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); try { logout(); } catch (e) {} }}>
                   <FaSignOutAlt className="menu-icon" aria-hidden />
                   <span>Logout</span>
@@ -293,13 +579,14 @@ function App() {
             account={effectiveProfile}
             servers={profileServers}
           />
-
-        </div>
       </div>
 
       {/* Child pages (like the dashboard) will be rendered here */}
       <Outlet />
+      <BackToTop />
+      <IdleToast isOpen={idleWarning.show} remainingMs={idleWarning.remainingMs} onExtend={extendSession} onClose={() => setIdleWarning({ show: false, remainingMs: 0 })} />
     </div>
+    </ToastProvider>
   );
 }
 

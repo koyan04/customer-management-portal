@@ -1,7 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import AdminPanelPage from '../pages/AdminPanelPage.jsx';
-import { vi, describe, it, beforeAll, beforeEach, afterAll, afterEach, expect } from 'vitest';
 import { server } from './testServer';
 
 // mock AuthContext hook to provide a token
@@ -22,7 +21,7 @@ describe('AdminPanel header/actions', () => {
     expect(btn).toBeNull();
 
     // Add viewer icon button should be present (ADMIN)
-    const addBtn = await screen.findByRole('button', { name: /Add viewer/i });
+  const addBtn = await screen.findByRole('button', { name: /Add viewer/i });
     expect(addBtn).toBeTruthy();
 
     // Search input should be present

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { FaCog, FaTrashAlt } from 'react-icons/fa'; // Correct icon names
+import { FaCog, FaTrashAlt, FaUser, FaCogs, FaNetworkWired, FaGlobe, FaRegCopy, FaCheck } from 'react-icons/fa';
 // Corrected import paths below
 import ConfirmModal from '../components/ConfirmModal.jsx';
 import EditServerModal from '../components/EditServerModal.jsx';
@@ -10,6 +10,12 @@ import EditServerModal from '../components/EditServerModal.jsx';
 function ServerList({ servers, fetchServers }) {
   const [serverToDelete, setServerToDelete] = useState(null);
   const [serverToEdit, setServerToEdit] = useState(null);
+  const [page, setPage] = useState(1);
+  const pageSize = 10;
+  const totalPages = Math.max(1, Math.ceil((servers?.length || 0) / pageSize));
+  const firstIndex = (page - 1) * pageSize;
+  const visibleServers = Array.isArray(servers) ? servers.slice(firstIndex, firstIndex + pageSize) : [];
+  const [copiedIp, setCopiedIp] = useState(null);
   // get current user role from local storage or AuthContext if available
   let role = null;
   try { role = JSON.parse(localStorage.getItem('user'))?.role || (localStorage.getItem('user') || null); } catch(e) { role = null; }
@@ -33,13 +39,28 @@ function ServerList({ servers, fetchServers }) {
     setServerToEdit(null);
   };
 
+  const handleCopy = async (text) => {
+    try {
+      if (!text) return;
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+      }
+      setCopiedIp(text);
+      setTimeout(() => setCopiedIp(null), 1200);
+    } catch (e) { /* ignore */ }
+  };
+
   return (
     <div>
-      {servers.length === 0 && <p className="no-users-message">No servers found. Click "Add New Server" to begin.</p>}
+      {(!servers || servers.length === 0) && <p className="no-users-message">No servers found. Click "Add New Server" to begin.</p>}
       
       <ul className="server-list">
         <AnimatePresence>
-          {servers.map(server => (
+          {visibleServers.map(server => (
             <motion.li
               key={server.id}
               layout
@@ -53,7 +74,19 @@ function ServerList({ servers, fetchServers }) {
                   <div className="server-name">{server.server_name}</div>
                 </Link>
                 <div className="server-details">
-                  Owner: {server.owner} | Service: {server.service_type}
+                  <div className="server-meta">
+                    <div className="server-meta-item"><span className="meta-icon"><FaUser /></span><strong>Owner</strong> {server.owner || '—'}</div>
+                    <div className="server-meta-item"><span className="meta-icon"><FaCogs /></span><strong>Service</strong> {server.service_type || '—'}</div>
+                    <div className="server-meta-item">
+                      <span className="meta-icon"><FaNetworkWired /></span><strong>IP</strong> {server.ip_address || '—'}
+                      {server.ip_address && (
+                        <button type="button" className="copy-btn" title={copiedIp === server.ip_address ? 'Copied!' : 'Copy IP'} onClick={() => handleCopy(server.ip_address)}>
+                          {copiedIp === server.ip_address ? <FaCheck /> : <FaRegCopy />}
+                        </button>
+                      )}
+                    </div>
+                    <div className="server-meta-item"><span className="meta-icon"><FaGlobe /></span><strong>Domain</strong> {server.domain_name || '—'}</div>
+                  </div>
                 </div>
               </div>
               <div className="server-actions">
@@ -72,6 +105,19 @@ function ServerList({ servers, fetchServers }) {
           ))}
         </AnimatePresence>
       </ul>
+
+      {servers && servers.length > pageSize && (
+        <div className="pagination">
+          <button className="page-btn" disabled={page === 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
+          {Array.from({ length: totalPages }).map((_, idx) => {
+            const p = idx + 1;
+            return (
+              <button key={p} className={`page-btn${p === page ? ' active' : ''}`} onClick={() => setPage(p)}>{p}</button>
+            );
+          })}
+          <button className="page-btn" disabled={page === totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))}>Next</button>
+        </div>
+      )}
 
       <ConfirmModal
         isOpen={!!serverToDelete}

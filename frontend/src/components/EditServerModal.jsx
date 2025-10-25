@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useAuth } from '../context/AuthContext';
 
 function EditServerModal({ server, onClose, onSave }) {
+  const { token: authToken } = useAuth();
   // State to hold the form data, initialized as empty
   const [formData, setFormData] = useState({
     server_name: '',
@@ -11,6 +13,8 @@ function EditServerModal({ server, onClose, onSave }) {
     ip_address: '',
     domain_name: '',
   });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   // useEffect updates the form data whenever the 'server' prop changes
   useEffect(() => {
@@ -33,10 +37,21 @@ function EditServerModal({ server, onClose, onSave }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      await axios.put(`http://localhost:3001/api/servers/${server.id}`, formData);
-      onSave(); // This will trigger a refresh and close the modal
+      setSaving(true);
+      setError('');
+      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const token = authToken || localStorage.getItem('token');
+      await axios.put(`${backendOrigin}/api/servers/${server.id}`, formData, { headers: { Authorization: `Bearer ${token}` } });
+      onSave && onSave(); // trigger refresh in parent
+      onClose && onClose();
     } catch (error) {
       console.error('Error updating server:', error);
+      const status = error && error.response ? error.response.status : null;
+      const msg = (error && error.response && (error.response.data && (error.response.data.msg || error.response.data.error))) || 'Failed to update server.';
+      setError(status === 403 ? 'You do not have permission to update this server.' : msg);
+    }
+    finally {
+      setSaving(false);
     }
   };
 
@@ -45,16 +60,17 @@ function EditServerModal({ server, onClose, onSave }) {
       {server && (
         <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
           <motion.div className="modal-content" initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 50, opacity: 0 }} onClick={(e) => e.stopPropagation()}>
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} className="modal-form">
               <h3>Edit Server</h3>
               <input name="server_name" value={formData.server_name} onChange={handleChange} placeholder="Server Name" required />
               <input name="owner" value={formData.owner} onChange={handleChange} placeholder="Owner" />
               <input name="service_type" value={formData.service_type} onChange={handleChange} placeholder="Service Type" />
               <input name="ip_address" value={formData.ip_address} onChange={handleChange} placeholder="IP Address" />
               <input name="domain_name" value={formData.domain_name} onChange={handleChange} placeholder="Domain Name" />
+              {error && <div className="form-error" role="alert" style={{ color: '#ff9d9d' }}>{error}</div>}
               <div className="modal-actions">
-                <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
-                <button type="submit">Save Changes</button>
+                <button type="button" onClick={onClose} className="btn-secondary" disabled={saving}>Cancel</button>
+                <button type="submit" className="submit-btn" disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</button>
               </div>
             </form>
           </motion.div>

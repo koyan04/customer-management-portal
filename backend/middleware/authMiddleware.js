@@ -7,7 +7,7 @@ const authenticateToken = (req, res, next) => {
   if (!token) return res.status(401).json({ msg: 'No token, authorization denied' });
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+  const decoded = jwt.verify(token, process.env.JWT_SECRET);
     // development-only helper: also log the decoded payload (unsafe) to aid debugging
     if (process.env.NODE_ENV !== 'production') {
       try {
@@ -17,8 +17,23 @@ const authenticateToken = (req, res, next) => {
         // ignore decode errors
       }
     }
-    req.user = decoded.user; // { id, role }
-    next();
+  // attach decoded payload and full token payload (useful for refresh/jti access)
+  req.tokenPayload = decoded; // full decoded JWT payload (may contain jti/exp etc)
+  req.user = (decoded && decoded.user) ? decoded.user : decoded;
+    // if token has jti, check invalidated_tokens table
+    (async () => {
+      try {
+        if (!decoded.jti) return next();
+        const r = await pool.query('SELECT 1 FROM invalidated_tokens WHERE jti = $1 LIMIT 1', [decoded.jti]);
+        if (r && r.rows && r.rows.length > 0) {
+          return res.status(401).json({ msg: 'Token revoked' });
+        }
+      } catch (e) {
+        // on DB error, fail closed and allow request (avoid lockout) but log the issue
+        try { console.error('[auth] failed to check invalidated_tokens', e); } catch (_) {}
+      }
+      return next();
+    })();
   } catch (err) {
     console.error('[auth] token verification failed:', err && err.message ? err.message : err);
     res.status(401).json({ msg: 'Token is not valid' });
