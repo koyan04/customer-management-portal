@@ -12,50 +12,57 @@ CREATE TABLE IF NOT EXISTS admins_audit (
   change_type text NOT NULL,
   old jsonb,
   new jsonb,
+  password_changed boolean DEFAULT false,
   created_at timestamptz DEFAULT now()
 );
 
 -- trigger function to populate admins_audit on INSERT/UPDATE
 CREATE OR REPLACE FUNCTION admins_audit_trigger_fn() RETURNS trigger AS $$
-DECLARE
-  old_json jsonb;
-  new_json jsonb;
-  actor integer;
-BEGIN
-  actor := (CASE WHEN current_setting('app.current_admin_id', true) IS NULL THEN NULL ELSE current_setting('app.current_admin_id', true)::int END);
+  DECLARE
+    old_json jsonb;
+    new_json jsonb;
+    actor integer;
+    pw_changed boolean := false;
+  BEGIN
+    actor := (CASE WHEN current_setting('app.current_admin_id', true) IS NULL THEN NULL ELSE current_setting('app.current_admin_id', true)::int END);
 
-  IF (TG_OP = 'UPDATE') THEN
-    -- redact password_hash from stored JSON before inserting into audit
-    old_json := to_jsonb(OLD) - 'password_hash';
-    new_json := to_jsonb(NEW) - 'password_hash';
+    IF (TG_OP = 'UPDATE') THEN
+      -- detect password change using the real OLD/NEW record values
+      pw_changed := (OLD.password_hash IS DISTINCT FROM NEW.password_hash);
 
-    INSERT INTO admins_audit (admin_id, changed_by, change_type, old, new, created_at)
-    VALUES (
-      OLD.id,
-      actor,
-      'UPDATE',
-      old_json,
-      new_json,
-      now()
-    );
+      -- redact password_hash from stored JSON before inserting into audit
+      old_json := to_jsonb(OLD) - 'password_hash';
+      new_json := to_jsonb(NEW) - 'password_hash';
 
-    NEW.updated_at := now();
-    RETURN NEW;
-  ELSIF (TG_OP = 'INSERT') THEN
-    new_json := to_jsonb(NEW) - 'password_hash';
-    INSERT INTO admins_audit (admin_id, changed_by, change_type, old, new, created_at)
-    VALUES (
-      NEW.id,
-      actor,
-      'INSERT',
-      NULL,
-      new_json,
-      now()
-    );
-    RETURN NEW;
-  END IF;
-  RETURN NULL;
-END;
+      INSERT INTO admins_audit (admin_id, changed_by, change_type, old, new, password_changed, created_at)
+      VALUES (
+        OLD.id,
+        actor,
+        'UPDATE',
+        old_json,
+        new_json,
+        pw_changed,
+        now()
+      );
+
+      NEW.updated_at := now();
+      RETURN NEW;
+    ELSIF (TG_OP = 'INSERT') THEN
+      new_json := to_jsonb(NEW) - 'password_hash';
+      INSERT INTO admins_audit (admin_id, changed_by, change_type, old, new, password_changed, created_at)
+      VALUES (
+        NEW.id,
+        actor,
+        'INSERT',
+        NULL,
+        new_json,
+        false,
+        now()
+      );
+      RETURN NEW;
+    END IF;
+    RETURN NULL;
+  END;
 $$ LANGUAGE plpgsql;
 
 -- install trigger
