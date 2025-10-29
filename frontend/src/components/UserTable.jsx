@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import formatWithAppTZ from '../lib/timezone';
 import { createPortal } from 'react-dom';
 import { FaCog, FaTrashAlt, FaClock, FaEllipsisV } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -123,10 +124,10 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, canManageUsers = nul
                     {status.text}
                   </td>
                   <td data-label="Service">{user.service_type}</td>
-                  <td data-label="Duration" title={`Expire: ${new Date(user.expire_date).toLocaleDateString('en-GB')}`}>{formatDuration(user.expire_date)}</td>
+                  <td data-label="Duration" title={`Expire: ${formatWithAppTZ(user.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB')}`}>{formatDuration(user.expire_date)}</td>
                   <td data-label="Expire Date">
                     {/* THIS LINE FIXES THE DATE FORMAT */}
-                    {new Date(user.expire_date).toLocaleDateString('en-GB')}
+                    {formatWithAppTZ(user.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB')}
                   </td>
                   <td data-label="Actions">
                     <div className="user-actions" ref={ensureRef}>

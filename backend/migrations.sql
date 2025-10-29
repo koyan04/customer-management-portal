@@ -100,3 +100,19 @@ WHERE u.id = n.id AND (u.display_pos IS NULL OR u.display_pos = 0);
 
 CREATE INDEX IF NOT EXISTS users_display_pos_idx ON users (server_id, display_pos);
 
+-- ==================================================================
+-- Migration added: 2025-10-27 add server_keys table
+-- ==================================================================
+-- Table to store per-server keys (api keys/ssh keys/other), used by Key Management UI
+CREATE TABLE IF NOT EXISTS server_keys (
+  id SERIAL PRIMARY KEY,
+  server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  username TEXT,
+  description TEXT,
+  original_key TEXT,
+  generated_key TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS server_keys_server_id_idx ON server_keys(server_id);
+

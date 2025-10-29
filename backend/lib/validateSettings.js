@@ -28,13 +28,66 @@ function validateSettings(key, body) {
     cleaned.database = database;
     cleaned.ssl = !!body.ssl;
   } else if (key === 'telegram') {
-    const botToken = typeof body.botToken === 'string' ? body.botToken.trim() : '';
-    if (!botToken) errors.push('botToken is required');
+    // botToken is required for creation, but for updates we may omit it to preserve the existing token.
+    if (typeof body.botToken !== 'undefined') {
+      const botToken = typeof body.botToken === 'string' ? body.botToken.trim() : '';
+      if (!botToken) errors.push('botToken is required');
+      else cleaned.botToken = botToken;
+    }
     const defaultChatId = typeof body.defaultChatId === 'string' || typeof body.defaultChatId === 'number' ? String(body.defaultChatId).trim() : '';
     if (defaultChatId && !/^[-]?\d+$/.test(defaultChatId)) errors.push('defaultChatId must be numeric');
-    cleaned.botToken = botToken;
-    if (defaultChatId) cleaned.defaultChatId = defaultChatId;
+  if (defaultChatId) cleaned.defaultChatId = defaultChatId;
+    // messageTemplate is still accepted for backward compatibility
     if (typeof body.messageTemplate === 'string') cleaned.messageTemplate = body.messageTemplate;
+
+    // notificationTime: accept a non-empty string (cron-like or '@daily'). Keep max length reasonable.
+    if (typeof body.notificationTime === 'string') {
+      const nt = body.notificationTime.trim();
+      if (nt.length === 0) {
+        // allow empty to mean unset; don't set cleaned.notificationTime
+      } else if (nt.length > 255) {
+        errors.push('notificationTime is too long');
+      } else {
+        cleaned.notificationTime = nt;
+      }
+    } else if (typeof body.notificationTime !== 'undefined' && body.notificationTime !== null) {
+      errors.push('notificationTime must be a string');
+    }
+
+    // Helper to coerce common boolean representations. Returns null for invalid values.
+    const parseBoolean = (v) => {
+      if (typeof v === 'boolean') return v;
+      if (typeof v === 'string') {
+        const s = v.trim().toLowerCase();
+        if (s === 'true' || s === '1' || s === 'yes') return true;
+        if (s === 'false' || s === '0' || s === 'no') return false;
+        return null;
+      }
+      if (typeof v === 'number') {
+        if (v === 1) return true;
+        if (v === 0) return false;
+        return null;
+      }
+      return null;
+    };
+
+    // databaseBackup: boolean, default false
+    if (typeof body.databaseBackup === 'undefined') {
+      cleaned.databaseBackup = false;
+    } else {
+      const dbb = parseBoolean(body.databaseBackup);
+      if (dbb === null) errors.push('databaseBackup must be a boolean');
+      else cleaned.databaseBackup = dbb;
+    }
+
+    // loginNotification: boolean, default false
+    if (typeof body.loginNotification === 'undefined') {
+      cleaned.loginNotification = false;
+    } else {
+      const ln = parseBoolean(body.loginNotification);
+      if (ln === null) errors.push('loginNotification must be a boolean');
+      else cleaned.loginNotification = ln;
+    }
   } else if (key === 'remoteServer') {
     const host = typeof body.host === 'string' && body.host.trim() ? body.host.trim() : null;
     const port = Number(body.port);
@@ -115,6 +168,24 @@ function validateSettings(key, body) {
       cleaned.currency = body.currency.trim().toUpperCase();
     } else if (typeof body.currency !== 'undefined' && body.currency !== null) {
       errors.push('currency must be a non-empty string');
+    }
+    // Timezone support: accept 'auto' (browser) or a valid IANA time zone string.
+    if (typeof body.timezone !== 'undefined') {
+      // allow null/empty/'auto' to mean auto/browser timezone
+      if (body.timezone === null || body.timezone === '' || body.timezone === 'auto') {
+        cleaned.timezone = null;
+      } else if (typeof body.timezone === 'string') {
+        const tz = body.timezone.trim();
+        try {
+          // Try to construct an Intl.DateTimeFormat with the given timeZone; will throw on invalid TZ
+          new Intl.DateTimeFormat(undefined, { timeZone: tz });
+          cleaned.timezone = tz;
+        } catch (e) {
+          errors.push('timezone must be an IANA time zone identifier or "auto"');
+        }
+      } else {
+        errors.push('timezone must be a string or null');
+      }
     }
   } else {
     errors.push('Unknown settings category');

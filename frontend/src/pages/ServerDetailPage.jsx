@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { FaServer, FaUser, FaCheckCircle, FaExclamationTriangle, FaTimesCircle, FaChevronLeft, FaUserPlus, FaSearch, FaFileImport, FaFileExport } from 'react-icons/fa';
+import { FaServer, FaUser, FaCheckCircle, FaExclamationTriangle, FaTimesCircle, FaChevronLeft, FaUserPlus, FaSearch, FaFileImport, FaFileExport, FaKey } from 'react-icons/fa';
 import GlassSelect from '../components/GlassSelect.jsx';
 import AddUserForm from '../components/AddUserForm.jsx';
 import ConfirmModal from '../components/ConfirmModal.jsx';
@@ -275,11 +275,16 @@ function ServerDetailPage() {
 
   return (
     <>
-      {/* Back button above the header, aligned to the right margin */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', width: '100%', padding: '6px 0 0 0' }}>
+      {/* Back button above the header, plus Key Management link on the same row */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end', width: '100%', padding: '6px 0 0 0', gap: '8px' }}>
         <Link to="/server-list" className="back-link">
           <FaChevronLeft className="back-icon" aria-hidden /> <span>Back to Server List</span>
         </Link>
+        {(role === 'ADMIN' || userServerAdminFor.includes(Number(id))) && (
+          <Link to={`/servers/${id}/keys`} className="back-link" title="Key Management">
+            <FaKey className="back-icon" aria-hidden /> <span>Key Management</span>
+          </Link>
+        )}
       </div>
       <div className="header">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', width: '100%' }}>
@@ -294,6 +299,7 @@ function ServerDetailPage() {
               <FaFileExport className="btn-icon" aria-hidden />
               <span>Export</span>
             </button>
+            {/* Keys link moved to the top back-link row and now uses the same back-link styling */}
             {(role === 'ADMIN' || userServerAdminFor.includes(Number(id))) && (
               <>
                 <input type="file" accept=".xlsx" ref={fileInputRef} onChange={onImportFile} style={{ display: 'none' }} />

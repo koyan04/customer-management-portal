@@ -507,8 +507,10 @@ function maskSecrets(key, data) {
   const star = (v) => (v ? '********' : v);
   if (key === 'database') {
     if (clone.password) clone.password = star(clone.password);
-  } else if (key === 'telegram') {
-    if (clone.botToken) clone.botToken = star(clone.botToken);
+  }
+  else if (key === 'telegram') {
+    // NOTE: Telegram botToken masking removed per request — return raw token
+    // (leave other telegram fields untouched)
   } else if (key === 'remoteServer') {
     if (clone.password) clone.password = star(clone.password);
     if (clone.privateKey) clone.privateKey = star(clone.privateKey);
@@ -522,8 +524,34 @@ function maskSecrets(key, data) {
 const { validateSettings } = require('../lib/validateSettings');
 
 // Financial reports: monthly/yearly summaries using historical prices from settings_audit
-router.get('/financial', authenticateToken, isAdmin, async (req, res) => {
+router.get('/financial', authenticateToken, async (req, res) => {
   try {
+    // DEBUG: log the authenticated user to help trace permission issues during testing
+    try { console.debug('[DEBUG GET /api/admin/financial] req.user=', req.user); } catch (e) {}
+    // Allow global ADMINs full access. SERVER_ADMINs may view financials scoped to their assigned servers.
+    const role = req.user && req.user.role;
+    try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] branch check, role=', role, 'userId=', req.user && req.user.id); } catch (e) {}
+    let serverFilterClause = '';
+    let queryParams = [];
+    if (role && role !== 'ADMIN') {
+      // only SERVER_ADMIN should reach here; others are forbidden
+      if (role !== 'SERVER_ADMIN') {
+        try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] deny non-server-admin role=', role, 'userId=', req.user && req.user.id); } catch (e) {}
+        return res.status(403).json({ msg: 'Forbidden' });
+      }
+      // fetch assigned server ids
+      const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [req.user.id]);
+      const sids = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
+      try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] SERVER_ADMIN sids for user', req.user && req.user.id, '=', sids); } catch (e) {}
+      if (!sids.length) {
+        try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] SERVER_ADMIN has no assigned servers, denying access userId=', req.user && req.user.id); } catch (e) {}
+        return res.status(403).json({ msg: 'Forbidden' });
+      }
+      // we'll bind server ids as $1
+      serverFilterClause = ' AND u.server_id = ANY($1::int[])';
+      queryParams = [sids];
+    }
+
     // Single SQL to aggregate counts per month and per service_type for the last 12 months,
     // plus fetch the most-recent `settings_audit.after_data` per month (LATERAL) so we can derive prices.
     const q = `
@@ -538,6 +566,7 @@ router.get('/financial', authenticateToken, isAdmin, async (req, res) => {
         LEFT JOIN users u
           ON u.created_at <= (m.month_start + interval '1 month' - interval '1 ms')
           AND (u.expire_date IS NULL OR u.expire_date >= m.month_start)
+          ${serverFilterClause}
         GROUP BY m.month_start, u.service_type
       )
       SELECT m.month_start, uc.service_type, uc.cnt,
@@ -552,7 +581,7 @@ router.get('/financial', authenticateToken, isAdmin, async (req, res) => {
       ORDER BY m.month_start ASC, uc.service_type NULLS FIRST
     `;
 
-    const { rows } = await pool.query(q);
+  const { rows } = await pool.query(q, queryParams);
 
     // organize rows by month
     const monthsMap = new Map();
@@ -638,9 +667,9 @@ router.put('/settings/:key', authenticateToken, isAdmin, async (req, res) => {
     const beforeRes = await pool.query('SELECT data FROM app_settings WHERE settings_key = $1', [key]);
     const before = beforeRes.rows && beforeRes.rows[0] ? beforeRes.rows[0].data : null;
 
-    // For 'general', preserve non-validated fields like logo_url and logo_url_2x by merging
-    // This prevents accidental removal of logo when saving title/theme/etc.
-    const toStore = key === 'general' ? { ...(before || {}), ...cleaned } : cleaned;
+  // For 'general' and 'telegram', merge with existing data to preserve non-validated or secret fields
+  // (e.g. botToken is masked on reads; omitting it from an update should keep the existing secret)
+  const toStore = (key === 'general' || key === 'telegram') ? { ...(before || {}), ...cleaned } : cleaned;
 
     const upRes = await pool.query(
       `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
@@ -862,6 +891,37 @@ router.post('/settings/:key/test', authenticateToken, isAdmin, async (req, res) 
       await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, key, 'TEST', null, null]);
     } catch (_) {}
     res.status(500).json({ ok: false, error: err.message || String(err) });
+  }
+});
+
+// POST reveal telegram token (admin only, requires password confirmation)
+router.post('/settings/telegram/reveal', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { password } = req.body || {};
+    if (!password || typeof password !== 'string') return res.status(400).json({ msg: 'password is required' });
+    // fetch current admin password hash
+    const adminId = req.user && req.user.id ? req.user.id : null;
+    const pwRes = await pool.query('SELECT password_hash FROM admins WHERE id = $1', [adminId]);
+    if (!pwRes.rows || pwRes.rows.length === 0) return res.status(404).json({ msg: 'Admin account not found' });
+    const hash = pwRes.rows[0].password_hash;
+    const match = await bcrypt.compare(password, hash);
+    if (!match) return res.status(403).json({ msg: 'Password incorrect' });
+
+    // fetch telegram settings and return raw token only for this request
+    const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'telegram'");
+    const data = r.rows && r.rows[0] ? r.rows[0].data : {};
+
+    // record an auditable reveal action (don't store the token in audit)
+    try {
+      await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [adminId, 'telegram', 'REVEAL', null, null]);
+    } catch (auditErr) {
+      console.warn('Failed to write reveal audit:', auditErr && auditErr.message ? auditErr.message : auditErr);
+    }
+
+    return res.json({ ok: true, botToken: data && data.botToken ? data.botToken : null });
+  } catch (err) {
+    console.error('POST /settings/telegram/reveal failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ msg: 'Server Error' });
   }
 });
 

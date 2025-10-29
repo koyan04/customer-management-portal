@@ -11,6 +11,18 @@ Files changed
 - backend/tests/validateSettings.test.js
 - backend/README.md
 
+Time zone setting
+-----------------
+
+This PR also adds a new "Time Zone" option under Settings > General. The server accepts a `timezone` field (either `null`/`auto` to use the client's browser time, or a valid IANA time zone string such as `America/New_York`). The backend validator (`backend/lib/validateSettings.js`) validates IANA identifiers using `Intl.DateTimeFormat` and stores the value in `app_settings.general.timezone`.
+
+Client behavior:
+- The frontend persists the selected timezone to `localStorage` under `app.timezone` so formatting takes effect immediately for the current browser session.
+- Date/time displays across the UI are formatted using the app-selected timezone (when set) via a small helper `frontend/src/lib/timezone.js` which uses `Intl.DateTimeFormat` with the `timeZone` option.
+
+Migration notes:
+- This is non-destructive; if `timezone` is not present existing behavior (browser-local times) remains. Reviewers: please confirm the preferred default (we currently use `auto` to preserve browser-local formatting).
+
 Migration and run checklist (recommended)
 1. Create a DB backup (dump/snapshot).
 2. Run migrations: `npm run migrate` from `backend/`.

@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 import { FaServer, FaUsers, FaCheckCircle, FaExclamationTriangle, FaTimesCircle, FaNetworkWired, FaGlobe, FaLeaf, FaCube, FaInfinity, FaChartPie, FaUserShield, FaChartBar, FaChevronDown } from 'react-icons/fa';
 import { Link } from 'react-router-dom';
 import Modal from '../components/Modal.jsx';
+import formatWithAppTZ from '../lib/timezone';
 
 function DashboardPage() {
   const [servers, setServers] = useState([]);
@@ -455,7 +456,7 @@ function DashboardPage() {
                 </thead>
                 <tbody>
                   {statusModalData.users.map(u => {
-                    const expText = new Date(u.expire_date).toLocaleDateString('en-GB');
+                    const expText = formatWithAppTZ(u.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB');
                     return (
                       <tr key={u.id}>
                         <td className="account-with-status">
@@ -468,7 +469,7 @@ function DashboardPage() {
                         </td>
                         <td>{u.service_type}</td>
                         <td>{u.server_name}</td>
-                        <td>
+                          <td>
                           {expText}
                           {statusModal.type === 'expired' ? (
                             <span className="status-badge expired" aria-label="Expired">Expired</span>
@@ -516,7 +517,7 @@ function DashboardPage() {
                       <td>{u.account_name}</td>
                       <td>{normalizeService(u.service_type)}</td>
                       <td>{u.server_name}</td>
-                      <td>{u.expire_date ? new Date(u.expire_date).toLocaleDateString('en-GB') : '—'}</td>
+                      <td>{u.expire_date ? formatWithAppTZ(u.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB') : '—'}</td>
                     </tr>
                   ))}
                 </tbody>

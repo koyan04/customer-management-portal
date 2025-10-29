@@ -14,3 +14,12 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+
+Time Zone setting
+-----------------
+
+This app now supports a global Time Zone setting (Settings → General → Time zone). Choose `Auto` to keep the browser-local display or pick an IANA time zone (for example `UTC`, `America/New_York`, `Europe/London`).
+
+Implementation notes:
+- The selected value is persisted server-side in `app_settings.general.timezone` and propagated to clients on save.
+- The frontend formats displayed dates/times using `frontend/src/lib/timezone.js` which uses `Intl.DateTimeFormat` and the `timeZone` option. When `auto` is selected the browser's local timezone is used.
