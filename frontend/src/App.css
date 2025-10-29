@@ -22,6 +22,37 @@ body {
   --muted-text: #9fbfb3;
 }
 
+/* Top progress bar (indeterminate) used for page-level loading states */
+.top-progress {
+  height: 4px;
+  width: 100%;
+  position: relative;
+  overflow: hidden;
+  background: transparent;
+}
+.top-progress .top-progress-bar {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 100%;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, rgba(0,191,165,0.9), rgba(54,162,235,0.95));
+  transition: transform 400ms cubic-bezier(.2,.8,.2,1);
+}
+.top-progress .top-progress-stripe {
+  position: absolute;
+  left: -30%; top: 0; bottom: 0; width: 30%;
+  background: linear-gradient(90deg, rgba(255,255,255,0.12), rgba(255,255,255,0.06));
+  transform: skewX(-25deg) translateX(-100%);
+  opacity: 0.9;
+}
+.top-progress.active .top-progress-bar { transform: translateX(0%); }
+.top-progress.active .top-progress-stripe { animation: top-progress-stripe 1.2s linear infinite; transform: skewX(-25deg) translateX(0%); }
+@keyframes top-progress-stripe {
+  0% { transform: skewX(-25deg) translateX(-120%); }
+  100% { transform: skewX(-25deg) translateX(220%); }
+}
+
+
 /* Light theme variable overrides */
 body.theme-light {
   --accent: #00bfa5;
@@ -912,9 +943,22 @@ body.theme-light .add-server-form button[type="submit"]:hover {
 .form-grid label.full { grid-column: 1 / -1; }
 .form-grid label.chk { flex-direction: row; align-items: center; gap: 8px; }
 .actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
-.btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #2a4a68; border-radius: 6px; background: #0f1e2b; color: #e0eff3; cursor: pointer; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #2a4a68; border-radius: 6px; background: #0f1e2b; color: #e0eff3; cursor: pointer; transition: transform 160ms cubic-bezier(.2,.8,.2,1), box-shadow 160ms ease, background-color 140ms ease, border-color 140ms ease, color 140ms ease; will-change: transform, box-shadow; text-decoration: none; }
 .btn.primary { background: #0b7285; color: #fff; border-color: #0b7285; }
 .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Global hover/active/focus animations for primary button family
+  Keep these subtle so they don't clash with component-specific hover rules. */
+.btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(2,8,12,0.36); }
+.btn:active:not(:disabled) { transform: translateY(0); }
+.btn:focus-visible { outline: none; box-shadow: 0 0 0 6px rgba(0,191,165,0.08); }
+
+/* Slightly stronger hover for primary buttons to emphasize action */
+.btn.primary:hover:not(:disabled) { transform: translateY(-2px) scale(1.01); box-shadow: 0 12px 34px rgba(4,22,18,0.32); }
+.btn.primary:active:not(:disabled) { transform: translateY(0) scale(0.999); }
+
+/* Ensure disabled buttons don't get animated transforms */
+.btn:disabled, .btn[disabled] { transform: none !important; box-shadow: none !important; }
 @media (max-width: 720px) { .form-grid { grid-template-columns: 1fr; } }
 
 /* Desktop layout tweaks for Settings: place theme + auto-logout + show-tooltips in left column, logo in right */
@@ -957,6 +1001,33 @@ body.theme-light .general-group {
   border-color: rgba(11,124,117,0.12);
   background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(255,255,255,0.92));
 }
+
+/* Time zone group: visually separate the timezone selector with a subtle bordered background
+   that adapts to the selected theme (dark by default, light when body.theme-light is present). */
+.timezone-group {
+  border: 1px solid rgba(255,255,255,0.04);
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.00));
+  padding: 10px 12px;
+  border-radius: 8px;
+  display: block;
+  box-shadow: 0 6px 18px rgba(2,8,12,0.28); /* subtle lift for dark theme */
+}
+.timezone-group .timezone-label { display: block; font-weight: 700; color: #dff7f0; margin-bottom: 6px; }
+.timezone-group .timezone-select { width: 100%; }
+
+/* Focus ring when any control inside the timezone group receives focus */
+.timezone-group:focus-within {
+  box-shadow: 0 0 0 6px rgba(0,191,165,0.06), 0 8px 20px rgba(0,0,0,0.28);
+  border-color: rgba(0,191,165,0.22);
+}
+
+/* Light theme variant for timezone group: softer glass background and mint-tinted border */
+body.theme-light .timezone-group {
+  border-color: rgba(11,124,117,0.12);
+  background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,255,255,0.94));
+  box-shadow: 0 6px 18px rgba(6,51,45,0.06), inset 0 1px rgba(255,255,255,0.72);
+}
+body.theme-light .timezone-group .timezone-label { color: #083d36; }
 
 /* Financial group: match general-group visuals for consistency */
 .financial-group {
@@ -1982,6 +2053,61 @@ body.theme-light .avatar-menu-subheader { color: #0d3d36; opacity: 0.85; }
   font-size: 1.05rem; /* slightly smaller to help fit on one line */
 }
 
+/* Key Management Page Styles */
+.key-management-page {
+  padding: 0.75rem 0.5rem;
+}
+.key-management-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+.key-search { display: flex; gap: 0.5rem; align-items: center; }
+.key-search .search-input {
+  min-width: 260px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.02);
+  color: inherit;
+}
+.key-actions { display: flex; gap: 0.5rem; align-items: center; }
+.key-table { width: 100%; border-collapse: collapse; min-width: 0; }
+.key-table thead th { text-align: left; padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.04); font-weight: 800; color: var(--icon-color); }
+.key-table tbody td { padding: 10px 12px; border-bottom: 1px solid rgba(255,255,255,0.03); vertical-align: middle; }
+.key-table tbody tr:hover { background: rgba(255,255,255,0.02); }
+.key-table .action-btn { background: transparent; border: 1px solid rgba(255,255,255,0.04); color: inherit; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.key-table .action-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.36); }
+
+/* Key box (modal-like inline panel used to view/edit a key) */
+.key-box {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-elev);
+  padding: 12px;
+  border-radius: 10px;
+  max-width: 720px;
+}
+.key-box .form-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+.key-box label { font-weight: 700; color: var(--icon-color); min-width: 140px; }
+.key-box input[type="text"] { flex: 1; padding: 8px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); background: rgba(255,255,255,0.02); color: inherit; }
+.key-box .inline-btn { padding: 6px 10px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.06); background: transparent; cursor: pointer; }
+.key-box .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
+
+/* Light theme variants */
+body.theme-light .key-search .search-input,
+body.theme-light .key-box input[type="text"] { background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(255,255,255,0.92)); border: 1px solid #dff4ee; color: #083d36; }
+body.theme-light .key-table thead th { color: #064e3b; }
+body.theme-light .key-table .action-btn { border-color: #bff4ea; color: #083d36; background: rgba(255,255,255,0.92); }
+body.theme-light .key-box { background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(255,255,255,0.92)); border: 1px solid #dff4ee; color: #083d36; }
+
+@media (max-width: 720px) {
+  .key-search .search-input { min-width: 100%; }
+  .key-box label { min-width: 120px; }
+}
+
 /* Subtitle under the header line used in profile modal to show the name */
 .modal-title .modal-subtitle {
   margin-top: 0.08rem; /* nudge upward a bit more */
@@ -2056,6 +2182,25 @@ body.theme-light .avatar-menu-subheader { color: #0d3d36; opacity: 0.85; }
     font-size: 0.86rem;
     letter-spacing: 0.1px;
   }
+
+/* Make server detail header more compact on small screens so title + controls fit on one line */
+@media (max-width: 520px) {
+  .header { padding: 6px 0; }
+  .server-title {
+    font-size: 1rem; /* smaller title text */
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    white-space: nowrap; /* keep on single line */
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 60vw; /* allow space for action buttons on the right */
+  }
+  .server-title svg { width: 16px; height: 16px; }
+  /* tighten header right-side controls slightly to make room */
+  .header > div > div:last-child { gap: 6px; }
+  .header .btn, .header .back-link, .header .add-viewer-btn { font-size: 0.92rem; padding: 0.4rem 0.7rem; }
+}
 }
 
 /* iOS Safari: force dynamic viewport height to remove bottom gap on mobile */
@@ -2357,7 +2502,7 @@ body.theme-light .avatar-menu-subheader { color: #0d3d36; opacity: 0.85; }
   position: absolute;
   right: 10px;
   /* vertically center within the sticky .modal-title */
-  top: 50%;
+  top: 7%;
   transform: translateY(-50%);
   /* brighter alert red pill using #ff5b5b */
   background: linear-gradient(180deg, rgba(255,91,91,0.18), rgba(255,91,91,0.10));
@@ -2600,14 +2745,23 @@ body.theme-light .modal-title h3 { color: #ff5b5b !important; }
 }
 
 .btn-danger {
-  background-color: #c93c3c;
+  /* Red glass theme that matches the app's glass panels */
+  background: linear-gradient(180deg, rgba(139,12,12,0.18), rgba(139,12,12,0.12));
   color: #fff;
+  border: 1px solid rgba(220, 38, 38, 0.22);
+  transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
 }
 
 .btn-danger:hover {
-  background-color: #a63232;
+  background: linear-gradient(180deg, rgba(180,30,30,0.22), rgba(180,30,30,0.16));
   transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(166,50,50,0.2);
+  box-shadow: 0 10px 30px rgba(139,12,12,0.28);
+}
+
+body.theme-light .btn-danger {
+  background: linear-gradient(180deg, rgba(255,238,238,0.95), rgba(255,230,230,0.94));
+  color: #6b0f0f;
+  border: 1px solid rgba(139,12,12,0.12);
 }
 
 /* Confirmation modal specific tweaks */
@@ -2669,6 +2823,20 @@ body.theme-light .back-link:hover {
     linear-gradient(90deg, rgba(147,249,224,0.36), rgba(147,249,224,0.22));
 }
 body.theme-light .back-link:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(0,191,165,0.40), 0 8px 20px rgba(6,51,45,0.08); }
+
+/* Mobile: make back-link variants more compact so multiple links fit on a single row */
+@media (max-width: 520px) {
+  .back-link {
+    padding: 0.22rem 0.5rem; /* slightly reduced padding */
+    border-radius: 8px;
+    font-size: 0.95rem; /* reduce text size so two buttons fit */
+    gap: 0.35rem; /* slightly tighter gap between icon and text */
+  }
+  .back-link .back-icon { width: 14px; height: 14px; }
+  .back-link span { font-size: 0.95rem; white-space: nowrap; }
+  /* If two back-links appear next to each other, reduce their gap slightly */
+  .back-link + .back-link { margin-left: 6px; }
+}
 
 .page-content {
   display: flex;
@@ -3416,6 +3584,31 @@ body.theme-light .last-seen-pill {
   .user-actions .icon-btn { padding: 0.06rem; width: 26px; height: 26px; }
 }
 
+/* Key Management / User table mobile-friendly overrides
+   - Make table responsive on narrow viewports
+   - Set column width ratios: 25%, 25%, 50% (first, second, action)
+   - Ensure inputs and key boxes wrap nicely */
+@media (max-width: 520px) {
+  .user-table { min-width: 0; width: 100%; }
+  .user-table th:first-child, .user-table td:first-child { width: 25%; }
+  .user-table th:nth-child(2), .user-table td:nth-child(2) { width: 30%; }
+  .user-table th:nth-child(3), .user-table td:nth-child(3) { width: 45%; }
+
+  /* Key management specific adjustments */
+  .key-table { min-width: 0; width: 100%; }
+  .key-table thead th { font-size: 0.9rem; }
+  .key-table tbody td { padding: 8px 10px; }
+  .key-table .action-btn, .key-table button.btn { padding: 6px 8px; font-size: 0.92rem; }
+
+  /* Key box compacting */
+  .key-box { padding: 10px; }
+  .key-box label { min-width: 100px; }
+  .key-box input[type="text"] { font-size: 0.95rem; }
+
+  /* Stack modal actions vertically for small screens if space is tight */
+  .modal-content .modal-actions { flex-direction: column-reverse; gap: 0.5rem; }
+}
+
   /* Tighten further for iPhone 12-ish width (~390px) so icons fit comfortably */
   @media (max-width: 400px) and (min-width: 361px) {
     .user-actions { gap: 0.02rem; }
@@ -3738,6 +3931,17 @@ body.theme-light .last-seen-pill {
 }
 .status-users-modal .status-badge.soon { background: rgba(255,193,7,0.14); border-color: rgba(255,193,7,0.32); color: #ffe9a6; }
 .status-users-modal .status-badge.expired { background: rgba(220,53,69,0.16); border-color: rgba(220,53,69,0.34); color: #ffc3ca; }
+
+/* Reduce the modal header size specifically for the status (Soon/Expired) modal
+   so the title doesn't inherit the very large global modal title size. This
+   keeps other modals unchanged while fixing the visual for status banners. */
+.modal-content.status-users-modal .modal-title h3 {
+  font-size: 1.05rem; /* match other modal h3 sizing */
+  font-weight: 700;
+  margin: 0 0 0.5rem 0;
+  padding: 0 0 0.5rem 0;
+  white-space: normal; /* allow wrapping if needed */
+}
 
 /* make stat cards clickable without losing style */
 .stat-card.as-button {
@@ -4424,6 +4628,85 @@ textarea {
   .user-table th:nth-child(4), .user-table td:nth-child(4) { width: 10%; } /* Duration */
   .user-table th:nth-child(5), .user-table td:nth-child(5) { width: 12%; }  /* Expire Date (reduced) */
   .user-table th:nth-child(6), .user-table td:nth-child(6) { width: 21%; } /* Actions (expanded) */
+
+  /* For Key Management page, the first column is checkboxes; keep it narrow on desktop */
+  .key-management-page .user-table th:nth-child(1), .key-management-page .user-table td:nth-child(1) { width: 2%; }
+}
+
+/* Global delete popover (pop-up box) - theme-aware and available on all viewports */
+.delete-menu-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  background: linear-gradient(180deg, rgba(15,31,46,0.94), rgba(15,31,46,0.90));
+  border: 1px solid rgba(255,255,255,0.06);
+  padding: 8px;
+  border-radius: 10px;
+  box-shadow: 0 18px 40px rgba(2,8,12,0.6);
+  z-index: 2200;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 180px;
+}
+.delete-menu-popover::before {
+  /* small caret */
+  content: '';
+  position: absolute;
+  right: 12px;
+  top: -6px;
+  width: 12px;
+  height: 12px;
+  background: linear-gradient(180deg, rgba(15,31,46,0.94), rgba(15,31,46,0.90));
+  transform: rotate(45deg);
+  border-left: 1px solid rgba(255,255,255,0.04);
+  border-top: 1px solid rgba(255,255,255,0.04);
+}
+.delete-menu-popover .delete-menu-item {
+  background: transparent;
+  color: #e6f7f3;
+  border: none;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 800;
+}
+.delete-menu-popover .delete-menu-item:hover { background: rgba(255,255,255,0.03); }
+
+/* Light theme variant for the popover */
+body.theme-light .delete-menu-popover {
+  background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,255,255,0.94));
+  border: 1px solid rgba(11,124,117,0.12);
+  color: #083d36;
+}
+body.theme-light .delete-menu-popover::before { background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,255,255,0.94)); border-left: 1px solid rgba(11,124,117,0.08); border-top: 1px solid rgba(11,124,117,0.08); }
+
+/* Danger button: red glass theme matching other .btn sizing
+   Ensure header-level action buttons on Key Management page share
+   the same desktop height/padding as the prominent Add button. */
+@media (min-width: 769px) {
+  /* Target only the header action buttons on the Key Management page so
+     we don't change global .btn sizing elsewhere. This keeps the Delete
+     button visually aligned with the Add Key and Back buttons on desktop. */
+  .key-management-page .key-actions .btn,
+  .key-management-page .key-actions .btn-danger {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.9rem 1.2rem; /* match Add button rhythm */
+    height: 56px;
+    min-height: 56px;
+    border-radius: 8px;
+    box-sizing: border-box;
+    font-weight: 800; /* keep visual weight similar to Add */
+  }
+
+  /* Slightly tighten the internal icon spacing so the trash icon sits nicely */
+  .key-management-page .key-actions .btn-danger .btn-icon,
+  .key-management-page .key-actions .btn .btn-icon {
+    margin-right: 0.45rem;
+  }
 }
 
 /* Increase inline Add form buttons height so Cancel and Add align and are easier to tap */
@@ -4859,9 +5142,200 @@ body.theme-light .back-to-top-btn {
   border-color: rgba(0, 191, 165, 0.35);
   box-shadow: 0 8px 20px rgba(0,0,0,0.12), inset 0 1px rgba(255,255,255,0.8);
 }
+
+/* Specific override for Key Management table on small screens.
+   Use a more specific selector so it reliably overrides other .user-table rules
+   and enforce the requested 25% / 25% / 50% column ratio. */
+@media (max-width: 520px) {
+  .key-management-page .user-table {
+    table-layout: fixed; /* ensure widths are respected */
+    min-width: 0;
+    width: 100%;
+  }
+
+  .key-management-page .user-table th:nth-child(1),
+  .key-management-page .user-table td:nth-child(1) { width: 30%; }
+
+  .key-management-page .user-table th:nth-child(2),
+  .key-management-page .user-table td:nth-child(2) { width: 25%; }
+
+  .key-management-page .user-table th:nth-child(3),
+  .key-management-page .user-table td:nth-child(3) { width: 45%; }
+
+  /* Make sure text truncates instead of expanding the table
+     and keep action buttons usable on narrow screens. */
+  .key-management-page .user-table th, .key-management-page .user-table td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Compact header and buttons for Key Management page so they fit on one line */
+  .key-management-page h2 {
+    font-size: 1rem; /* smaller title on narrow screens */
+    line-height: 1.1;
+    margin: 0; /* tighten spacing */
+    display: inline-flex; /* keep icon and text on one line */
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .key-management-page .btn {
+    font-size: 0.88rem; /* slightly smaller buttons */
+    padding: 6px 8px; /* tighter padding to save horizontal space */
+    gap: 6px;
+  }
+
+  /* Reduce spacing in the header action group so Back + Add fit more easily */
+  .key-management-page > div[style] > div {
+    gap: 6px; /* override inline style gap to be smaller on mobile */
+  }
+
+  /* Stack header and action buttons into separate rows on mobile */
+  .key-management-page > div:first-child {
+    /* parent already has inline display:flex; set column direction for mobile */
+    flex-direction: column;
+    align-items: flex-start; /* left-align header and buttons */
+    gap: 17px;
+  }
+
+  .key-management-page > div:first-child h2 {
+    width: 100%;
+  }
+
+  .key-management-page > div:first-child > div {
+    width: 100%;
+    display: flex;
+    justify-content: flex-start;
+    gap: 10px;
+    flex-wrap: wrap; /* allow buttons to wrap if needed */
+  }
+
+  
+}
 body.theme-light .back-to-top-btn:hover {
   background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(242,246,248,0.92));
   border-color: rgba(0, 191, 165, 0.55);
   box-shadow: 0 12px 24px rgba(0,0,0,0.16), inset 0 1px rgba(255,255,255,0.9);
+}
+
+/* Settings page: additional mobile-first overrides to ensure all elements are usable on phones */
+@media (max-width: 720px) {
+  /* Page container spacing */
+  .settings-page { padding: 10px; gap: 0.6rem; }
+
+  /* Tabs: 2x2 grid for mobile — equal-width buttons in two columns */
+  .settings-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.5rem;
+    padding: 6px;
+  }
+  .settings-tabs .tab-btn {
+    width: 100%;
+    height: 48px; /* consistent height */
+    padding: 0 0.6rem;
+    font-size: 0.95rem;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+
+  /* Content panel: full width and reduced padding */
+  .settings-content { padding: 0.75rem; }
+  .settings-content .tab-panel { padding: 0.6rem; }
+
+  /* Forms: single column for mobile, larger inputs and increased touch targets */
+  .form-grid { grid-template-columns: 1fr; gap: 10px; }
+  .form-grid label { font-size: 0.98rem; }
+  .form-grid label span { font-size: 0.95rem; }
+  .form-grid input, .form-grid textarea, .form-grid select {
+    padding: 0.8rem 0.9rem;
+    font-size: 1rem;
+    border-radius: 8px;
+  }
+  .form-grid label.full { grid-column: 1 / -1; }
+
+  /* General tab specific: ensure grouped fields adapt and align nicely on mobile */
+  /* Theme field and auto-logout stack neatly */
+  .general-group .theme-field,
+  .general-group .auto-logout-field,
+  .general-group .show-tooltips-field {
+    width: 100%;
+    display: block;
+  }
+
+  /* Auto-group wrapper should not try to float beside theme on mobile */
+  .form-grid .auto-group-wrapper { grid-column: 1 / -1; }
+
+  /* Ensure the pricing inputs (which are sometimes rendered via inline styles) collapse to single column */
+  .financial-group > div,
+  .financial-group div[style] {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 0.6rem !important;
+  }
+
+  /* Make pricing inputs expand full width and be easy to tap */
+  .financial-group input[type="number"], .financial-group input[type="text"] {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* Logo preview & upload: stack vertically with explanatory text */
+  .logo-field { display: flex; flex-direction: column; gap: 0.5rem; }
+  .logo-preview-row { align-items: center; }
+  .logo-preview-row > div { flex: 0 0 auto; }
+  .logo-preview-row img { display: block; }
+
+  /* Make checkbox + label rows wrap neatly and increase hit area */
+  .form-grid label.chk { flex-direction: row; align-items: center; gap: 10px; }
+  .form-grid label.chk input[type="checkbox"] { width: 20px; height: 20px; }
+
+  /* Ensure small helper text sits below inputs and not to the right */
+  .logo-preview-row small,
+  .auto-group .auto-group-sub { display: block; margin-top: 0.25rem; }
+
+  /* Buttons in the actions row: make primary stand out and full-width */
+  .actions .btn.primary { width: 100%; }
+
+  /* Keep the settings status message readable on mobile */
+  .settings-status { font-size: 0.95rem; padding: 0.6rem; }
+
+  /* Grouped panels become stacked blocks with comfortable spacing */
+  .general-group, .financial-group, .auto-group, .timezone-group { display: block; padding: 10px; margin-bottom: 8px; }
+
+  /* Logo preview: make preview larger and file input full-width */
+  .logo-preview-row { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .logo-preview-row > div { width: 56px; height: 56px; min-width: 56px; min-height: 56px; border-radius: 10px; overflow: hidden; }
+  .logo-preview-row img { width: 56px; height: 56px; object-fit: cover; border-radius: 10px; }
+  .logo-field input[type="file"] { width: 100%; }
+
+  /* Timezone and selects expand to full width */
+  .timezone-group select, .form-grid select { width: 100%; }
+
+  /* Actions: stack vertically so buttons are reachable and large */
+  .actions { flex-direction: column; align-items: stretch; gap: 0.6rem; }
+  .actions .btn { width: 100%; padding: 0.85rem; font-size: 1rem; }
+
+  /* Inline form buttons should stack on mobile */
+  .form-buttons { display: flex; flex-direction: column; gap: 0.6rem; }
+  .form-buttons button { width: 100%; }
+
+  /* Improve spacing for file inputs and selects on mobile (touch targets) */
+  input[type="file"], select { touch-action: manipulation; }
+
+  /* Status block adjustments for narrow screens */
+  .db-status { grid-template-columns: repeat(2, minmax(0,1fr)); }
+}
+
+@media (max-width: 420px) {
+  /* Slightly tighter sizing on narrow phones */
+  .logo-preview-row > div { width: 48px; height: 48px; }
+  .settings-tabs .tab-btn { padding: 0.45rem 0.6rem; font-size: 0.92rem; min-height: 42px; }
+  .form-grid input, .form-grid select, .form-grid textarea { font-size: 0.96rem; padding: 0.7rem; }
+  .settings-page { padding: 8px; }
 }
 

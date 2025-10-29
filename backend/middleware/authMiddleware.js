@@ -45,9 +45,14 @@ const isAdmin = async (req, res, next) => {
     if (!req.user) return res.status(401).json({ msg: 'Unauthorized' });
     const { id } = req.user;
     const { rows } = await pool.query('SELECT role FROM admins WHERE id = $1', [id]);
-    if (rows.length === 0) return res.status(403).json({ msg: 'User not found' });
+    if (rows.length === 0) {
+      try { console.warn('[isAdmin] user not found', { path: req.originalUrl, method: req.method, userId: id }); } catch (e) {}
+      return res.status(403).json({ msg: 'User not found' });
+    }
+    // DEBUG: log resolved DB role vs token role for easier tracing of permission denials
+    try { if (process.env.NODE_ENV !== 'production') console.debug('[isAdmin] check', { path: req.originalUrl, method: req.method, tokenUser: req.user, dbRole: rows[0].role }); } catch (e) {}
     if (rows[0].role !== 'ADMIN') {
-      try { console.warn('[isAdmin] deny', { path: req.originalUrl, method: req.method, userId: id, role: rows[0].role }); } catch (e) {}
+      try { console.warn('[isAdmin] deny', { path: req.originalUrl, method: req.method, userId: id, tokenRole: req.user && req.user.role, dbRole: rows[0].role }); } catch (e) {}
       return res.status(403).json({ msg: 'Admin role required' });
     }
     next();

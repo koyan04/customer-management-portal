@@ -1,4 +1,5 @@
 import React from 'react';
+import formatWithAppTZ from '../../lib/timezone';
 import { FaCog, FaTrashAlt } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -64,8 +65,8 @@ function UserTable({ users, onEdit, onDelete }) {
                   <td data-label="Service">{user.service_type}</td>
                   <td data-label="Duration">{formatDuration(user.expire_date)}</td>
                   <td data-label="Expire Date">
-                    {/* THIS LINE FIXES THE DATE FORMAT */}
-                    {new Date(user.expire_date).toLocaleDateString('en-GB')}
+                    {/* THIS line fixes the date format and uses app timezone */}
+                    {formatWithAppTZ(user.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB')}
                   </td>
                   <td data-label="Actions">
                     <div className="user-actions">

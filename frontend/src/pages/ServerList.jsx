@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
@@ -16,9 +16,29 @@ function ServerList({ servers, fetchServers }) {
   const firstIndex = (page - 1) * pageSize;
   const visibleServers = Array.isArray(servers) ? servers.slice(firstIndex, firstIndex + pageSize) : [];
   const [copiedIp, setCopiedIp] = useState(null);
+  const [userServerAdminFor, setUserServerAdminFor] = useState([]);
   // get current user role from local storage or AuthContext if available
   let role = null;
   try { role = JSON.parse(localStorage.getItem('user'))?.role || (localStorage.getItem('user') || null); } catch(e) { role = null; }
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+        const token = localStorage.getItem('token');
+        const res = await axios.get(`${backendOrigin}/api/my-server-admins`, { headers: { Authorization: `Bearer ${token}` } });
+        const list = res && res.data && Array.isArray(res.data.server_admin_for) ? res.data.server_admin_for : (res && res.data && res.data.server_admin_for ? res.data.server_admin_for : []);
+        if (!mounted) return;
+        // normalize to numbers
+        setUserServerAdminFor(Array.isArray(list) ? list.map((v) => Number(v)) : []);
+      } catch (e) {
+        if (!mounted) return;
+        setUserServerAdminFor([]);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
 
   const handleDelete = async (id) => {
     try {
@@ -90,14 +110,16 @@ function ServerList({ servers, fetchServers }) {
                 </div>
               </div>
               <div className="server-actions">
-                { (role === 'ADMIN') && (
+                { ((role === 'ADMIN') || userServerAdminFor.includes(Number(server.id))) && (
                   <>
-                    <button onClick={() => setServerToEdit(server)} className="icon-btn edit-btn">
+                    <button onClick={() => setServerToEdit(server)} className="icon-btn edit-btn" title="Edit server">
                       <FaCog />
                     </button>
-                    <button onClick={() => setServerToDelete(server)} className="icon-btn delete-btn">
-                      <FaTrashAlt />
-                    </button>
+                    { role === 'ADMIN' && (
+                      <button onClick={() => setServerToDelete(server)} className="icon-btn delete-btn" title="Delete server">
+                        <FaTrashAlt />
+                      </button>
+                    ) }
                   </>
                 ) }
               </div>

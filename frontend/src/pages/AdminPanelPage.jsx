@@ -5,9 +5,12 @@ import AdminEditorForm from '../components/AdminEditorForm.jsx';
 import { FaTrashAlt, FaUserPlus, FaTools, FaSearch, FaInfoCircle } from 'react-icons/fa';
 import Modal from '../components/Modal.jsx';
 import { motion, AnimatePresence } from 'framer-motion';
+import formatWithAppTZ, { isSameDayInAppTZ } from '../lib/timezone';
+import TopProgressBar from '../components/TopProgressBar.jsx';
 
 function AdminPanelPage() {
   const { token, user } = useAuth();
+  const [loading, setLoading] = useState(true);
   const [accounts, setAccounts] = useState([]);
   const [servers, setServers] = useState([]);
   const [query, setQuery] = useState('');
@@ -17,6 +20,7 @@ function AdminPanelPage() {
   useEffect(() => {
     if (!token) return;
     (async () => {
+      setLoading(true);
       try {
         const r = await axios.get('/api/admin/accounts', { headers: { Authorization: `Bearer ${token}` } });
         const d = r.data;
@@ -31,10 +35,12 @@ function AdminPanelPage() {
         const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
         const rs = await axios.get(backendOrigin + '/api/servers', { headers: { Authorization: `Bearer ${token}` } });
         const d2 = rs.data;
-  const normalized2 = Array.isArray(d2) ? d2 : (d2 && Array.isArray(d2.data) ? d2.data : (d2 && Array.isArray(d2.servers) ? d2.servers : []));
+        const normalized2 = Array.isArray(d2) ? d2 : (d2 && Array.isArray(d2.data) ? d2.data : (d2 && Array.isArray(d2.servers) ? d2.servers : []));
         setServers(normalized2);
       } catch (err) {
         console.error('Failed to fetch servers with backend origin', err);
+      } finally {
+        setLoading(false);
       }
     })();
   }, [token]);
@@ -135,8 +141,8 @@ function AdminPanelPage() {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return null;
       const now = new Date();
-      const sameDay = d.toDateString() === now.toDateString();
-      return sameDay ? ('Today ' + d.toLocaleTimeString()) : d.toLocaleString();
+      const sameDay = isSameDayInAppTZ(d, now);
+      return sameDay ? ('Today ' + formatWithAppTZ(d, { timeStyle: 'short' })) : formatWithAppTZ(d, { dateStyle: 'medium', timeStyle: 'short' });
     } catch (_) { return null; }
   };
 
@@ -199,6 +205,7 @@ function AdminPanelPage() {
 
   return (
     <div className="admin-panel">
+      <TopProgressBar active={loading} />
       <div className="admin-header">
         <div className="admin-header-left">
           <FaTools className="admin-header-icon" aria-hidden="true" />
@@ -376,7 +383,7 @@ function AdminPanelPage() {
                       {auditRows.slice((auditPage - 1) * auditPerPage, (auditPage - 1) * auditPerPage + auditPerPage).map(row => (
                         <li key={row.id} className="audit-li">
                           <div className="audit-line">
-                            <span className="audit-time">{new Date(row.created_at).toLocaleString()}</span>
+                            <span className="audit-time">{formatWithAppTZ(row.created_at, { dateStyle: 'medium', timeStyle: 'short' })}</span>
                             <span className="audit-role">{row.role_at_login}</span>
                           </div>
                           <div className="audit-meta">

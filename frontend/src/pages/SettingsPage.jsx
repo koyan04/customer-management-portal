@@ -3,10 +3,11 @@ import InfoModal from '../components/InfoModal.jsx';
 import { FaInfoCircle } from 'react-icons/fa';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext.jsx';
-import { FaSave, FaFlask, FaSyncAlt, FaDatabase, FaRobot, FaServer, FaCloudDownloadAlt } from 'react-icons/fa';
+import { FaSave, FaFlask, FaSyncAlt, FaDatabase, FaRobot, FaServer, FaCloudDownloadAlt, FaEye, FaEyeSlash } from 'react-icons/fa';
 import { MdTune } from 'react-icons/md';
 
 export default function SettingsPage() {
+  const TOKEN_MASK = '********';
   // Persist last selected tab
   const initialTab = useMemo(() => {
     try { return localStorage.getItem('settings.lastTab') || 'database'; } catch (_) { return 'database'; }
@@ -22,7 +23,7 @@ export default function SettingsPage() {
   // form states
   const [dbForm, setDbForm] = useState({ host: '', port: 5432, user: '', password: '', database: '', ssl: false });
   const [generalForm, setGeneralForm] = useState({
-    title: '',
+    title: 'VChannel',
     theme: 'system',
     showTooltips: true,
     logo_url: '',
@@ -33,11 +34,28 @@ export default function SettingsPage() {
     price_basic: 0,
     price_unlimited: 0,
     currency: 'USD',
+    timezone: 'auto',
   });
   const [logoPreview, setLogoPreview] = useState('');
   const [logoPreview2x, setLogoPreview2x] = useState('');
   const [showInfo, setShowInfo] = useState(false);
-  const [tgForm, setTgForm] = useState({ botToken: '', defaultChatId: '', messageTemplate: '' });
+  const [tgForm, setTgForm] = useState({ botToken: '', defaultChatId: '', messageTemplate: '', notificationTime: '@daily', databaseBackup: false, loginNotification: false });
+  const [tgTokenMasked, setTgTokenMasked] = useState(false); // true when server returned masked token
+  const [showTgToken, setShowTgToken] = useState(false);
+  const [preserveTgPlainToken, setPreserveTgPlainToken] = useState(null); // temporarily preserve plaintext after save when user requested to view it
+  const [showRevealModal, setShowRevealModal] = useState(false);
+  const [revealPassword, setRevealPassword] = useState('');
+  const [revealBusy, setRevealBusy] = useState(false);
+  const [revealError, setRevealError] = useState('');
+
+  const canToggleTgShow = useMemo(() => {
+    // We can toggle to show plaintext when:
+    // - user has entered a plaintext token (not the sentinel), or
+    // - we are preserving a freshly-entered plaintext after save
+    if (preserveTgPlainToken) return true;
+    if (tgForm && tgForm.botToken && tgForm.botToken !== TOKEN_MASK) return true;
+    return false;
+  }, [preserveTgPlainToken, tgForm]);
   const [rsForm, setRsForm] = useState({ host: '', port: 22, username: '', authMethod: 'password', password: '', privateKey: '', passphrase: '' });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -73,7 +91,7 @@ export default function SettingsPage() {
         ? (data.autoLogoutMinutes ? Number(data.autoLogoutMinutes) : 0)
         : (typeof localVal === 'number' ? localVal : (typeof prev.autoLogoutMinutes === 'number' ? prev.autoLogoutMinutes : 0)));
     return {
-      title: data.title || prev.title || '',
+      title: (typeof data.title === 'string' && data.title.trim()) ? data.title : (prev.title || 'VChannel'),
       theme: data.theme || prev.theme || 'system',
       showTooltips: typeof data.showTooltips === 'boolean' ? data.showTooltips : (typeof prev.showTooltips === 'boolean' ? prev.showTooltips : true),
       logo_url: data.logo_url || prev.logo_url || '',
@@ -84,9 +102,43 @@ export default function SettingsPage() {
   price_basic: (typeof data.price_basic_cents !== 'undefined' && data.price_basic_cents !== null) ? Number(data.price_basic_cents) / 100 : ((typeof data.price_basic !== 'undefined' && data.price_basic !== null) ? Number(data.price_basic) : (prev.price_basic || 0)),
   price_unlimited: (typeof data.price_unlimited_cents !== 'undefined' && data.price_unlimited_cents !== null) ? Number(data.price_unlimited_cents) / 100 : ((typeof data.price_unlimited !== 'undefined' && data.price_unlimited !== null) ? Number(data.price_unlimited) : (prev.price_unlimited || 0)),
     currency: data.currency || prev.currency || 'USD',
+    timezone: (typeof data.timezone !== 'undefined' && data.timezone !== null) ? data.timezone : (prev.timezone || 'auto'),
     };
   });
-      if (key === 'telegram') setTgForm({ botToken: data.botToken || '', defaultChatId: data.defaultChatId || '', messageTemplate: data.messageTemplate || '' });
+      // ensure client formatting sees the server value immediately
+      if (key === 'general') {
+        try { const tz = ((res && res.data && res.data.data) ? res.data.data.timezone : undefined); if (typeof tz !== 'undefined') { localStorage.setItem('app.timezone', tz === null ? 'auto' : String(tz)); } } catch (_) {}
+      }
+      if (key === 'telegram') {
+        // Server masks botToken when returning; if masked we don't have the raw token and must preserve it on save
+        const returnedToken = data.botToken;
+        const isMasked = returnedToken === TOKEN_MASK;
+        setTgTokenMasked(isMasked);
+        // If we asked to preserve a plaintext token (user just saved and had the eye open), keep showing it until we've reloaded once
+        if (isMasked && preserveTgPlainToken) {
+          setShowTgToken(true);
+          setTgForm({
+            botToken: preserveTgPlainToken,
+            defaultChatId: data.defaultChatId || '',
+            messageTemplate: data.messageTemplate || '',
+            notificationTime: typeof data.notificationTime !== 'undefined' ? data.notificationTime : (data.notification_time || '@daily'),
+            databaseBackup: typeof data.databaseBackup !== 'undefined' ? !!data.databaseBackup : !!data.database_backup,
+            loginNotification: typeof data.loginNotification !== 'undefined' ? !!data.loginNotification : !!data.login_notification,
+          });
+          // clear the preservation flag after applying it
+          setPreserveTgPlainToken(null);
+        } else {
+          setShowTgToken(false);
+          setTgForm({
+            botToken: isMasked ? TOKEN_MASK : (returnedToken || ''),
+            defaultChatId: data.defaultChatId || '',
+            messageTemplate: data.messageTemplate || '',
+            notificationTime: typeof data.notificationTime !== 'undefined' ? data.notificationTime : (data.notification_time || '@daily'),
+            databaseBackup: typeof data.databaseBackup !== 'undefined' ? !!data.databaseBackup : !!data.database_backup,
+            loginNotification: typeof data.loginNotification !== 'undefined' ? !!data.loginNotification : !!data.login_notification,
+          });
+        }
+      }
       if (key === 'remoteServer') setRsForm({ host: data.host || '', port: data.port || 22, username: data.username || '', authMethod: data.authMethod || 'password', password: '', privateKey: '', passphrase: '' });
     } catch (err) {
       showMsg(`Failed to load ${key} settings: ` + (err.response?.data?.msg || err.message));
@@ -117,7 +169,7 @@ export default function SettingsPage() {
         try { window.dispatchEvent(new CustomEvent('general-settings-updated', { detail: payload })); } catch (_) {}
       }
       // Ensure cents fields are included to be explicit and avoid accidental loss
-      const sendPayload = { ...payload };
+  let sendPayload = { ...payload };
       if (key === 'general') {
         const asNumber = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0 };
         try {
@@ -126,8 +178,44 @@ export default function SettingsPage() {
           if (typeof sendPayload.price_unlimited !== 'undefined') sendPayload.price_unlimited_cents = Math.round(asNumber(sendPayload.price_unlimited) * 100);
         } catch (_) {}
       }
+      // timezone: allow explicit 'auto' or IANA tz string
+      if (key === 'general') {
+        if (typeof sendPayload.timezone !== 'undefined') {
+          // nothing to convert here; send 'auto' as-is or tz string
+        }
+      }
+      // If telegram token was masked on fetch and user didn't provide a new token, omit botToken so server preserves existing secret
+      if (key === 'telegram') {
+        const copy = { ...sendPayload };
+        // If the token was masked when fetched and the user didn't provide a new token (or the masked sentinel),
+        // omit botToken so the server preserves the existing secret.
+        if (tgTokenMasked && (!copy.botToken || copy.botToken === '' || copy.botToken === TOKEN_MASK)) delete copy.botToken;
+        // Also guard against the (unlikely) case where the form contains the sentinel without tgTokenMasked set
+        if (!tgTokenMasked && copy.botToken === TOKEN_MASK) delete copy.botToken;
+        sendPayload = copy;
+      }
+
       const putRes = await axios.put(backendOrigin + `/api/admin/settings/${key}`, sendPayload, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
       showMsg('Saved successfully');
+      // keep token display stable: if telegram, ensure we show masked token immediately
+      if (key === 'telegram') {
+        try {
+          const hadNewToken = tgForm.botToken && tgForm.botToken !== TOKEN_MASK;
+          const wasShowing = showTgToken;
+          if (hadNewToken && wasShowing) {
+            // user provided a new token and had requested to view it — preserve plaintext until fetch applies
+            setPreserveTgPlainToken(tgForm.botToken);
+            setTgTokenMasked(true);
+            setShowTgToken(true);
+            setTgForm(prev => ({ ...prev, botToken: tgForm.botToken }));
+          } else {
+            setTgTokenMasked(true);
+            setShowTgToken(false);
+            // keep the local form showing the masked sentinel until the server re-loads
+            setTgForm(prev => ({ ...prev, botToken: TOKEN_MASK }));
+          }
+        } catch (_) {}
+      }
       // reload to get masked view
       await fetchSettings(key);
       // If general settings saved, broadcast immediate update
@@ -145,6 +233,8 @@ export default function SettingsPage() {
         const broadcast = { ...serverData, ...(typeof savedVal !== 'undefined' ? { autoLogoutMinutes: Number(savedVal) } : {}) };
         try { localStorage.setItem('general_refresh', String(Date.now())); } catch (_) {}
         try { window.dispatchEvent(new CustomEvent('general-settings-updated', { detail: broadcast })); } catch (_) {}
+        // persist timezone locally for immediate effect on client formatting
+        try { if (typeof serverData.timezone !== 'undefined') { localStorage.setItem('app.timezone', serverData.timezone === null ? 'auto' : String(serverData.timezone)); } } catch (_) {}
       }
     } catch (err) {
       const errors = err.response?.data?.errors;
@@ -400,9 +490,108 @@ export default function SettingsPage() {
                 </div>
               </div>
 
+              <div className="timezone-group" style={{ marginTop: '1rem' }}>
+                <h4 style={{ margin: '0 0 0.5rem 0' }}>Time Zone</h4>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '0.75rem' }}>
+                  <label>
+                    <span>Time zone (affects how dates/times are shown across the app)</span>
+                    {/*
+                      Dropdown shows common IANA zones but includes GMT offset in the label when
+                      available (e.g. "GMT+08:00 (Asia/Hong_Kong)"). The option value remains the
+                      IANA identifier so the backend validator still validates using Intl.
+                    */}
+                    <select value={generalForm.timezone} onChange={(e) => setGeneralForm({ ...generalForm, timezone: e.target.value })}>
+                      <option value="auto">Auto (use browser local time)</option>
+                      {(() => {
+                        // Build a full list of available IANA time zones. Prefer Intl.supportedValuesOf('timeZone') when available.
+                        const now = new Date();
+                        let zones = [];
+                        try {
+                          if (typeof Intl.supportedValuesOf === 'function') {
+                            zones = Intl.supportedValuesOf('timeZone');
+                          }
+                        } catch (e) {
+                          zones = [];
+                        }
+                        // Fallback list if supportedValuesOf isn't available
+                        if (!zones || !zones.length) {
+                          zones = [
+                            'UTC','Etc/GMT','Etc/GMT+12','Pacific/Pago_Pago','Pacific/Honolulu','America/Anchorage','America/Los_Angeles','America/Denver','America/Chicago','America/New_York','America/Sao_Paulo','Atlantic/Azores','Europe/London','Europe/Dublin','Europe/Lisbon','Europe/Paris','Europe/Berlin','Europe/Warsaw','Africa/Cairo','Europe/Athens','Europe/Moscow','Asia/Dubai','Asia/Karachi','Asia/Dhaka','Asia/Colombo','Asia/Jakarta','Asia/Shanghai','Asia/Ho_Chi_Minh','Asia/Singapore','Asia/Tokyo','Asia/Seoul','Australia/Perth','Australia/Adelaide','Australia/Sydney','Pacific/Auckland'
+                          ];
+                        }
+
+                        // Map to objects with a human label containing GMT offset when possible
+                        const mapped = zones.map((tz) => {
+                          let label = tz;
+                          try {
+                            const formatted = new Intl.DateTimeFormat(undefined, { timeZone: tz, timeZoneName: 'short' }).format(now);
+                            const m = formatted.match(/GMT[+-]?\d{1,2}(?::\d{2})?/i);
+                            if (m) label = `${m[0]} (${tz})`;
+                            else {
+                              // try to extract an abbreviation if GMT not present
+                              const abb = formatted.match(/\b[A-Z]{2,6}\b/);
+                              if (abb) label = `${abb[0]} (${tz})`;
+                            }
+                          } catch (e) {
+                            // leave label as tz
+                          }
+                          return { tz, label };
+                        });
+
+                        // Sort so GMT offsets (when present) group together; otherwise alphabetical
+                        mapped.sort((a, b) => {
+                          // prefer entries with GMT in label
+                          const aHas = /GMT/.test(a.label) ? 0 : 1;
+                          const bHas = /GMT/.test(b.label) ? 0 : 1;
+                          if (aHas !== bHas) return aHas - bHas;
+                          return a.label.localeCompare(b.label);
+                        });
+
+                        return mapped.map((z) => <option key={z.tz} value={z.tz}>{z.label}</option>);
+                      })()}
+                    </select>
+                  </label>
+                </div>
+              </div>
+
               <InfoModal isOpen={showInfo} onClose={() => setShowInfo(false)} title="Auto logout info">
                 <p>Set the number of idle minutes after which the client will automatically log the user out. Enter 0 to disable auto-logout.</p>
                 <p>This is enforced client-side to improve usability. For higher security, the server also supports token invalidation (logout) which is triggered when you sign out.</p>
+              </InfoModal>
+
+              {/* Reveal token modal (password confirmation) */}
+              <InfoModal isOpen={showRevealModal} onClose={() => { setShowRevealModal(false); setRevealPassword(''); setRevealError(''); }} title="Reveal Telegram token">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <p style={{ margin: 0 }}>Enter your admin password to reveal the Telegram bot token. This action will be recorded in the audit log and the token will be shown temporarily; it will remain masked in the settings listing and re-masked on reload or save.</p>
+                  <input type="password" value={revealPassword} onChange={(e) => setRevealPassword(e.target.value)} placeholder="Admin password" style={{ padding: '0.5rem', marginTop: '0.25rem' }} />
+                  {revealError && <div style={{ color: '#f66' }}>{revealError}</div>}
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                    <button className="btn" onClick={() => { setShowRevealModal(false); setRevealPassword(''); setRevealError(''); }} disabled={revealBusy}>Cancel</button>
+                    <button aria-busy={revealBusy} className="btn primary" onClick={async () => {
+                      try {
+                        setRevealBusy(true);
+                        setRevealError('');
+                        const res = await axios.post(backendOrigin + '/api/admin/settings/telegram/reveal', { password: revealPassword }, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
+                        const token = res && res.data ? res.data.botToken : null;
+                        if (token) {
+                          setPreserveTgPlainToken(token);
+                          setTgForm(prev => ({ ...prev, botToken: token }));
+                          setShowTgToken(true);
+                          setTgTokenMasked(true);
+                          setShowRevealModal(false);
+                          setRevealPassword('');
+                        } else {
+                          setRevealError('Reveal succeeded but no token returned');
+                        }
+                      } catch (err) {
+                        const msg = err.response?.data?.msg || err.response?.data?.error || err.message || 'Reveal failed';
+                        setRevealError(String(msg));
+                      } finally { setRevealBusy(false); }
+                    }} disabled={revealBusy || !revealPassword}>
+                      {revealBusy ? (<><FaSyncAlt className="spin" /> Revealing...</>) : (<><FaSave /> Reveal</>)}
+                    </button>
+                  </div>
+                </div>
               </InfoModal>
             </div>
             <div className="actions">
@@ -504,17 +693,76 @@ export default function SettingsPage() {
           <div role="tabpanel" id="panel-telegram" aria-labelledby="tab-telegram" className="tab-panel">
             <h3>Telegram Bot Settings</h3>
             <div className="form-grid">
-              <label className="full">
+              <label className="full" style={{ position: 'relative' }}>
                 <span>Bot Token</span>
-                <input type="password" value={tgForm.botToken} placeholder="123456:ABCDEF..." onChange={(e) => setTgForm({ ...tgForm, botToken: e.target.value })} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type={showTgToken ? 'text' : 'password'}
+                    name="tg_bot_token"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    // When showing plaintext but the form holds the masked sentinel, prefer the preserved plaintext if any,
+                    // otherwise show an empty string (don't show the sentinel as literal text).
+                    value={(() => {
+                      if (showTgToken) {
+                        if (tgForm.botToken === TOKEN_MASK) return preserveTgPlainToken || '';
+                        return tgForm.botToken || '';
+                      }
+                      return (tgForm.botToken ? TOKEN_MASK : (tgTokenMasked ? TOKEN_MASK : ''));
+                    })()}
+                    placeholder="123456:ABCDEF..."
+                    onChange={(e) => { setTgTokenMasked(false); setPreserveTgPlainToken(null); setTgForm({ ...tgForm, botToken: e.target.value }); }}
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (canToggleTgShow) {
+                        setShowTgToken(s => !s);
+                        return;
+                      }
+                      // When no plaintext available, prompt admin to re-enter password to reveal token
+                      if (tgTokenMasked) {
+                        // open modal to ask for admin password rather than using window.prompt
+                        setRevealPassword('');
+                        setRevealError('');
+                        setShowRevealModal(true);
+                      }
+                    }}
+                    title={canToggleTgShow ? (showTgToken ? 'Hide token' : 'Show token') : (tgTokenMasked ? 'Reveal token (requires password)' : 'No token to show — paste a token to replace')}
+                    className={`btn${!canToggleTgShow ? ' disabled' : ''}`}
+                    style={{ padding: '0.25rem 0.5rem', opacity: canToggleTgShow ? 1 : (tgTokenMasked ? 0.9 : 0.5), cursor: canToggleTgShow ? 'pointer' : (tgTokenMasked ? 'pointer' : 'not-allowed') }}
+                    disabled={!canToggleTgShow && !tgTokenMasked}
+                  >
+                    {showTgToken ? <FaEyeSlash /> : <FaEye />}
+                  </button>
+                </div>
+                {tgTokenMasked && !canToggleTgShow ? (
+                  <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>Token is stored securely and cannot be retrieved — paste a new token to replace it.</small>
+                ) : (
+                  <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>Tip: saved tokens are masked — paste a new token to replace the existing one.</small>
+                )}
               </label>
               <label>
                 <span>Default Chat ID</span>
                 <input type="text" value={tgForm.defaultChatId} onChange={(e) => setTgForm({ ...tgForm, defaultChatId: e.target.value })} />
               </label>
               <label className="full">
-                <span>Message Template</span>
-                <textarea rows={4} value={tgForm.messageTemplate} onChange={(e) => setTgForm({ ...tgForm, messageTemplate: e.target.value })} />
+                <span>Notification Time</span>
+                <input type="text" value={tgForm.notificationTime} placeholder="@daily" onChange={(e) => setTgForm({ ...tgForm, notificationTime: e.target.value })} />
+                <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>The Telegram bot notification time set for periodic reports. (use the crontab time format)</small>
+              </label>
+
+              <label className="full chk" style={{ marginTop: '0.5rem' }}>
+                <input type="checkbox" checked={!!tgForm.databaseBackup} onChange={(e) => setTgForm({ ...tgForm, databaseBackup: e.target.checked })} />
+                <span>Database Backup</span>
+                <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>Send a database backup file with a report.</small>
+              </label>
+
+              <label className="full chk" style={{ marginTop: '0.5rem' }}>
+                <input type="checkbox" checked={!!tgForm.loginNotification} onChange={(e) => setTgForm({ ...tgForm, loginNotification: e.target.checked })} />
+                <span>Login Notification</span>
+                <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>Get notified about the username, IP address, and time whenever someone attempts to log into your web panel.</small>
               </label>
             </div>
             <div className="actions">

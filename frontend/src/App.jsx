@@ -33,7 +33,7 @@ function BackToTop() {
 
 function App() {
   // App title and theme from General settings
-  const [appTitle, setAppTitle] = useState('YN Paradise Customer Management Portal');
+  const [appTitle, setAppTitle] = useState('VChannel');
   const [appTheme, setAppTheme] = useState('system'); // 'system' | 'dark' | 'light'
 
   // helper to apply theme to <body> respecting system preference
@@ -81,9 +81,13 @@ function App() {
   useEffect(() => {
     const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? `${window.location.protocol}//${window.location.hostname}:3001` : '';
     const applyGeneral = (general) => {
+      // Use VChannel as the default when no title is provided
       if (general && typeof general.title === 'string' && general.title.trim()) {
         setAppTitle(general.title);
         try { document.title = general.title; } catch (_) {}
+      } else {
+        setAppTitle('VChannel');
+        try { document.title = 'VChannel'; } catch (_) {}
       }
       if (general && general.theme) {
         try {
@@ -479,7 +483,7 @@ function App() {
         </Link>
         <Link to="/" className="main-title-link">
           <div className="main-title" role="heading" aria-level={1}>
-            <span className="brand">{appTitle || 'YN Paradise'}</span>
+            <span className="brand">{appTitle || 'VChannel'}</span>
             <span className="sub">Customer Management Portal</span>
           </div>
         </Link>

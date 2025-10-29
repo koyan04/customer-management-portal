@@ -1,0 +1,133 @@
+﻿{
+    "months":  [
+                   {
+                       "month":  "2024-11",
+                       "start":  "2024-10-31T17:30:00.000Z",
+                       "end":  "2024-11-30T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=0; price_basic_cents=0; price_unlimited_cents=0}",
+                       "revenue_cents":  0,
+                       "rawAudit":  null,
+                       "currentApp":  null
+                   },
+                   {
+                       "month":  "2024-12",
+                       "start":  "2024-11-30T17:30:00.000Z",
+                       "end":  "2024-12-31T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=0; price_basic_cents=0; price_unlimited_cents=0}",
+                       "revenue_cents":  0,
+                       "rawAudit":  null,
+                       "currentApp":  null
+                   },
+                   {
+                       "month":  "2025-01",
+                       "start":  "2024-12-31T17:30:00.000Z",
+                       "end":  "2025-01-31T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=0; price_basic_cents=0; price_unlimited_cents=0}",
+                       "revenue_cents":  0,
+                       "rawAudit":  null,
+                       "currentApp":  null
+                   },
+                   {
+                       "month":  "2025-02",
+                       "start":  "2025-01-31T17:30:00.000Z",
+                       "end":  "2025-02-28T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=0; price_basic_cents=0; price_unlimited_cents=0}",
+                       "revenue_cents":  0,
+                       "rawAudit":  null,
+                       "currentApp":  null
+                   },
+                   {
+                       "month":  "2025-03",
+                       "start":  "2025-02-28T17:30:00.000Z",
+                       "end":  "2025-03-31T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=0; price_basic_cents=0; price_unlimited_cents=0}",
+                       "revenue_cents":  0,
+                       "rawAudit":  null,
+                       "currentApp":  null
+                   },
+                   {
+                       "month":  "2025-04",
+                       "start":  "2025-03-31T17:30:00.000Z",
+                       "end":  "2025-04-30T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=0; price_basic_cents=0; price_unlimited_cents=0}",
+                       "revenue_cents":  0,
+                       "rawAudit":  null,
+                       "currentApp":  null
+                   },
+                   {
+                       "month":  "2025-05",
+                       "start":  "2025-04-30T17:30:00.000Z",
+                       "end":  "2025-05-31T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=0; price_basic_cents=0; price_unlimited_cents=0}",
+                       "revenue_cents":  0,
+                       "rawAudit":  null,
+                       "currentApp":  null
+                   },
+                   {
+                       "month":  "2025-06",
+                       "start":  "2025-05-31T17:30:00.000Z",
+                       "end":  "2025-06-30T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=0; price_basic_cents=0; price_unlimited_cents=0}",
+                       "revenue_cents":  0,
+                       "rawAudit":  null,
+                       "currentApp":  null
+                   },
+                   {
+                       "month":  "2025-07",
+                       "start":  "2025-06-30T17:30:00.000Z",
+                       "end":  "2025-07-31T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=0; price_basic_cents=0; price_unlimited_cents=0}",
+                       "revenue_cents":  0,
+                       "rawAudit":  null,
+                       "currentApp":  null
+                   },
+                   {
+                       "month":  "2025-08",
+                       "start":  "2025-07-31T17:30:00.000Z",
+                       "end":  "2025-08-31T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=0; price_basic_cents=0; price_unlimited_cents=0}",
+                       "revenue_cents":  0,
+                       "rawAudit":  null,
+                       "currentApp":  null
+                   },
+                   {
+                       "month":  "2025-09",
+                       "start":  "2025-08-31T17:30:00.000Z",
+                       "end":  "2025-09-30T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=0; price_basic_cents=0; price_unlimited_cents=0}",
+                       "revenue_cents":  0,
+                       "rawAudit":  null,
+                       "currentApp":  null
+                   },
+                   {
+                       "month":  "2025-10",
+                       "start":  "2025-09-30T17:30:00.000Z",
+                       "end":  "2025-10-31T17:29:59.999Z",
+                       "counts":  "@{Mini=0; Basic=0; Unlimited=0}",
+                       "prices":  "@{price_mini_cents=300000; price_basic_cents=500000; price_unlimited_cents=800000}",
+                       "revenue_cents":  0,
+                       "rawAudit":  "@{theme=system; title=YN Paradise; currency=MMK; logo_url=/uploads/1761297247975-252736949-70x70.png; logo_url_2x=/uploads/1761297247975-252736949-140x140.png; showTooltips=True; price_mini_cents=300000; price_basic_cents=500000; price_unlimited_cents=800000}",
+                       "currentApp":  null
+                   }
+               ],
+    "year":  2025,
+    "yearTotals":  {
+                       "counts":  {
+                                      "Mini":  0,
+                                      "Basic":  0,
+                                      "Unlimited":  0
+                                  },
+                       "revenue_cents":  0
+                   }
+}

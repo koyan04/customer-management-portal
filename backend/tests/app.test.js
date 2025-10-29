@@ -3,6 +3,7 @@ const request = require('supertest');
 jest.mock('../middleware/authMiddleware', () => ({
   authenticateToken: (req, res, next) => { req.user = { id: 1, role: 'ADMIN' }; next(); },
   isAdmin: (req, res, next) => next(),
+  isServerAdminOrGlobal: () => (req, res, next) => next(),
 }));
 const app = require('../app');
 

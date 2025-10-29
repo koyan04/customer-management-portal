@@ -6,6 +6,7 @@ import App from './App.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import ServerDetailPage from './pages/ServerDetailPage.jsx';
+import KeyManagementPage from './pages/KeyManagementPage.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import AdminPanelPage from './pages/AdminPanelPage.jsx';
 import ServerListPage from './pages/ServerListPage.jsx';
@@ -62,6 +63,10 @@ const router = createBrowserRouter([
               {
                 path: "servers/:id",
                 element: <ServerDetailPage />,
+              },
+              {
+                path: "servers/:id/keys",
+                element: <KeyManagementPage />,
               },
               {
                 path: "admin",

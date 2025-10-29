@@ -127,8 +127,11 @@ router.post('/', authenticateToken, isAdmin, async (req, res) => {
   }
 });
 
-// UPDATE a server (admin only)
-router.put('/:id', authenticateToken, isAdmin, async (req, res) => {
+// UPDATE a server (global ADMIN or server-admin assigned to the server)
+// Allow server-admins that have a row in server_admin_permissions to update their server.
+const { isServerAdminOrGlobal } = require('../middleware/authMiddleware');
+
+router.put('/:id', authenticateToken, isServerAdminOrGlobal('id'), async (req, res) => {
   try {
     const { id } = req.params;
     const { server_name, owner, service_type, ip_address, domain_name } = req.body;
@@ -171,6 +174,124 @@ router.get('/:id', authenticateToken, async (req, res) => {
     return res.json(rows[0]);
   } catch (err) {
     console.error('SERVER ROUTE ERROR GET /api/servers/:id :', err && err.stack ? err.stack : err);
+    res.status(500).send('Server Error');
+  }
+});
+
+// --- Key management endpoints for a server ---
+// GET /api/servers/:id/keys  - list keys for server (ADMIN or server admin)
+router.get('/:id/keys', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const uid = req.user && req.user.id;
+    if (!uid) return res.status(401).json({ msg: 'Unauthorized' });
+    // Explicitly deny VIEWER-only accounts from using key management endpoints
+    const role = req.user && req.user.role;
+    if (role === 'VIEWER') return res.status(403).json({ msg: 'Forbidden' });
+    const isAdmin = req.user && req.user.role === 'ADMIN';
+    if (!isAdmin) {
+      const chk = await pool.query('SELECT 1 FROM server_admin_permissions WHERE admin_id = $1 AND server_id = $2', [uid, id]);
+      if (!chk || chk.rowCount === 0) return res.status(403).json({ msg: 'Forbidden' });
+    }
+  const { rows } = await pool.query('SELECT id, username, description, original_key, generated_key, created_at FROM server_keys WHERE server_id = $1 ORDER BY id DESC', [id]);
+    return res.json(Array.isArray(rows) ? rows : []);
+  } catch (err) {
+    console.error('SERVER ROUTE ERROR GET /api/servers/:id/keys :', err && err.stack ? err.stack : err);
+    res.status(500).send('Server Error');
+  }
+});
+
+// GET /api/servers/:id/keys/:keyId - get a single key (includes original_key)
+router.get('/:id/keys/:keyId', authenticateToken, async (req, res) => {
+  try {
+    const { id, keyId } = req.params;
+    const uid = req.user && req.user.id;
+    if (!uid) return res.status(401).json({ msg: 'Unauthorized' });
+    const role = req.user && req.user.role;
+    if (role === 'VIEWER') return res.status(403).json({ msg: 'Forbidden' });
+    const isAdmin = req.user && req.user.role === 'ADMIN';
+    if (!isAdmin) {
+      const chk = await pool.query('SELECT 1 FROM server_admin_permissions WHERE admin_id = $1 AND server_id = $2', [uid, id]);
+      if (!chk || chk.rowCount === 0) return res.status(403).json({ msg: 'Forbidden' });
+    }
+    const { rows } = await pool.query('SELECT id, username, description, original_key, generated_key, created_at FROM server_keys WHERE id = $1 AND server_id = $2', [keyId, id]);
+    if (!rows || rows.length === 0) return res.status(404).json({ msg: 'Not found' });
+    return res.json(rows[0]);
+  } catch (err) {
+    console.error('SERVER ROUTE ERROR GET /api/servers/:id/keys/:keyId :', err && err.stack ? err.stack : err);
+    res.status(500).send('Server Error');
+  }
+});
+
+// POST /api/servers/:id/keys - create a new key for server
+router.post('/:id/keys', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const uid = req.user && req.user.id;
+    if (!uid) return res.status(401).json({ msg: 'Unauthorized' });
+    const role = req.user && req.user.role;
+    if (role === 'VIEWER') return res.status(403).json({ msg: 'Forbidden' });
+    const isAdmin = req.user && req.user.role === 'ADMIN';
+    if (!isAdmin) {
+      const chk = await pool.query('SELECT 1 FROM server_admin_permissions WHERE admin_id = $1 AND server_id = $2', [uid, id]);
+      if (!chk || chk.rowCount === 0) return res.status(403).json({ msg: 'Forbidden' });
+    }
+    const { username, description, original_key, generated_key } = req.body || {};
+    const insert = await pool.query(
+      'INSERT INTO server_keys (server_id, username, description, original_key, generated_key, created_at) VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING id, username, description, generated_key, created_at',
+      [id, username || null, description || null, original_key || null, generated_key || null]
+    );
+    return res.status(201).json(insert.rows[0]);
+  } catch (err) {
+    console.error('SERVER ROUTE ERROR POST /api/servers/:id/keys :', err && err.stack ? err.stack : err);
+    res.status(500).send('Server Error');
+  }
+});
+
+// PUT /api/servers/:id/keys/:keyId - update an existing key (description or generated_key)
+router.put('/:id/keys/:keyId', authenticateToken, async (req, res) => {
+  try {
+    const { id, keyId } = req.params;
+    const uid = req.user && req.user.id;
+    if (!uid) return res.status(401).json({ msg: 'Unauthorized' });
+    const role = req.user && req.user.role;
+    if (role === 'VIEWER') return res.status(403).json({ msg: 'Forbidden' });
+    const isAdmin = req.user && req.user.role === 'ADMIN';
+    if (!isAdmin) {
+      const chk = await pool.query('SELECT 1 FROM server_admin_permissions WHERE admin_id = $1 AND server_id = $2', [uid, id]);
+      if (!chk || chk.rowCount === 0) return res.status(403).json({ msg: 'Forbidden' });
+    }
+    const { username, description, original_key, generated_key } = req.body || {};
+    const upd = await pool.query(
+      'UPDATE server_keys SET username = COALESCE($1, username), description = COALESCE($2, description), original_key = COALESCE($3, original_key), generated_key = COALESCE($4, generated_key) WHERE id = $5 AND server_id = $6 RETURNING id, username, description, generated_key, created_at',
+      [username || null, description || null, original_key || null, generated_key || null, keyId, id]
+    );
+    if (!upd || upd.rowCount === 0) return res.status(404).json({ msg: 'Not found' });
+    return res.json(upd.rows[0]);
+  } catch (err) {
+    console.error('SERVER ROUTE ERROR PUT /api/servers/:id/keys/:keyId :', err && err.stack ? err.stack : err);
+    res.status(500).send('Server Error');
+  }
+});
+
+// DELETE /api/servers/:id/keys/:keyId - remove a key
+router.delete('/:id/keys/:keyId', authenticateToken, async (req, res) => {
+  try {
+    const { id, keyId } = req.params;
+    const uid = req.user && req.user.id;
+    if (!uid) return res.status(401).json({ msg: 'Unauthorized' });
+    const role = req.user && req.user.role;
+    if (role === 'VIEWER') return res.status(403).json({ msg: 'Forbidden' });
+    const isAdmin = req.user && req.user.role === 'ADMIN';
+    if (!isAdmin) {
+      const chk = await pool.query('SELECT 1 FROM server_admin_permissions WHERE admin_id = $1 AND server_id = $2', [uid, id]);
+      if (!chk || chk.rowCount === 0) return res.status(403).json({ msg: 'Forbidden' });
+    }
+    const del = await pool.query('DELETE FROM server_keys WHERE id = $1 AND server_id = $2 RETURNING id', [keyId, id]);
+    if (!del || del.rowCount === 0) return res.status(404).json({ msg: 'Not found' });
+    return res.json({ msg: 'Deleted' });
+  } catch (err) {
+    console.error('SERVER ROUTE ERROR DELETE /api/servers/:id/keys/:keyId :', err && err.stack ? err.stack : err);
     res.status(500).send('Server Error');
   }
 });

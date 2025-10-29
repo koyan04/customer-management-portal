@@ -12,6 +12,8 @@ import {
   Tooltip,
   Legend,
 } from 'chart.js';
+import formatWithAppTZ, { getStoredTimezone } from '../lib/timezone';
+import TopProgressBar from '../components/TopProgressBar.jsx';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
 
@@ -21,7 +23,7 @@ function fmtCurrency(cents, currency = 'USD') {
 }
 
 export default function FinancialPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -34,6 +36,13 @@ export default function FinancialPage() {
   useEffect(() => {
     let mounted = true;
     const fetchData = async () => {
+      // Allow global ADMIN and SERVER_ADMIN to call this API. Others are forbidden.
+      const role = user && (user.user?.role || user.role);
+      if (role && role !== 'ADMIN' && role !== 'SERVER_ADMIN') {
+        setError('Forbidden');
+        setLoading(false);
+        return;
+      }
       setLoading(true);
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -158,8 +167,33 @@ export default function FinancialPage() {
     }
   }, [data]);
 
-  if (loading) return <div className="app-container">Loading financials…</div>;
-  if (error) return <div className="app-container">Failed to load financials: {error}</div>;
+  if (loading) return (
+    <div className="app-container">
+      <TopProgressBar active={true} />
+    </div>
+  );
+  if (error) {
+    // friendly UI for forbidden vs other errors
+    if (String(error).toLowerCase().includes('forbid')) {
+      return (
+        <div className="app-container">
+          <div className="forbidden-panel">
+            <div className="forbidden-icon" aria-hidden="true">🔒</div>
+            <div>
+              <h3 className="forbidden-title">Access denied</h3>
+              <p className="forbidden-desc">You don't have permission to view financial reports for the selected servers.</p>
+              <p className="forbidden-help">If you believe this is an error, contact a global administrator or request access to the servers you manage.</p>
+              <div className="forbidden-cta">
+                <a className="btn btn-secondary" href="/server-list">View Server List</a>
+                <button className="btn" onClick={() => window.location.reload()}>Retry</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return <div className="app-container">Failed to load financials: {error}</div>;
+  }
   if (!data) return <div className="app-container">No data</div>;
 
   const months = data.months || [];
@@ -389,7 +423,7 @@ export default function FinancialPage() {
 
         {selectedMonth ? (
           <div className="financial-month-details glass-panel">
-            <h4>Details for {selectedMonth.month}</h4>
+            <h4>Details for {formatWithAppTZ(toDate(monthToISO(selectedMonth.month)), { month: 'long', year: 'numeric' })}</h4>
             <div>Revenue: {fmtCurrency(selectedMonth.revenue_cents, currency)}</div>
             <div>Mini: {selectedMonth.counts.Mini} × {fmtCurrency(selectedMonth.prices.price_mini_cents || 0, currency)}</div>
             <div>Basic: {selectedMonth.counts.Basic} × {fmtCurrency(selectedMonth.prices.price_basic_cents || 0, currency)}</div>
@@ -445,14 +479,20 @@ export default function FinancialPage() {
               </tr>
             </thead>
             <tbody>
-              {tableMonths.map((m) => {
-                const d = toDate(monthToISO(m.month));
-                const monthName = d ? d.toLocaleString(undefined, { month: 'long' }) : m.month;
-                const year = d ? d.getUTCFullYear() : (m.month || '').slice(0,4);
-                return (
-                  <tr key={m.month}>
-                    <td>{year}</td>
-                    <td>{monthName}</td>
+        {tableMonths.map((m) => {
+          // Always format the month column as the full month name (MMMM)
+          const monthDate = toDate(monthToISO(m.month));
+          // Use Intl.DateTimeFormat directly for an isolated MMMM (full month name)
+          // while respecting the app timezone setting. We avoid formatWithAppTZ here
+          // because it injects default date/time styles when year/time are not present.
+          const tz = getStoredTimezone();
+          const fmtOpts = tz && tz !== 'auto' ? { month: 'long', timeZone: tz } : { month: 'long' };
+          const monthName = monthDate ? new Intl.DateTimeFormat(undefined, fmtOpts).format(monthDate) : (m.month || '');
+          const year = monthDate ? monthDate.getUTCFullYear() : (m.month || '').slice(0,4);
+          return (
+            <tr key={m.month}>
+              <td>{year}</td>
+              <td>{monthName}</td>
                     <td style={{textAlign:'right'}}>{(m.counts && m.counts.Mini) || 0}</td>
                     <td style={{textAlign:'right'}}>{(m.counts && m.counts.Basic) || 0}</td>
                     <td style={{textAlign:'right'}}>{(m.counts && m.counts.Unlimited) || 0}</td>
