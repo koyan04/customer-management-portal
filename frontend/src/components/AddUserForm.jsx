@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import axios from 'axios';
 import GlassSelect from './GlassSelect.jsx';
 import { FaUserPlus } from 'react-icons/fa';
@@ -7,10 +7,10 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
   const initialFormState = {
     account_name: '',
     service_type: 'Mini',
-    account_type: 'Basic',
+    contact: '',
     expire_date: '',
     total_devices: 1,
-    data_limit_gb: 50,
+    data_limit_gb: 100,
     remark: '',
   };
   const [formData, setFormData] = useState(initialFormState);
@@ -20,14 +20,13 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
     if (name === 'service_type') {
       setFormData(prev => {
         if (value === 'Unlimited') {
-          return { ...prev, service_type: value, account_type: 'Unlimited', data_limit_gb: '' };
+          // Unlimited: set devices default to 2 and clear data limit (hidden in UI)
+          return { ...prev, service_type: value, total_devices: 2, data_limit_gb: '' };
         }
-        // Mini or Basic map to Basic account_type and default limits
-        const defaultLimit = value === 'Mini' ? 50 : 100;
-        const nextLimit = (prev.account_type === 'Unlimited' || prev.data_limit_gb === '' || prev.data_limit_gb === null || prev.data_limit_gb === undefined)
-          ? defaultLimit
-          : prev.data_limit_gb;
-        return { ...prev, service_type: value, account_type: 'Basic', data_limit_gb: nextLimit };
+        // Mini or Basic: set defaults per requirement (Mini: devices=1, data=100; Basic: devices=2, data=100)
+        const nextDevices = value === 'Mini' ? 1 : 2;
+        const nextData = 100;
+        return { ...prev, service_type: value, total_devices: nextDevices, data_limit_gb: nextData };
       });
     } else {
       setFormData(prev => ({ ...prev, [name]: e.target.value }));
@@ -40,7 +39,7 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
       const dataToSubmit = {
         ...formData,
         server_id: serverId,
-        data_limit_gb: formData.account_type === 'Unlimited' ? null : formData.data_limit_gb,
+        data_limit_gb: formData.service_type === 'Unlimited' ? null : formData.data_limit_gb,
       };
   const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
   const token = localStorage.getItem('token');
@@ -79,6 +78,11 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
           ariaLabel="Service"
         />
       </div>
+
+      <div className="form-group">
+        <label htmlFor="contact">Contact</label>
+        <input id="contact" name="contact" value={formData.contact} onChange={handleChange} placeholder="Phone, Telegram, etc." />
+      </div>
       
     <div className="form-grid">
           <div className="form-group">
@@ -86,7 +90,7 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
               <input id="total_devices" name="total_devices" value={formData.total_devices} onChange={handleChange} type="number" min="1" />
           </div>
       {/* Data Limit input shows for Mini/Basic; hidden for Unlimited */}
-      {formData.account_type !== 'Unlimited' && (
+      {formData.service_type !== 'Unlimited' && (
             <div className="form-group">
                 <label htmlFor="data_limit_gb">Data Limit (GB)</label>
                 <input id="data_limit_gb" name="data_limit_gb" value={formData.data_limit_gb} onChange={handleChange} type="number" min="0" />

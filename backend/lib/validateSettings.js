@@ -71,22 +71,35 @@ function validateSettings(key, body) {
       return null;
     };
 
-    // databaseBackup: boolean, default false
-    if (typeof body.databaseBackup === 'undefined') {
-      cleaned.databaseBackup = false;
-    } else {
+    // enabled: global ON/OFF switch for the bot
+    if (typeof body.enabled !== 'undefined') {
+      const en = parseBoolean(body.enabled);
+      if (en === null) errors.push('enabled must be a boolean');
+      else cleaned.enabled = en;
+    }
+
+    // databaseBackup: boolean; default to false when missing
+    if (typeof body.databaseBackup !== 'undefined') {
       const dbb = parseBoolean(body.databaseBackup);
       if (dbb === null) errors.push('databaseBackup must be a boolean');
       else cleaned.databaseBackup = dbb;
+    } else {
+      cleaned.databaseBackup = false;
     }
 
-    // loginNotification: boolean, default false
-    if (typeof body.loginNotification === 'undefined') {
-      cleaned.loginNotification = false;
-    } else {
+    // loginNotification: boolean; default to false when missing
+    if (typeof body.loginNotification !== 'undefined') {
       const ln = parseBoolean(body.loginNotification);
       if (ln === null) errors.push('loginNotification must be a boolean');
       else cleaned.loginNotification = ln;
+    } else {
+      cleaned.loginNotification = false;
+    }
+    // Optional: settings reload interval (seconds) for the bot process
+    if (typeof body.settings_reload_seconds !== 'undefined') {
+      const n = Number(body.settings_reload_seconds);
+      if (!Number.isFinite(n) || n <= 0) errors.push('settings_reload_seconds must be a positive number');
+      else cleaned.settings_reload_seconds = Math.round(n);
     }
   } else if (key === 'remoteServer') {
     const host = typeof body.host === 'string' && body.host.trim() ? body.host.trim() : null;
@@ -114,10 +127,15 @@ function validateSettings(key, body) {
       const t = body.title.trim();
       if (t.length > 0) cleaned.title = t;
     }
-    const themeRaw = typeof body.theme === 'string' ? body.theme.trim().toLowerCase() : 'system';
-    const allowedThemes = ['system', 'dark', 'light'];
-    cleaned.theme = allowedThemes.includes(themeRaw) ? themeRaw : 'system';
-    cleaned.showTooltips = !!body.showTooltips;
+    // Only set theme when provided; do not force default 'system' on partial updates
+    if (typeof body.theme !== 'undefined') {
+      const themeRaw = typeof body.theme === 'string' ? body.theme.trim().toLowerCase() : '';
+      const allowedThemes = ['system', 'dark', 'light'];
+      if (allowedThemes.includes(themeRaw)) cleaned.theme = themeRaw;
+      else if (themeRaw) errors.push("theme must be 'system', 'dark', or 'light'");
+    }
+    // Only set showTooltips when provided; do not coerce missing field to false
+    if (typeof body.showTooltips !== 'undefined') cleaned.showTooltips = !!body.showTooltips;
 
   // Accept either integer-cent fields (preferred) or decimal price fields from clients.
   // If *_cents is present, validate it as a non-negative integer and use it. Otherwise fall back

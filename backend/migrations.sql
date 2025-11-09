@@ -116,3 +116,24 @@ CREATE TABLE IF NOT EXISTS server_keys (
 
 CREATE INDEX IF NOT EXISTS server_keys_server_id_idx ON server_keys(server_id);
 
+-- ==================================================================
+-- Migration added: 2025-10-30 add service_type to users and backfill
+-- ==================================================================
+-- Non-destructive migration: add `service_type` column and copy values from `account_type` when present.
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS service_type text;
+
+-- Backfill existing rows where service_type is NULL only if account_type column exists
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'users' AND column_name = 'account_type'
+  ) THEN
+    EXECUTE 'UPDATE users SET service_type = account_type WHERE service_type IS NULL AND account_type IS NOT NULL';
+  END IF;
+END
+$$;
+
+-- Note: we keep `account_type` for a safe transition. Later you may rename or drop it once all code uses `service_type`.
+
+

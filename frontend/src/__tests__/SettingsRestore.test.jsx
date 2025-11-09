@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom';
 // using Vitest globals per config
 import SettingsPage from '../pages/SettingsPage.jsx';
 
@@ -52,5 +53,39 @@ describe('SettingsPage restore uploads', () => {
     setFile(dbInput, new File([JSON.stringify({ type: 'db-backup-v1' })], 'database.db', { type: 'application/octet-stream' }));
     await waitFor(() => expect(screen.getByRole('status')).toBeTruthy());
     expect(screen.getByRole('status').textContent).toMatch(/Upload failed: Checksum mismatch/);
+  });
+
+  it('downloads Telegram snapshot JSON and shows confirmation', async () => {
+    // Arrange axios.get for snapshot
+    axios.get.mockImplementationOnce(async (url) => {
+      if (url.endsWith('/api/admin/backup/snapshot?record=1')) {
+        const blob = new Blob([JSON.stringify({ created_at: new Date().toISOString(), app_settings: [], servers: [], users: [] })], { type: 'application/json' });
+        return { data: blob };
+      }
+      // Fallback to default mocked behavior
+      return { data: { data: {} } };
+    });
+    render(<SettingsPage />);
+    const btn = await screen.findByRole('button', { name: /Download Telegram backup \(JSON\)/i });
+    const createElSpy = vi.spyOn(document, 'createElement');
+    createElSpy.mockImplementation((tag) => {
+      const el = document.createElementNS('http://www.w3.org/1999/xhtml', tag);
+      if (tag === 'a') el.click = () => {};
+      return el;
+    });
+    fireEvent.click(btn);
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Download started/i));
+    createElSpy.mockRestore();
+  });
+
+  it('uploads Telegram snapshot JSON and shows server message', async () => {
+    axios.post.mockImplementationOnce(async (url) => {
+      if (url.endsWith('/api/admin/restore/snapshot')) return { data: { msg: 'Snapshot restored (merge)' } };
+      return { data: { msg: 'Upload completed' } };
+    });
+    render(<SettingsPage />);
+    const input = await screen.findByLabelText(/Restore Telegram Snapshot \(JSON\)/i);
+    setFile(input, new File([JSON.stringify({ created_at: '2025-01-01T00:00:00Z', app_settings: [], servers: [], users: [] })], 'cmp-backup.json', { type: 'application/json' }));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Snapshot restored \(merge\)/i));
   });
 });

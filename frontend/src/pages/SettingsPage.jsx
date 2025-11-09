@@ -1,16 +1,20 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import InfoModal from '../components/InfoModal.jsx';
-import { FaInfoCircle } from 'react-icons/fa';
+import { FaInfoCircle, FaCog } from 'react-icons/fa';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext.jsx';
-import { FaSave, FaFlask, FaSyncAlt, FaDatabase, FaRobot, FaServer, FaCloudDownloadAlt, FaEye, FaEyeSlash } from 'react-icons/fa';
+import { FaSave, FaFlask, FaSyncAlt, FaDatabase, FaRobot, FaServer, FaCloudDownloadAlt, FaEye, FaEyeSlash, FaPowerOff, FaClock, FaCalendarAlt, FaCheckCircle, FaExclamationTriangle, FaHistory, FaShieldAlt } from 'react-icons/fa';
 import { MdTune } from 'react-icons/md';
 
 export default function SettingsPage() {
   const TOKEN_MASK = '********';
   // Persist last selected tab
   const initialTab = useMemo(() => {
-    try { return localStorage.getItem('settings.lastTab') || 'database'; } catch (_) { return 'database'; }
+    try {
+      const raw = localStorage.getItem('settings.lastTab') || 'database';
+      // migrate legacy 'remote' tab id to 'control'
+      return raw === 'remote' ? 'control' : raw;
+    } catch (_) { return 'database'; }
   }, []);
   const [tab, setTab] = useState(initialTab);
   useEffect(() => { try { localStorage.setItem('settings.lastTab', tab); } catch (_) {} }, [tab]);
@@ -28,6 +32,8 @@ export default function SettingsPage() {
     showTooltips: true,
     logo_url: '',
     logo_url_2x: '',
+    favicon_url: '',
+    apple_touch_icon_url: '',
     autoLogoutMinutes: 0,
     // Financial / pricing
     price_mini: 0,
@@ -38,8 +44,12 @@ export default function SettingsPage() {
   });
   const [logoPreview, setLogoPreview] = useState('');
   const [logoPreview2x, setLogoPreview2x] = useState('');
+  const [faviconPreview, setFaviconPreview] = useState('');
+  const [applePreview, setApplePreview] = useState('');
   const [showInfo, setShowInfo] = useState(false);
-  const [tgForm, setTgForm] = useState({ botToken: '', defaultChatId: '', messageTemplate: '', notificationTime: '@daily', databaseBackup: false, loginNotification: false });
+  const [tgForm, setTgForm] = useState({ botToken: '', defaultChatId: '', messageTemplate: '', notificationTime: '@daily', databaseBackup: false, loginNotification: false, enabled: true, settings_reload_seconds: 60 });
+  const [botStatus, setBotStatus] = useState(null);
+  const [statusRefreshing, setStatusRefreshing] = useState(false);
   const [tgTokenMasked, setTgTokenMasked] = useState(false); // true when server returned masked token
   const [showTgToken, setShowTgToken] = useState(false);
   const [preserveTgPlainToken, setPreserveTgPlainToken] = useState(null); // temporarily preserve plaintext after save when user requested to view it
@@ -57,6 +67,15 @@ export default function SettingsPage() {
     return false;
   }, [preserveTgPlainToken, tgForm]);
   const [rsForm, setRsForm] = useState({ host: '', port: 22, username: '', authMethod: 'password', password: '', privateKey: '', passphrase: '' });
+  // Control Panel state (system/cert/update) — removed deprecated system & service port states
+  const [certStatus, setCertStatus] = useState(null);
+  const [certConfig, setCertConfig] = useState({ domain: '', email: '', api_token: '' });
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [updateStatus, setUpdateStatus] = useState(null);
+  const [updateSource, setUpdateSource] = useState('');
+  const [cpBusy, setCpBusy] = useState(false);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  // Frontend dev server (Vite) port control — removed per request
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -65,16 +84,11 @@ export default function SettingsPage() {
   const [dbStatus, setDbStatus] = useState(null);
 
   // helpers
-  const showMsg = (msg) => { setStatusMsg(msg); setTimeout(() => setStatusMsg(''), 4000); };
+  const showMsg = useCallback((msg) => { setStatusMsg(msg); setTimeout(() => setStatusMsg(''), 4000); }, []);
   const currentForm = tab === 'database' ? dbForm : tab === 'telegram' ? tgForm : tab === 'general' ? generalForm : rsForm;
-  const setCurrentForm = (next) => {
-    if (tab === 'database') setDbForm(next);
-    else if (tab === 'telegram') setTgForm(next);
-    else if (tab === 'general') setGeneralForm(next);
-    else setRsForm(next);
-  };
+  // setCurrentForm helper removed (unused after direct state setters)
 
-  const fetchSettings = async (which) => {
+  const fetchSettings = useCallback(async (which) => {
     const key = which || tab;
     setLoading(true);
     try {
@@ -96,6 +110,8 @@ export default function SettingsPage() {
       showTooltips: typeof data.showTooltips === 'boolean' ? data.showTooltips : (typeof prev.showTooltips === 'boolean' ? prev.showTooltips : true),
       logo_url: data.logo_url || prev.logo_url || '',
       logo_url_2x: data.logo_url_2x || prev.logo_url_2x || '',
+  favicon_url: data.favicon_url || prev.favicon_url || '',
+  apple_touch_icon_url: data.apple_touch_icon_url || prev.apple_touch_icon_url || '',
       autoLogoutMinutes: resolvedAuto,
   // pricing (server now stores integer cents as price_*_cents); convert to decimals for UI
   price_mini: (typeof data.price_mini_cents !== 'undefined' && data.price_mini_cents !== null) ? Number(data.price_mini_cents) / 100 : ((typeof data.price_mini !== 'undefined' && data.price_mini !== null) ? Number(data.price_mini) : (prev.price_mini || 0)),
@@ -109,7 +125,7 @@ export default function SettingsPage() {
       if (key === 'general') {
         try { const tz = ((res && res.data && res.data.data) ? res.data.data.timezone : undefined); if (typeof tz !== 'undefined') { localStorage.setItem('app.timezone', tz === null ? 'auto' : String(tz)); } } catch (_) {}
       }
-      if (key === 'telegram') {
+  if (key === 'telegram') {
         // Server masks botToken when returning; if masked we don't have the raw token and must preserve it on save
         const returnedToken = data.botToken;
         const isMasked = returnedToken === TOKEN_MASK;
@@ -130,23 +146,157 @@ export default function SettingsPage() {
         } else {
           setShowTgToken(false);
           setTgForm({
-            botToken: isMasked ? TOKEN_MASK : (returnedToken || ''),
-            defaultChatId: data.defaultChatId || '',
-            messageTemplate: data.messageTemplate || '',
-            notificationTime: typeof data.notificationTime !== 'undefined' ? data.notificationTime : (data.notification_time || '@daily'),
-            databaseBackup: typeof data.databaseBackup !== 'undefined' ? !!data.databaseBackup : !!data.database_backup,
-            loginNotification: typeof data.loginNotification !== 'undefined' ? !!data.loginNotification : !!data.login_notification,
-          });
+              botToken: isMasked ? TOKEN_MASK : (returnedToken || ''),
+              defaultChatId: data.defaultChatId || '',
+              messageTemplate: data.messageTemplate || '',
+              notificationTime: typeof data.notificationTime !== 'undefined' ? data.notificationTime : (data.notification_time || '@daily'),
+              databaseBackup: typeof data.databaseBackup !== 'undefined' ? !!data.databaseBackup : !!data.database_backup,
+              loginNotification: typeof data.loginNotification !== 'undefined' ? !!data.loginNotification : !!data.login_notification,
+              enabled: typeof data.enabled !== 'undefined' ? !!data.enabled : true,
+              settings_reload_seconds: typeof data.settings_reload_seconds !== 'undefined' ? Number(data.settings_reload_seconds) : 60,
+            });
         }
       }
       if (key === 'remoteServer') setRsForm({ host: data.host || '', port: data.port || 22, username: data.username || '', authMethod: data.authMethod || 'password', password: '', privateKey: '', passphrase: '' });
     } catch (err) {
       showMsg(`Failed to load ${key} settings: ` + (err.response?.data?.msg || err.message));
     } finally { setLoading(false); }
+  }, [authHeaders, backendOrigin, tab, TOKEN_MASK, preserveTgPlainToken, showMsg]);
+
+  const fetchBotStatus = useCallback(async () => {
+    try {
+      const res = await axios.get(backendOrigin + '/internal/bot/status');
+      if (res && res.data && res.data.ok) {
+        setBotStatus(res.data.status || null);
+      } else {
+        setBotStatus(null);
+      }
+    } catch (_) {
+      setBotStatus(null);
+    }
+  }, [backendOrigin]);
+
+  // --- Control Panel fetchers & actions ---
+  // Removed system status & service port fetchers per request (legacy placeholders deleted)
+  const fetchCert = useCallback(async () => {
+    try {
+      const res = await axios.get(backendOrigin + '/api/admin/control/cert/status', { headers: authHeaders });
+      setCertStatus(res.data || null);
+      // also load config
+      try {
+        const r2 = await axios.get(backendOrigin + '/api/admin/control/cert/config', { headers: authHeaders });
+        if (r2 && r2.data && r2.data.config) setCertConfig(r2.data.config);
+      } catch (_) {}
+    } catch (e) {
+      setCertStatus(null);
+    }
+  }, [authHeaders, backendOrigin]);
+  // fetchControlPanel removed (unused)
+  // dev port helpers removed
+  const saveCertConfig = async () => {
+    try {
+      setCpBusy(true);
+      // send api_token only if provided (avoid re-sending masked sentinel) — backend will ignore '********'
+      const payload = { domain: certConfig.domain || '', email: certConfig.email || '' };
+      if (certConfig.api_token) payload.api_token = certConfig.api_token;
+      await axios.put(backendOrigin + '/api/admin/control/cert/config', payload, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
+      showMsg('Certificate config saved');
+      await fetchCert();
+    } catch (e) {
+      showMsg('Save failed: ' + (e.response?.data?.error || e.response?.data?.msg || e.message));
+    } finally { setCpBusy(false); }
+  };
+  const issueCert = async () => {
+    try { setCpBusy(true); await axios.post(backendOrigin + '/api/admin/control/cert/issue', {}, { headers: authHeaders }); showMsg('Issue requested'); await fetchCert(); } catch (e) { showMsg('Issue failed: ' + (e.response?.data?.error || e.message)); } finally { setCpBusy(false); }
+  };
+  const renewCert = async () => {
+    try { setCpBusy(true); await axios.post(backendOrigin + '/api/admin/control/cert/renew', {}, { headers: authHeaders }); showMsg('Renew requested'); await fetchCert(); } catch (e) { showMsg('Renew failed: ' + (e.response?.data?.error || e.message)); } finally { setCpBusy(false); }
+  };
+  const checkUpdate = async () => {
+    try { setUpdateBusy(true); const res = await axios.get(backendOrigin + '/api/admin/control/update/check', { headers: authHeaders }); setUpdateInfo(res.data || null); showMsg('Update check complete');
+      // load origin url too
+      try {
+        const r2 = await axios.get(backendOrigin + '/api/admin/control/update/source', { headers: authHeaders });
+        setUpdateSource(r2.data?.originUrl || '');
+      } catch (_) {}
+      // and fetch status (git vs stored origin)
+      try {
+        const r3 = await axios.get(backendOrigin + '/api/admin/control/update/status', { headers: authHeaders });
+        setUpdateStatus(r3.data || null);
+      } catch (_) {}
+    } catch (e) { showMsg('Check failed: ' + (e.response?.data?.error || e.message)); } finally { setUpdateBusy(false); }
+  };
+  const applyUpdate = async () => {
+    try { setUpdateBusy(true); const res = await axios.post(backendOrigin + '/api/admin/control/update/apply', {}, { headers: authHeaders }); showMsg('Update apply requested'); if (res.data) setUpdateInfo(prev => ({ ...(prev||{}), applying: true })); } catch (e) { showMsg('Apply failed: ' + (e.response?.data?.error || e.message)); } finally { setUpdateBusy(false); }
+  };
+  const saveUpdateSource = async () => {
+    try {
+      setUpdateBusy(true);
+      const resp = await axios.put(
+        backendOrigin + '/api/admin/control/update/source',
+        { url: updateSource },
+        { headers: { ...authHeaders, 'Content-Type': 'application/json' }, validateStatus: () => true }
+      );
+      if (resp.status === 207) {
+        const reason = resp.data && (resp.data.gitError || resp.data.error) ? ` (${resp.data.gitError || resp.data.error})` : '';
+        showMsg('Saved source, but updating git remote failed' + reason);
+      } else if (resp.status >= 200 && resp.status < 300) {
+        showMsg('Update source saved');
+      } else {
+        throw new Error(resp.data && (resp.data.error || resp.data.msg) ? resp.data.error || resp.data.msg : `HTTP ${resp.status}`);
+      }
+      await checkUpdate();
+    } catch (e) { showMsg('Save failed: ' + (e.response?.data?.error || e.message)); } finally { setUpdateBusy(false); }
+  };
+
+  const fetchUpdateStatus = useCallback(async () => {
+    try {
+      const r = await axios.get(backendOrigin + '/api/admin/control/update/status', { headers: authHeaders });
+      setUpdateStatus(r.data || null);
+    } catch (_) {
+      setUpdateStatus(null);
+    }
+  }, [authHeaders, backendOrigin]);
+
+  const loadUpdateLight = useCallback(async () => {
+    // Lightweight load for Control tab: source + status (omit full check)
+    try {
+      const [s1, s2] = await Promise.all([
+        axios.get(backendOrigin + '/api/admin/control/update/source', { headers: authHeaders }).catch(() => null),
+        axios.get(backendOrigin + '/api/admin/control/update/status', { headers: authHeaders }).catch(() => null),
+      ]);
+      if (s1 && s1.data) setUpdateSource(s1.data.originUrl || '');
+      if (s2 && s2.data) setUpdateStatus(s2.data);
+    } catch (_) { /* ignore */ }
+  }, [authHeaders, backendOrigin]);
+
+  const retryUpdateOrigin = async () => {
+    try {
+      setUpdateBusy(true);
+      const url = updateStatus?.storedOrigin || updateSource || '';
+      if (!url) { showMsg('No stored origin URL to retry'); return; }
+      const resp = await axios.put(
+        backendOrigin + '/api/admin/control/update/source',
+        { url },
+        { headers: { ...authHeaders, 'Content-Type': 'application/json' }, validateStatus: () => true }
+      );
+      if (resp.status === 207) {
+        const reason = resp.data && (resp.data.gitError || resp.data.error) ? ` (${resp.data.gitError || resp.data.error})` : '';
+        showMsg('Saved source, but updating git remote failed' + reason);
+      } else if (resp.status >= 200 && resp.status < 300) {
+        showMsg('Git remote updated');
+      } else {
+        throw new Error(resp.data && (resp.data.error || resp.data.msg) ? resp.data.error || resp.data.msg : `HTTP ${resp.status}`);
+      }
+      await fetchUpdateStatus();
+    } catch (e) { showMsg('Retry failed: ' + (e.response?.data?.error || e.message)); } finally { setUpdateBusy(false); }
   };
 
   // load all on mount so switching tabs is instant
-  useEffect(() => { fetchSettings('database'); fetchSettings('telegram'); fetchSettings('remoteServer'); fetchSettings('general'); }, []);
+  useEffect(() => { fetchSettings('database'); fetchSettings('telegram'); fetchSettings('remoteServer'); fetchSettings('general'); fetchBotStatus(); fetchCert(); }, [fetchSettings, fetchBotStatus, fetchCert]);
+  // When switching to Control tab, load lightweight update source + status
+  useEffect(() => { if (tab === 'control') { loadUpdateLight(); } }, [tab, loadUpdateLight]);
+  // removed audit auto-refresh
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -271,6 +421,22 @@ export default function SettingsPage() {
     } finally { setBusy(false); }
   };
 
+  const onClearFavicon = async () => {
+    try {
+      setBusy(true);
+      await axios.delete(backendOrigin + '/api/admin/settings/general/favicon', { headers: authHeaders });
+  setGeneralForm(g => ({ ...g, favicon_url: '', apple_touch_icon_url: '' }));
+  setFaviconPreview('');
+  setApplePreview('');
+      showMsg('Favicon cleared');
+  const payload = { ...generalForm, favicon_url: '', apple_touch_icon_url: '' };
+      try { localStorage.setItem('general_refresh', String(Date.now())); } catch (_) {}
+      try { window.dispatchEvent(new CustomEvent('general-settings-updated', { detail: payload })); } catch (_) {}
+    } catch (err) {
+      showMsg('Clear favicon failed: ' + (err.response?.data?.msg || err.message));
+    } finally { setBusy(false); }
+  };
+
   // --- Backup / Restore helpers (database tab) ---
   const download = async (url, filename) => {
     try {
@@ -331,10 +497,33 @@ export default function SettingsPage() {
     } finally { setBusy(false); }
   };
 
+  const onFaviconChange = async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    try {
+      const form = new FormData();
+      form.append('favicon', f, f.name);
+      setBusy(true);
+      const res = await axios.post(backendOrigin + '/api/admin/settings/general/favicon', form, { headers: authHeaders });
+  const url = res.data?.url || '';
+  const urlTouch = res.data?.url_touch || '';
+  setGeneralForm(g => ({ ...g, favicon_url: res.data?.favicon_url || g.favicon_url, apple_touch_icon_url: res.data?.apple_touch_icon_url || g.apple_touch_icon_url }));
+  setFaviconPreview(url);
+  setApplePreview(urlTouch || '');
+      showMsg('Favicon uploaded');
+  const payload = { ...generalForm, favicon_url: res.data?.favicon_url || generalForm.favicon_url, apple_touch_icon_url: res.data?.apple_touch_icon_url || generalForm.apple_touch_icon_url };
+      try { localStorage.setItem('general_refresh', String(Date.now())); } catch (_) {}
+      try { window.dispatchEvent(new CustomEvent('general-settings-updated', { detail: payload })); } catch (_) {}
+    } catch (err) {
+      showMsg('Favicon upload failed: ' + (err.response?.data?.msg || err.message));
+    } finally { setBusy(false); }
+  };
+
   return (
     <div className="settings-page">
       <div className="settings-header">
-        <h2>Settings</h2>
+        <h2><FaCog aria-hidden style={{ marginRight: 10, verticalAlign: 'middle' }} />Settings</h2>
       </div>
 
       <div className="settings-tabs" role="tablist" aria-label="Settings Tabs">
@@ -373,14 +562,14 @@ export default function SettingsPage() {
         </button>
         <button
           role="tab"
-          aria-selected={tab === 'remote'}
-          id="tab-remote"
-          aria-controls="panel-remote"
-          className={`tab-btn${tab === 'remote' ? ' active' : ''}`}
-          onClick={() => setTab('remote')}
+          aria-selected={tab === 'control'}
+          id="tab-control"
+          aria-controls="panel-control"
+          className={`tab-btn${tab === 'control' ? ' active' : ''}`}
+          onClick={() => setTab('control')}
         >
           <FaServer aria-hidden className="tab-icon" />
-          <span className="tab-text">Remote Server</span>
+          <span className="tab-text">Control Panel</span>
         </button>
       </div>
 
@@ -430,6 +619,51 @@ export default function SettingsPage() {
                   {(logoPreview || generalForm.logo_url) && (
                     <button type="button" className="btn" onClick={onClearLogo} disabled={busy} style={{ marginLeft: '0.5rem' }}>
                       Clear Logo
+                    </button>
+                  )}
+                </div>
+              </label>
+              <label className="logo-field">
+                <span>Favicon (32x32)</span>
+                <input type="file" accept="image/png,image/x-icon,image/vnd.microsoft.icon,image/svg+xml,image/webp,image/jpeg" onChange={onFaviconChange} />
+                <div className="logo-preview-row" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  <div style={{ width: 32, height: 32, borderRadius: 6, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                    {(faviconPreview || generalForm.favicon_url) ? (
+                      <img
+                        src={faviconPreview || (backendOrigin + generalForm.favicon_url)}
+                        alt="Favicon preview"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                    ) : (
+                      <div style={{ width: 16, height: 16, borderRadius: '4px', background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.18)' }} />
+                    )}
+                  </div>
+                  <small style={{ opacity: 0.85 }}>Optimized to 32x32 PNG for tab icon</small>
+                  {(faviconPreview || generalForm.favicon_url) && (
+                    <button type="button" className="btn" onClick={onClearFavicon} disabled={busy} style={{ marginLeft: '0.5rem' }}>
+                      Clear Favicon
+                    </button>
+                  )}
+                </div>
+              </label>
+              <label className="logo-field">
+                <span>Apple Touch Icon (180x180)</span>
+                <div className="logo-preview-row" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.5rem' }}>
+                  <div style={{ width: 60, height: 60, borderRadius: 12, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                    {(applePreview || generalForm.apple_touch_icon_url) ? (
+                      <img
+                        src={applePreview || (backendOrigin + generalForm.apple_touch_icon_url)}
+                        alt="Apple Touch icon preview"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                      />
+                    ) : (
+                      <div style={{ width: 28, height: 28, borderRadius: '6px', background: 'rgba(255,255,255,0.12)', border: '1px solid rgba(255,255,255,0.18)' }} />
+                    )}
+                  </div>
+                  <small style={{ opacity: 0.85 }}>Generated automatically from favicon upload</small>
+                  {(applePreview || generalForm.apple_touch_icon_url) && (
+                    <button type="button" className="btn" onClick={onClearFavicon} disabled={busy} style={{ marginLeft: '0.5rem' }}>
+                      Clear Apple Icon
                     </button>
                   )}
                 </div>
@@ -661,6 +895,7 @@ export default function SettingsPage() {
             <div className="actions">
               <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/config?record=1', 'config.json')}><FaCloudDownloadAlt /> Download config.json</button>
               <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/db?record=1', 'database.db')}><FaCloudDownloadAlt /> Download database.db</button>
+              <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/snapshot?record=1', 'cmp-backup.json')} title="Same JSON format as Telegram bot backup"><FaCloudDownloadAlt /> Download Telegram backup (JSON)</button>
               <button className="btn primary" disabled={busy} onClick={async () => {
                 try {
                   setBusy(true);
@@ -685,13 +920,119 @@ export default function SettingsPage() {
                 <span>Restore Database (.db)</span>
                 <input type="file" accept=".db" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(backendOrigin + '/api/admin/restore/db', f); e.target.value = ''; }} />
               </label>
+              <label className="full">
+                <span>Restore Telegram Snapshot (JSON)</span>
+                <input type="file" accept="application/json,.json" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(backendOrigin + '/api/admin/restore/snapshot', f); e.target.value = ''; }} />
+              </label>
             </div>
           </div>
         )}
 
         {tab === 'telegram' && (
-          <div role="tabpanel" id="panel-telegram" aria-labelledby="tab-telegram" className="tab-panel">
+          <div role="tabpanel" id="panel-telegram" aria-labelledby="tab-telegram" className="tab-panel telegram-tab">
             <h3>Telegram Bot Settings</h3>
+            {/* Scoped compact glossy toggle styles (theme-aware). Ensures consistent rendering regardless of global CSS order. */}
+            <style>{`
+              /* Ensure the toggle never stretches in flex/inline contexts */
+              .settings-page .toy-toggle { position: relative; display: inline-block; width: var(--w,72px); height: var(--h,40px); min-width: var(--w,72px); max-width: var(--w,72px); min-height: var(--h,40px); max-height: var(--h,40px); border-radius: calc(var(--h,40px)/2); background: #f3f5f7; overflow: hidden; box-shadow: inset 0 6px 12px rgba(0,0,0,0.18), inset 0 0 0 1px rgba(0,0,0,0.06), 0 4px 8px rgba(0,0,0,0.12); --rim: 2px; line-height: 0; box-sizing: border-box; flex: 0 0 auto; contain: strict; isolation: isolate; font-size: initial; --w: 66px; --h: 36px; --pad: 4px; }
+              /* Make layer spans absolutely positioned and block-sized by default */
+              .settings-page .toy-toggle > span { position: absolute; left: 0; top: 0; right: 0; bottom: 0; display: block; box-sizing: border-box; }
+              /* Neutralize any global centering transforms applied elsewhere */
+              .settings-page .toy-toggle > span:not(.handle) { transform: none !important; }
+              /* Outer shell and bright rim layers */
+              .settings-page .toy-toggle .border1 { inset: 0; border-radius: calc(var(--h,40px)/2); z-index: 0;
+                background: linear-gradient(180deg, rgba(255,255,255,0.22), rgba(0,0,0,0.10));
+                box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25), 0 1px 2px rgba(0,0,0,0.25);
+              }
+              .settings-page .toy-toggle .border2 { inset: var(--rim,2px); border-radius: calc(var(--h,40px)/2); z-index: 1; pointer-events: none;
+                background: linear-gradient(180deg, #ffffff, #e8eef6);
+                box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), inset 0 -1px 0 rgba(0,0,0,0.22), 0 0 0 1px rgba(255,255,255,0.16);
+              }
+              .settings-page .toy-toggle .border3 { inset: calc(var(--pad,4px) + var(--rim,2px)); border-radius: calc(var(--h,40px)/2); z-index: 2; background: linear-gradient(180deg,var(--off1,#dfe3e7),var(--off2,#c4c9d0)); box-shadow: inset 0 8px 14px rgba(0,0,0,0.32), inset 0 0 0 1px rgba(0,0,0,0.12); transition: background .25s ease; }
+              /* Neutralize legacy global width/height set in ems for classic toggle */
+              .settings-page .toy-toggle .border1,
+              .settings-page .toy-toggle .border2,
+              .settings-page .toy-toggle .border3 { width: auto !important; height: auto !important; }
+              .settings-page .toy-toggle .handle { top: 50%; left: calc(var(--pad,4px) + var(--rim,2px)); width: calc(var(--h,40px) - 2*var(--pad,4px) - 2*var(--rim,2px)); height: calc(var(--h,40px) - 2*var(--pad,4px) - 2*var(--rim,2px)); transform: translateY(-50%); border-radius: 50%; z-index: 3;
+                background: radial-gradient(circle at 35% 30%, #ffffff 0%, #f5f5f5 40%, #dddddd 70%, #c9c9c9 100%);
+                box-shadow: inset 0 2px 5px rgba(255,255,255,0.9), inset 0 -6px 10px rgba(0,0,0,0.20), 0 4px 8px rgba(0,0,0,0.20);
+                transition: left .28s cubic-bezier(.4,0,.2,1), background .25s ease; }
+              .settings-page .toy-toggle .handle-off, .settings-page .toy-toggle .handle-on { display: none; }
+              .settings-page .toy-toggle-input:checked + .toy-toggle .border3 { background: linear-gradient(180deg,var(--on1,#3aa04b),var(--on2,#58c46a)); }
+              .settings-page .toy-toggle-input:checked + .toy-toggle .handle { left: calc(var(--w,72px) - (var(--pad,4px) + var(--rim,2px)) - (var(--h,40px) - 2*(var(--pad,4px) + var(--rim,2px)))); background: radial-gradient(circle at 35% 30%, #a6f08d 0%, #7fe474 50%, #6cd45f 100%); }
+              /* Focus ring for keyboard navigation */
+              .settings-page .toy-toggle-input:focus-visible + .toy-toggle { outline: 2px solid #7cc0ff; outline-offset: 2px; }
+              /* Reduced motion preference */
+              @media (prefers-reduced-motion: reduce) {
+                .settings-page .toy-toggle .handle,
+                .settings-page .toy-toggle .border3 { transition: none; }
+              }
+              /* Theme tuning */
+              body.theme-dark .settings-page .toy-toggle { background: #1d2a36; box-shadow: inset 0 6px 14px rgba(0,0,0,0.55), 0 8px 16px rgba(0,0,0,0.3); }
+              body.theme-dark .settings-page .toy-toggle { --off1: #2a3947; --off2: #1f2a35; --on1: #2e9d42; --on2: #4ec264; }
+              body.theme-dark .settings-page .toy-toggle .border2 { background: linear-gradient(180deg, #ffffff, #eef3f8); box-shadow: inset 0 1px 0 rgba(255,255,255,0.95), 0 0 0 1px rgba(255,255,255,0.2), inset 0 -1px 0 rgba(0,0,0,0.28); }
+              body.theme-light .settings-page .toy-toggle { --off1: #e4e8ee; --off2: #cfd5dd; --on1: #4caf50; --on2: #69d057; }
+              /* Status row default: single-line desktop; wraps on mobile */
+              .telegram-tab .bot-status-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: nowrap; overflow-x: auto; white-space: nowrap; }
+              @media (max-width: 640px) {
+                .telegram-tab .bot-status-row { flex-wrap: wrap; overflow-x: visible; white-space: normal; }
+              }
+              /* Responsive layout for Telegram tab */
+              @media (max-width: 640px) {
+                .telegram-tab .form-grid { display: grid; grid-template-columns: 1fr !important; gap: 0.75rem; }
+                .telegram-tab .form-grid .full { grid-column: 1 / -1; }
+                .telegram-tab .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+                .telegram-tab .actions .btn { width: 100%; justify-content: center; }
+                .telegram-tab .toy-toggle-wrap { gap: 0.5rem; }
+                .telegram-tab .bot-status-card { padding: 0.5rem; }
+                .telegram-tab .bot-status-card .btn { padding: 0.25rem 0.5rem; }
+                /* Slightly smaller toggle on narrow screens */
+                .telegram-tab .toy-toggle { --w: 58px; --h: 32px; --pad: 4px; --rim: 2px; }
+              }
+            `}</style>
+            {/* Bot Runtime Status */}
+              <div className="bot-status-card" style={{
+              margin: '0 0 0.75rem 0', padding: '0.5rem 0.75rem', borderRadius: '0.75rem',
+              border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(255,255,255,0.04)'
+            }}>
+                <div className="bot-status-row">
+                <span title="Enabled" style={{ opacity: 0.9, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <FaPowerOff style={{ fontSize: '0.95em', verticalAlign: 'middle', color: tgForm.enabled ? '#69d057' : '#9aa4ad' }} /> {tgForm.enabled ? 'On' : 'Off'}
+                </span>
+                <span aria-hidden style={{ opacity: 0.5 }}>•</span>
+                <span title="Reload interval" style={{ opacity: 0.9, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <FaClock style={{ fontSize: '0.95em', verticalAlign: 'middle' }} /> {(tgForm.settings_reload_seconds ?? 60)}s
+                </span>
+                <span aria-hidden style={{ opacity: 0.5 }}>•</span>
+                <span title="Schedule" style={{ opacity: 0.9, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <FaCalendarAlt style={{ fontSize: '0.95em', verticalAlign: 'middle' }} /> {tgForm.notificationTime || '—'}
+                </span>
+                <span aria-hidden style={{ opacity: 0.5 }}>•</span>
+                <span title="Last success" style={{ opacity: 0.9, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <FaCheckCircle style={{ fontSize: '0.95em', verticalAlign: 'middle', color: botStatus?.last_success ? '#6bd36b' : '#9aa4ad' }} /> {botStatus?.last_success ? new Date(botStatus.last_success).toLocaleString() : '—'}
+                </span>
+                <span aria-hidden style={{ opacity: 0.5 }}>•</span>
+                <span title="Last error" style={{ opacity: 0.9, display: 'inline-flex', alignItems: 'center', gap: '0.35rem', color: botStatus?.last_error ? '#e57373' : 'inherit' }}>
+                  <FaExclamationTriangle style={{ fontSize: '0.95em', verticalAlign: 'middle', color: botStatus?.last_error ? '#e57373' : '#9aa4ad' }} /> {botStatus?.last_error || '—'}
+                </span>
+                <span aria-hidden style={{ opacity: 0.5 }}>•</span>
+                <span title="Updated" style={{ opacity: 0.9, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                  <FaHistory style={{ fontSize: '0.95em', verticalAlign: 'middle' }} /> {botStatus?.updated_at ? new Date(botStatus.updated_at).toLocaleString() : '—'}
+                </span>
+                <div style={{ marginLeft: 'auto', flex: '0 0 auto' }}>
+                  <button
+                    className="btn"
+                    title="Refresh status"
+                    onClick={async () => { try { setStatusRefreshing(true); await fetchBotStatus(); } finally { setStatusRefreshing(false); } }}
+                    disabled={statusRefreshing}
+                    style={{ padding: '0.25rem 0.5rem' }}
+                  >
+                    <FaSyncAlt className={statusRefreshing ? 'spin' : ''} />
+                    <span style={{ marginLeft: '0.35rem' }}>{statusRefreshing ? 'Refreshing…' : 'Refresh'}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
             <div className="form-grid">
               <label className="full" style={{ position: 'relative' }}>
                 <span>Bot Token</span>
@@ -747,6 +1088,38 @@ export default function SettingsPage() {
                 <span>Default Chat ID</span>
                 <input type="text" value={tgForm.defaultChatId} onChange={(e) => setTgForm({ ...tgForm, defaultChatId: e.target.value })} />
               </label>
+              <label>
+                <span>Settings Reload Interval (seconds)</span>
+                <input type="number" min="5" step="1" value={tgForm.settings_reload_seconds ?? 60} onChange={(e) => setTgForm({ ...tgForm, settings_reload_seconds: Number(e.target.value) })} />
+                <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>How often the bot reloads settings. Minimum 5 seconds. Default 60 seconds.</small>
+              </label>
+              {/* Telegram Bot Enabled (Toy Toggle) */}
+              <div className="full" style={{ marginTop: '0.5rem' }}>
+                <span style={{ display: 'block', marginBottom: '0.5rem' }} id="tg-enabled-label">Telegram Bot Enabled</span>
+                <div className="toy-toggle-wrap" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <input
+                    className="toy-toggle-input"
+                    type="checkbox"
+                    id="tg-enabled-toggle"
+                    name="tg-enabled-toggle"
+                    aria-label="Telegram Bot Enabled"
+                    style={{ position: 'absolute', left: '-9999px', width: 1, height: 1, overflow: 'hidden', opacity: 0, pointerEvents: 'none' }}
+                    checked={!!tgForm.enabled}
+                    onChange={(e) => setTgForm({ ...tgForm, enabled: e.target.checked })}
+                  />
+                  <label htmlFor="tg-enabled-toggle" className="toy-toggle" aria-hidden
+                    style={{ display: 'inline-block', width: 'var(--w,72px)', height: 'var(--h,40px)', minWidth: 'var(--w,72px)', maxWidth: 'var(--w,72px)', minHeight: 'var(--h,40px)', maxHeight: 'var(--h,40px)', borderRadius: 'calc(var(--h,40px)/2)', cursor: 'pointer' }}>
+                    <span className="border1"></span>
+                    <span className="border2"></span>
+                    <span className="border3"></span>
+                    <span className="handle">
+                      <span className="handle-off"></span>
+                      <span className="handle-on"></span>
+                    </span>
+                  </label>
+                </div>
+                <small style={{ display: 'block', marginTop: '0.5rem', opacity: 0.85 }}>Turn the Telegram bot ON or OFF. When OFF, the bot will not poll Telegram nor send notifications or backups.</small>
+              </div>
               <label className="full">
                 <span>Notification Time</span>
                 <input type="text" value={tgForm.notificationTime} placeholder="@daily" onChange={(e) => setTgForm({ ...tgForm, notificationTime: e.target.value })} />
@@ -766,62 +1139,183 @@ export default function SettingsPage() {
               </label>
             </div>
             <div className="actions">
-              <button className="btn" onClick={() => fetchSettings('telegram')} disabled={loading}><FaSyncAlt /> Refresh</button>
+              <button className="btn" onClick={() => { fetchSettings('telegram'); fetchBotStatus(); }} disabled={loading}><FaSyncAlt /> Refresh</button>
               <button className="btn primary" onClick={onSave} disabled={saving}><FaSave /> Save</button>
               <button className="btn" onClick={onTest} disabled={testing}><FaFlask /> Test Token</button>
+              <button className="btn" onClick={async () => { try { setBusy(true); await axios.post(backendOrigin + '/api/admin/settings/telegram/apply-now', {}, { headers: authHeaders }); await fetchBotStatus(); showMsg('Applied settings to bot'); } catch (err) { showMsg('Apply failed: ' + (err.response?.data?.msg || err.message)); } finally { setBusy(false); } }} disabled={busy}><FaSyncAlt /> Apply now</button>
             </div>
           </div>
         )}
 
-        {tab === 'remote' && (
-          <div role="tabpanel" id="panel-remote" aria-labelledby="tab-remote" className="tab-panel">
-            <h3>Remote Server Settings</h3>
-            <div className="form-grid">
-              <label>
-                <span>Host</span>
-                <input type="text" value={rsForm.host} onChange={(e) => setRsForm({ ...rsForm, host: e.target.value })} />
-              </label>
-              <label>
-                <span>Port</span>
-                <input type="number" min="1" max="65535" value={rsForm.port} onChange={(e) => setRsForm({ ...rsForm, port: Number(e.target.value) })} />
-              </label>
-              <label>
-                <span>Username</span>
-                <input type="text" value={rsForm.username} onChange={(e) => setRsForm({ ...rsForm, username: e.target.value })} />
-              </label>
-              <label>
-                <span>Auth Method</span>
-                <select value={rsForm.authMethod} onChange={(e) => setRsForm({ ...rsForm, authMethod: e.target.value })}>
-                  <option value="password">Password</option>
-                  <option value="key">SSH Key</option>
-                </select>
-              </label>
-              {rsForm.authMethod === 'password' ? (
-                <label className="full">
-                  <span>Password</span>
-                  <input type="password" value={rsForm.password} onChange={(e) => setRsForm({ ...rsForm, password: e.target.value })} />
-                </label>
-              ) : (
-                <>
-                  <label className="full">
-                    <span>Private Key (PEM)</span>
-                    <textarea rows={6} value={rsForm.privateKey} onChange={(e) => setRsForm({ ...rsForm, privateKey: e.target.value })} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
+        {tab === 'control' && (
+          <div role="tabpanel" id="panel-control" aria-labelledby="tab-control" className="tab-panel">
+            <h3>Control Panel</h3>
+            {/* Top status bar */}
+            <div className="cp-statusbar" style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', padding: '0.5rem 0.75rem', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '0.75rem', marginBottom: '0.75rem', background: 'rgba(255,255,255,0.04)' }}>
+              {/* Service status removed */}
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }} title="Certificate status">
+                <FaShieldAlt />
+                <span>Cert</span>
+                <span aria-hidden style={{ opacity: 0.5 }}>•</span>
+                <span>{certStatus?.domain || certConfig?.domain || '—'}</span>
+                <span aria-hidden style={{ opacity: 0.5 }}>•</span>
+                <span>{(certStatus && certStatus.cert && (typeof certStatus.cert.daysRemaining === 'number')) ? `${certStatus.cert.daysRemaining}d left` : 'no cert'}</span>
+              </div>
+            </div>
+            <div className="cp-sections" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+              {/* System Status section removed */}
+              {/* Certificate */}
+              <section className="cp-cert" style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '0.75rem', padding: '0.75rem' }}>
+                <h4 style={{ margin: '0 0 0.5rem 0' }}>Certificate</h4>
+                <div className="form-grid" style={{ marginBottom: '0.5rem' }}>
+                  <label>
+                    <span>Domain</span>
+                    <input type="text" value={certConfig.domain} onChange={(e) => setCertConfig({ ...certConfig, domain: e.target.value })} />
                   </label>
                   <label>
-                    <span>Passphrase (optional)</span>
-                    <input type="password" value={rsForm.passphrase} onChange={(e) => setRsForm({ ...rsForm, passphrase: e.target.value })} />
+                    <span>Email</span>
+                    <input type="email" value={certConfig.email} onChange={(e) => setCertConfig({ ...certConfig, email: e.target.value })} />
                   </label>
-                </>
-              )}
-            </div>
-            <div className="actions">
-              <button className="btn" onClick={() => fetchSettings('remoteServer')} disabled={loading}><FaSyncAlt /> Refresh</button>
-              <button className="btn primary" onClick={onSave} disabled={saving}><FaSave /> Save</button>
-              <button className="btn" onClick={onTest} disabled={testing}><FaFlask /> Test Connectivity</button>
+                  <label className="full">
+                    <span>Cloudflare Global API Token</span>
+                    <input
+                      type="password"
+                      value={certConfig.api_token}
+                      placeholder={certConfig.api_token ? certConfig.api_token : ''}
+                      onChange={(e) => setCertConfig({ ...certConfig, api_token: e.target.value })}
+                    />
+                    <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>
+                      This token will be written to /root/.cloudflare.ini for DNS-01 challenges.
+                    </small>
+                  </label>
+                </div>
+                {certStatus && certStatus.cert ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '0.5rem' }}>
+                    <div><strong>Domain</strong><br />{certStatus.domain}</div>
+                    <div><strong>Issuer</strong><br />{certStatus.cert.issuer || '—'}</div>
+                    <div><strong>Expires</strong><br />{certStatus.cert.notAfter || '—'}</div>
+                    <div><strong>Days Left</strong><br />{certStatus.cert.daysRemaining ?? '—'}</div>
+                  </div>
+                ) : <div style={{ opacity: 0.7 }}>{certStatus ? 'No certificate found.' : 'No status yet.'}</div>}
+                <div className="actions" style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button className="btn" disabled={cpBusy} onClick={fetchCert}><FaSyncAlt /> Refresh</button>
+                  <button className="btn" disabled={cpBusy} onClick={saveCertConfig}><FaSave /> Save Config</button>
+                  <button className="btn" disabled={cpBusy} onClick={issueCert}><FaSave /> Issue</button>
+                  <button className="btn" disabled={cpBusy} onClick={renewCert}><FaSyncAlt /> Renew</button>
+                </div>
+              </section>
+              {/* Update */}
+              <section className="cp-update" style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '0.75rem', padding: '0.75rem' }}>
+                <h4 style={{ margin: '0 0 0.5rem 0' }}>Update</h4>
+                <div className="form-grid" style={{ marginBottom: '0.5rem' }}>
+                  <label className="full">
+                    <span>Update source (Git URL)</span>
+                    <input type="text" value={updateSource} onChange={(e) => setUpdateSource(e.target.value)} placeholder="https://github.com/owner/repo.git or git@github.com:owner/repo.git" />
+                  </label>
+                </div>
+                {/* Inline status for origins */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <div><strong>Git origin</strong><br />{updateStatus?.gitOrigin || '—'}</div>
+                  <div><strong>Stored origin</strong><br />{updateStatus?.storedOrigin || '—'}</div>
+                  <div><strong>Updated by</strong><br />{(updateStatus && (updateStatus.updatedBy || updateStatus.updated_by)) ?? '—'}</div>
+                  <div><strong>Updated at</strong><br />{updateStatus?.updatedAt ? new Date(updateStatus.updatedAt).toLocaleString() : (updateStatus?.updated_at ? new Date(updateStatus.updated_at).toLocaleString() : '—')}</div>
+                </div>
+                {(() => {
+                  const g = updateStatus?.gitOrigin;
+                  const s = updateStatus?.storedOrigin;
+                  if (g && s && g !== s) {
+                    return (
+                      <div aria-label="origin-mismatch" style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.4rem',
+                        padding: '0.35rem 0.6rem',
+                        borderRadius: '999px',
+                        background: 'rgba(255,140,0,0.15)',
+                        border: '1px solid rgba(255,140,0,0.35)',
+                        color: '#ffb06b',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        marginBottom: '0.5rem'
+                      }}>
+                        <FaExclamationTriangle style={{ fontSize: '0.9rem' }} />
+                        <span>Git origin differs from stored origin</span>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+                {updateInfo ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                    <div><strong>Branch:</strong> {updateInfo.branch}</div>
+                    <div><strong>Local:</strong> {updateInfo.localSha?.slice(0,12)}</div>
+                    <div><strong>Remote:</strong> {updateInfo.remoteSha?.slice(0,12)}</div>
+                    <div><strong>Status:</strong> {updateInfo.behind ? 'Behind (update available)' : 'Up to date'}</div>
+                    {updateInfo.originUrl ? (<div><strong>Origin:</strong> {updateInfo.originUrl}</div>) : null}
+                  </div>
+                ) : <div style={{ opacity: 0.7 }}>No check yet.</div>}
+                <div className="actions" style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button className="btn" disabled={updateBusy} onClick={checkUpdate}><FaSyncAlt /> Check</button>
+                  <button className="btn" disabled={updateBusy} onClick={saveUpdateSource}><FaSave /> Save Source</button>
+                  <button className="btn" disabled={updateBusy || !(updateStatus?.storedOrigin || updateSource)} onClick={retryUpdateOrigin}><FaSyncAlt /> Retry Git Remote Update</button>
+                  <button className="btn primary" disabled={updateBusy || !updateInfo?.behind} onClick={applyUpdate}><FaSave /> Apply Update</button>
+                </div>
+              </section>
+              {/* Frontend Dev Port section removed per request */}
+              {/* Remote server settings retained */}
+              <section className="cp-remote" style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '0.75rem', padding: '0.75rem' }}>
+                <h4 style={{ margin: '0 0 0.5rem 0' }}>Remote Server Settings</h4>
+                <div className="form-grid">
+                  <label>
+                    <span>Host</span>
+                    <input type="text" value={rsForm.host} onChange={(e) => setRsForm({ ...rsForm, host: e.target.value })} />
+                  </label>
+                  <label>
+                    <span>Port</span>
+                    <input type="number" min="1" max="65535" value={rsForm.port} onChange={(e) => setRsForm({ ...rsForm, port: Number(e.target.value) })} />
+                  </label>
+                  <label>
+                    <span>Username</span>
+                    <input type="text" value={rsForm.username} onChange={(e) => setRsForm({ ...rsForm, username: e.target.value })} />
+                  </label>
+                  <label>
+                    <span>Auth Method</span>
+                    <select value={rsForm.authMethod} onChange={(e) => setRsForm({ ...rsForm, authMethod: e.target.value })}>
+                      <option value="password">Password</option>
+                      <option value="key">SSH Key</option>
+                    </select>
+                  </label>
+                  {rsForm.authMethod === 'password' ? (
+                    <label className="full">
+                      <span>Password</span>
+                      <input type="password" value={rsForm.password} onChange={(e) => setRsForm({ ...rsForm, password: e.target.value })} />
+                    </label>
+                  ) : (
+                    <>
+                      <label className="full">
+                        <span>Private Key (PEM)</span>
+                        <textarea rows={6} value={rsForm.privateKey} onChange={(e) => setRsForm({ ...rsForm, privateKey: e.target.value })} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
+                      </label>
+                      <label>
+                        <span>Passphrase (optional)</span>
+                        <input type="password" value={rsForm.passphrase} onChange={(e) => setRsForm({ ...rsForm, passphrase: e.target.value })} />
+                      </label>
+                    </>
+                  )}
+                </div>
+                <div className="actions" style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button className="btn" onClick={() => fetchSettings('remoteServer')} disabled={loading}><FaSyncAlt /> Refresh</button>
+                  <button className="btn primary" onClick={onSave} disabled={saving}><FaSave /> Save</button>
+                  <button className="btn" onClick={onTest} disabled={testing}><FaFlask /> Test Connectivity</button>
+                </div>
+              </section>
             </div>
           </div>
         )}
+        {/* Restart confirm modal removed */}
       </div>
     </div>
   );
 }
+
+// (legacy helpers removed)

@@ -16,7 +16,12 @@ function DashboardPage() {
   const [statusModalData, setStatusModalData] = useState({ loading: false, users: [], error: '' });
   const [tierModal, setTierModal] = useState({ open: false, tier: null });
   const [tierModalData, setTierModalData] = useState({ loading: false, users: [], error: '' });
-  const { token } = useAuth();
+  const { token, user: authUser } = useAuth();
+  const role = authUser?.user?.role || authUser?.role || null;
+  // Removed unused health state (not referenced in current UI rendering)
+  // Health state reserved for future feature flags; accessed within poll effect below.
+  const [health, setHealth] = useState({ features: null, matview: { refreshing: null } }); // referenced for future feature flags
+  const [showRefreshing, setShowRefreshing] = useState(false);
 
   const backendOrigin = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) ? 'http://localhost:3001' : '';
 
@@ -27,17 +32,20 @@ function DashboardPage() {
       setError('');
       const res = await axios.get(`${backendOrigin}/api/servers/summary`, { headers: { Authorization: `Bearer ${token}` } });
       const data = res.data || {};
-      setServers(Array.isArray(data.servers) ? data.servers : []);
-      // create a lightweight usersByServer-like map with counts only
+      const serversFromApi = Array.isArray(data.servers) ? data.servers : [];
+      // Keep server order as returned by API (ordered by display_pos on backend)
+      setServers(serversFromApi);
+      // Lightweight counts mapping for card footer without fetching per-server users
       const counts = {};
-      (data.servers || []).forEach(s => { counts[s.id] = { length: s.total_users || 0 }; });
+      serversFromApi.forEach(s => { counts[s.id] = { length: s.total_users || 0 }; });
       setUsersByServer(counts);
-      // store backend totals if available
+      // Trust backend aggregates directly
       setBackendTotals({
         tiers: data.tiers || null,
         status: data.status || null,
-        totalUsers: typeof data.totalUsers === 'number' ? data.totalUsers : null,
-        totalServers: typeof data.totalServers === 'number' ? data.totalServers : null,
+        totalUsers: typeof data.totalUsers === 'number' ? data.totalUsers : (serversFromApi || []).reduce((acc, s) => acc + (s.total_users || 0), 0),
+        totalServers: typeof data.totalServers === 'number' ? data.totalServers : serversFromApi.length,
+        features: data.features || null,
       });
     } catch (e) {
       console.error('Dashboard fetch failed:', e);
@@ -48,6 +56,58 @@ function DashboardPage() {
   }, [token, backendOrigin]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Poll a lightweight health endpoint for feature flags and refresh state (admin-only)
+  useEffect(() => {
+    if (role !== 'ADMIN') return;
+    let mounted = true;
+    let refreshOnTimer = null;
+    let refreshOffTimer = null;
+    let backoffMs = 5000; // base interval
+    const maxBackoff = 60000;
+    let timer = null;
+    const jitter = (ms) => Math.round(ms * (0.9 + Math.random() * 0.2));
+    const schedule = () => {
+      if (!mounted) return;
+      timer = setTimeout(run, jitter(backoffMs));
+    };
+    const run = async () => {
+      if (!mounted) return;
+      try {
+        const r = await axios.get(`${backendOrigin}/api/health`);
+        if (!mounted) return;
+        const body = r.data || {};
+        setHealth({ features: body.features || null, matview: body.matview || { refreshing: null } });
+        const refreshing = !!(body?.matview?.refreshing);
+        // Debounce: avoid flicker for sub-300ms transitions
+        if (refreshing) {
+          if (refreshOffTimer) { clearTimeout(refreshOffTimer); refreshOffTimer = null; }
+          if (!showRefreshing && !refreshOnTimer) {
+            refreshOnTimer = setTimeout(() => { setShowRefreshing(true); refreshOnTimer = null; }, 300);
+          }
+        } else {
+          if (refreshOnTimer) { clearTimeout(refreshOnTimer); refreshOnTimer = null; }
+          if (showRefreshing && !refreshOffTimer) {
+            refreshOffTimer = setTimeout(() => { setShowRefreshing(false); refreshOffTimer = null; }, 300);
+          }
+        }
+        // success -> reset backoff
+        backoffMs = 5000;
+      } catch (_) {
+        // error -> exponential backoff
+        backoffMs = Math.min(maxBackoff, backoffMs * 2);
+      } finally {
+        schedule();
+      }
+    };
+    run();
+    return () => {
+      mounted = false;
+      if (timer) clearTimeout(timer);
+      if (refreshOnTimer) clearTimeout(refreshOnTimer);
+      if (refreshOffTimer) clearTimeout(refreshOffTimer);
+    };
+  }, [role, backendOrigin, showRefreshing]);
 
   // Normalize service names to canonical labels used across UI
   const normalizeService = useCallback((s) => {
@@ -68,8 +128,11 @@ function DashboardPage() {
     const active = backendTotals.status?.active ?? 0;
     const soon = backendTotals.status?.soon ?? 0;
     const expired = backendTotals.status?.expired ?? 0;
-    return { totalServers, totalUsers, mini, basic, unlimited, active, soon, expired };
-  }, [servers, backendTotals]);
+    const matview = backendTotals.features?.useUserStatusMatview === true;
+    // touch health.features to suppress unused var warning until feature rollout
+    const _featureFlagCount = health.features ? Object.keys(health.features).length : 0; // eslint-disable-line no-unused-vars
+    return { totalServers, totalUsers, mini, basic, unlimited, active, soon, expired, matview };
+  }, [servers, backendTotals, health.features]);
 
   const [statusCollapsed, setStatusCollapsed] = useState(true);
 
@@ -164,49 +227,13 @@ function DashboardPage() {
   };
 
   const openStatusModal = async (type) => {
-    const fallback = async () => {
-      // Fallback path: fetch users per server and filter client-side (avoids backend 404 during restart)
-      const srvRes = await axios.get(`${backendOrigin}/api/servers`, { headers: { Authorization: `Bearer ${token}` } });
-      const list = Array.isArray(srvRes.data) ? srvRes.data : (srvRes.data?.servers || []);
-      const byId = new Map(list.map(s => [s.id, s]));
-      const reqs = list.map(s => axios.get(`${backendOrigin}/api/users/server/${s.id}`, { headers: { Authorization: `Bearer ${token}` } }).then(r => ({ id: s.id, users: Array.isArray(r.data) ? r.data : [] })).catch(() => ({ id: s.id, users: [] })));
-      const results = await Promise.all(reqs);
-      const now = new Date();
-      const soonCutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-      const filtered = [];
-      for (const { id, users } of results) {
-        const s = byId.get(id);
-        for (const u of users) {
-          const exp = u?.expire_date ? new Date(u.expire_date) : null;
-          if (!exp) continue;
-          const isExpired = exp < now;
-          const isSoon = exp >= now && exp <= soonCutoff;
-          const isActive = exp > soonCutoff;
-          if ((type === 'expired' && isExpired) || (type === 'soon' && isSoon) || (type === 'active' && isActive)) {
-            filtered.push({ ...u, server_name: s?.server_name, ip_address: s?.ip_address, domain_name: s?.domain_name });
-          }
-        }
-      }
-      return filtered.sort((a, b) => new Date(a.expire_date) - new Date(b.expire_date));
-    };
-
     try {
       setStatusModal({ open: true, type, serverId: null, serverName: null });
       setStatusModalData({ loading: true, users: [], error: '' });
       const res = await axios.get(`${backendOrigin}/api/users/by-status/${type}`, { headers: { Authorization: `Bearer ${token}` } });
-      setStatusModalData({ loading: false, users: Array.isArray(res.data) ? res.data : [], error: '' });
+      const serverUsers = Array.isArray(res.data) ? res.data : [];
+      setStatusModalData({ loading: false, users: serverUsers, error: '' });
     } catch (e) {
-      // If route is not found yet (server not restarted), try fallback client aggregation
-      if (e?.response?.status === 404) {
-        try {
-          const users = await fallback();
-          setStatusModalData({ loading: false, users, error: '' });
-          return;
-        } catch (e2) {
-          setStatusModalData({ loading: false, users: [], error: e2?.message || 'Failed to load' });
-          return;
-        }
-      }
       setStatusModalData({ loading: false, users: [], error: e?.response?.data?.msg || e?.message || 'Failed to load' });
     }
   };
@@ -252,12 +279,21 @@ function DashboardPage() {
       const list = Array.isArray(r.data) ? r.data : [];
       const now = new Date();
       const soonCutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+      const parseDateOnly = (val) => {
+        if (!val) return null;
+        const s = String(val);
+        const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+      };
       const filtered = list.filter(u => {
-        const exp = u?.expire_date ? new Date(u.expire_date) : null;
+        const exp = u?.expire_date ? parseDateOnly(u.expire_date) : null;
         if (!exp) return false;
-        const isExpired = exp < now;
-        const isSoon = exp >= now && exp <= soonCutoff;
-        const isActive = exp > soonCutoff;
+        const cutoff = new Date(exp.getFullYear(), exp.getMonth(), exp.getDate() + 1); // exclusive end-of-day
+        const isExpired = cutoff <= now;
+        const isSoon = cutoff > now && cutoff <= soonCutoff;
+        const isActive = cutoff > soonCutoff;
         return (type === 'expired' && isExpired) || (type === 'soon' && isSoon) || (type === 'active' && isActive);
       });
       setStatusModalData({ loading: false, users: filtered, error: '' });
@@ -279,6 +315,14 @@ function DashboardPage() {
             <p className="admin-subtitle" style={{ margin: 0 }}>Overview of servers and users</p>
           </div>
         </div>
+        {role === 'ADMIN' && (
+          <div className="admin-header-right">
+            <span className={`feature-indicator ${stats.matview ? 'enabled' : 'disabled'}`} title={`User status matview ${stats.matview ? 'enabled' : 'disabled'}`}>
+              Matview: {stats.matview ? 'ON' : 'OFF'}
+              {showRefreshing ? ' (Refreshing…)' : ''}
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Stats banner */}
@@ -337,6 +381,9 @@ function DashboardPage() {
               }}
               disableClickLabels={['Active']}
             />
+            {role === 'ADMIN' && showRefreshing && (
+              <div className="refresh-legend-badge" aria-live="polite" role="status">Refreshing…</div>
+            )}
           </div>
         </div>
       </div>
@@ -436,8 +483,11 @@ function DashboardPage() {
             </>
           ) : ''
         }
-        className="status-users-modal"
+        className={`status-users-modal ${showRefreshing ? 'is-refreshing' : ''}`}
       >
+        {showRefreshing && (
+          <div className="refresh-banner" role="status" aria-live="polite">User status data is refreshing…</div>
+        )}
         {statusModalData.loading && <div>Loading…</div>}
         {statusModalData.error && <div className="form-error" role="alert">{statusModalData.error}</div>}
         {!statusModalData.loading && !statusModalData.error && (

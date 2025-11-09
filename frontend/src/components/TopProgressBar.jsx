@@ -1,4 +1,4 @@
-import React from 'react';
+// React not needed
 
 // Simple top-of-page indeterminate progress bar.
 // Usage: <TopProgressBar active={loading} />

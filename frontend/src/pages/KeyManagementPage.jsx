@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import { FaCopy, FaPaste, FaKey, FaSearch, FaPlus, FaTimes, FaTrash, FaUser } from 'react-icons/fa';
@@ -6,9 +6,9 @@ import { useToast } from '../context/ToastContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import ConfirmModal from '../components/ConfirmModal.jsx';
 
-function KeyManagementPage() {
+function KeyManagementInner() {
   const { id } = useParams(); // server id
-  const { token: authToken, user: authUser } = useAuth();
+  const { token: authToken } = useAuth();
   const [keys, setKeys] = useState([]);
   const [users, setUsers] = useState([]);
   const [server, setServer] = useState(null);
@@ -29,7 +29,7 @@ function KeyManagementPage() {
 
   const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
 
-  const fetchKeys = async () => {
+  const fetchKeys = useCallback(async () => {
     try {
       setLoading(true);
       const token = authToken || localStorage.getItem('token');
@@ -41,9 +41,9 @@ function KeyManagementPage() {
       setError('Could not load keys from server.');
       setKeys([]);
     } finally { setLoading(false); }
-  };
+  }, [authToken, backendOrigin, id]);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
       const token = authToken || localStorage.getItem('token');
       const res = await axios.get(`${backendOrigin}/api/users/server/${id}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -52,9 +52,9 @@ function KeyManagementPage() {
       console.debug('Failed to fetch users for server', e?.response?.status);
       setUsers([]);
     }
-  };
+  }, [authToken, backendOrigin, id]);
 
-  const fetchServer = async () => {
+  const fetchServer = useCallback(async () => {
     try {
       const token = authToken || localStorage.getItem('token');
       const res = await axios.get(`${backendOrigin}/api/servers/${id}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -63,32 +63,13 @@ function KeyManagementPage() {
       console.debug('Failed to fetch server', e?.response?.status);
       setServer(null);
     }
-  };
+  }, [authToken, backendOrigin, id]);
 
-  useEffect(() => { fetchKeys(); }, [id]);
-  useEffect(() => { fetchUsers(); }, [id]);
-  useEffect(() => { fetchServer(); }, [id]);
+  useEffect(() => { fetchKeys(); }, [fetchKeys]);
+  useEffect(() => { fetchUsers(); }, [fetchUsers]);
+  useEffect(() => { fetchServer(); }, [fetchServer]);
 
-  // Prevent VIEWER-only roles from accessing the Key Management UI.
-  // Derive role similarly to other pages where token payload may nest a `user` object.
-  const role = authUser && (authUser.user?.role || authUser.role);
-  if (role && role !== 'ADMIN' && role !== 'SERVER_ADMIN') {
-    return (
-      <div className="app-container">
-        <div className="forbidden-panel">
-          <div className="forbidden-icon" aria-hidden>🔒</div>
-          <div>
-            <h3 className="forbidden-title">Access denied</h3>
-            <p className="forbidden-desc">You don't have permission to manage keys for this server.</p>
-            <p className="forbidden-help">If you need access, ask a global administrator to grant you server-admin rights.</p>
-            <div className="forbidden-cta">
-              <a className="btn btn-secondary" href="/server-list">View Server List</a>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // role gating is handled by wrapper; inner always renders
 
   const filtered = useMemo(() => {
     const q = (search || '').toLowerCase().trim();
@@ -440,4 +421,25 @@ function KeyManagementPage() {
   );
 }
 
-export default KeyManagementPage;
+export default function KeyManagementPage() {
+  const { user } = useAuth();
+  const role = user && (user.user?.role || user.role);
+  if (role && role !== 'ADMIN' && role !== 'SERVER_ADMIN') {
+    return (
+      <div className="app-container">
+        <div className="forbidden-panel">
+          <div className="forbidden-icon" aria-hidden>🔒</div>
+          <div>
+            <h3 className="forbidden-title">Access denied</h3>
+            <p className="forbidden-desc">You don't have permission to manage keys for this server.</p>
+            <p className="forbidden-help">If you need access, ask a global administrator to grant you server-admin rights.</p>
+            <div className="forbidden-cta">
+              <a className="btn btn-secondary" href="/server-list">View Server List</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return <KeyManagementInner />;
+}

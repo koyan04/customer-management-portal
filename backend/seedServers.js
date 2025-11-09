@@ -11,9 +11,10 @@ async function seed() {
     }
 
     const servers = [
-      { server_name: 'East Coast Cluster' },
-      { server_name: 'West Coast Cluster' },
-      { server_name: 'EU Central' }
+      { server_name: 'Alpha' },
+      { server_name: 'Beta' },
+      { server_name: 'Gamma' },
+      { server_name: 'Delta' }
     ];
 
     for (const s of servers) {

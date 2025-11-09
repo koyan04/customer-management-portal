@@ -1,4 +1,32 @@
-require('dotenv').config();
+// Robust .env loading: prefer backend/.env, then project-root/.env, then fallback to CWD
+const path = require('path');
+const fs = require('fs');
+try {
+	const dotenv = require('dotenv');
+	let loadedAny = false;
+	// 1) backend/.env (same folder as this file)
+	try {
+		const backendEnv = path.join(__dirname, '.env');
+		if (fs.existsSync(backendEnv)) {
+			dotenv.config({ path: backendEnv, override: false });
+			loadedAny = true;
+		}
+	} catch (_) {}
+	// 2) project root .env (one level up from backend/)
+	try {
+		const rootEnv = path.join(path.resolve(__dirname, '..'), '.env');
+		if (fs.existsSync(rootEnv)) {
+			dotenv.config({ path: rootEnv, override: false });
+			loadedAny = true;
+		}
+	} catch (_) {}
+	// 3) fallback to default (process.cwd()) if neither file existed
+	if (!loadedAny) {
+		try { dotenv.config(); } catch (_) {}
+	}
+} catch (_) {
+	// If dotenv not available, continue; environment may be provided via process env.
+}
 const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
@@ -25,10 +53,16 @@ try {
 	console.error('Failed to load ./routes/admin:', e && e.message ? e.message : e);
 }
 
-const path = require('path');
-const fs = require('fs');
 const getRawBody = require('raw-body');
 const app = express();
+// Read app version from project root VERSION file (e.g., "cmp ver 1.0") and cache it
+try {
+	const versionFile = path.resolve(__dirname, '..', 'VERSION');
+	if (fs.existsSync(versionFile)) {
+		const v = fs.readFileSync(versionFile, 'utf8').trim();
+		if (v) app.locals.appVersion = v;
+	}
+} catch (_) { /* ignore version read errors */ }
 // Allow credentials for cookie-based refresh tokens in development when frontend runs on a different port
 app.use(cors({ origin: (origin, cb) => {
 	// allow undefined origin (e.g., same-origin requests from tests or tools)
@@ -40,20 +74,27 @@ app.use(cors({ origin: (origin, cb) => {
 
 app.use(cookieParser());
 
-// Early logger to help trace incoming requests before other middleware
+const log = require('./lib/logger');
+// Toggle verbose HTTP request logs with VERBOSE_HTTP_LOG=1|true|on|debug
+const VERBOSE_HTTP = /^(1|true|on|debug)$/i.test(String(process.env.VERBOSE_HTTP_LOG || ''));
+// Early logger to help trace incoming requests before other middleware (disabled by default)
 app.use((req, res, next) => {
 	try {
-		console.log('[EARLY-REQ] ', req.method, req.originalUrl, ' headers:', { origin: req.headers.origin, host: req.headers.host });
+		if (VERBOSE_HTTP) {
+			log.info('early-req', { method: req.method, url: req.originalUrl, origin: req.headers.origin, host: req.headers.host });
+		}
 	} catch (e) { }
 	next();
 });
 
-// diagnose large uploads: log incoming content-length/transfer-encoding before body parsing
+// diagnose large uploads: log incoming content-length/transfer-encoding before body parsing (verbose only)
 app.use((req, res, next) => {
 	try {
-		const cl = req.headers['content-length'];
-		const te = req.headers['transfer-encoding'];
-		console.log('[INCOMING] method=%s url=%s Content-Length=%s Transfer-Encoding=%s', req.method, req.originalUrl, cl, te);
+		if (VERBOSE_HTTP) {
+			const cl = req.headers['content-length'];
+			const te = req.headers['transfer-encoding'];
+			log.debug('incoming', { method: req.method, url: req.originalUrl, contentLength: cl, transferEncoding: te });
+		}
 	} catch (e) { /* ignore */ }
 	next();
 });
@@ -159,9 +200,54 @@ try {
 // Fallback for favicon requests to avoid noisy 404s when no icon is present
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
+// Serve built frontend (vite) directly from backend in production
+// If ../frontend/dist exists (relative to backend/), expose it and set up SPA fallback.
+try {
+	const feDistDir = path.resolve(__dirname, '..', 'frontend', 'dist');
+	if (fs.existsSync(feDistDir)) {
+		console.log('[static] serving frontend from', feDistDir);
+		app.use(express.static(feDistDir, { index: false }));
+		// SPA fallback: use generic middleware instead of app.get('*') (Express 5 path-to-regexp no longer accepts bare '*')
+		app.use((req, res, next) => {
+			try {
+				if (req.method !== 'GET') return next();
+				const url = req.originalUrl || '';
+				if (url.startsWith('/api') || url.startsWith('/uploads') || url.startsWith('/metrics') || url.startsWith('/internal')) return next();
+				// Only attempt send if index.html exists
+				const indexFile = path.join(feDistDir, 'index.html');
+				if (!fs.existsSync(indexFile)) return next();
+				return res.sendFile(indexFile);
+			} catch (e) { return next(e); }
+		});
+	} else {
+		console.log('[static] frontend dist not found at', feDistDir);
+	}
+} catch (e) {
+	console.warn('Failed to setup frontend static serving:', e && e.message ? e.message : e);
+}
+
 const pool = require('./db');
 const bcrypt = require('bcrypt');
 const { authenticateToken } = require('./middleware/authMiddleware');
+// Prometheus client for /metrics
+const client = require('prom-client');
+
+// register default metrics (avoid enabling during tests to prevent open handles in Jest)
+const collectDefaultMetrics = client.collectDefaultMetrics;
+if (process.env.NODE_ENV !== 'test') {
+	try {
+		collectDefaultMetrics({ timeout: 5000 });
+	} catch (e) {
+		console.warn('collectDefaultMetrics failed to start:', e && e.message ? e.message : e);
+	}
+} else {
+	// In test runs we avoid starting the default metrics collection which uses setInterval
+	// and can keep the Node process alive, causing Jest to report open handles.
+	log.info('test-skip-metrics');
+}
+
+// custom gauge for telegram bot health (0 = down, 1 = up)
+const telegramBotGauge = new client.Gauge({ name: 'cmp_telegram_bot_up', help: 'Telegram bot up (1) or down (0)' });
 
 // keep a lightweight registry of mounts (helps when express internals are unexpected)
 const registeredRoutes = [];
@@ -226,12 +312,14 @@ app.get('/api/admin/permissions/:editorId', async (req, res, next) => {
 	} catch (err) { return next(err); }
 });
 
-// simple request logger to aid local debugging
+// simple request logger to aid local debugging (verbose only)
 app.use((req, res, next) => {
-	console.log(`[REQ] ${req.method} ${req.originalUrl}`);
-	// avoid logging large bodies in production
-	if (process.env.NODE_ENV !== 'production' && ['POST','PUT','PATCH'].includes(req.method)) {
-		console.log('Body:', req.body);
+	if (VERBOSE_HTTP) {
+		log.debug('req', { method: req.method, url: req.originalUrl });
+		// avoid logging large bodies in production
+		if (process.env.NODE_ENV !== 'production' && ['POST','PUT','PATCH'].includes(req.method)) {
+			console.log('Body:', req.body);
+		}
 	}
 	next();
 });
@@ -258,12 +346,216 @@ app.get('/api/admin/my-server-admins', authenticateToken, async (req, res) => {
 
 // Debug: print what we registered and the internal router stack size so it's visible on startup
 try {
-	console.log('Registered mounts:', JSON.stringify(registeredRoutes, null, 2));
+	log.info('registered-mounts', { mounts: registeredRoutes });
 	const stack = (app._router && app._router.stack) || [];
-	console.log('Express router stack length:', stack.length);
+	log.debug('router-stack', { length: stack.length });
 } catch (e) {
 	console.warn('Failed to log router diagnostics', e && e.message ? e.message : e);
 }
+
+// Health endpoint for bot status (reads telegram_bot_status stored by the bot process)
+console.log('[MOUNT] mounting /internal/bot/status');
+app.get('/internal/bot/status', async (req, res) => {
+	// handler entry
+	console.log('[REQ-HIT] /internal/bot/status received');
+	try {
+		const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'telegram_bot_status'");
+		const data = r.rows && r.rows[0] ? r.rows[0].data : null;
+		return res.json({ ok: true, status: data });
+	} catch (e) {
+		console.error('GET /internal/bot/status failed:', e && e.message ? e.message : e);
+		return res.status(500).json({ ok: false, error: 'failed to read bot status' });
+	}
+});
+
+// Prometheus metrics endpoint
+console.log('[MOUNT] mounting /metrics');
+app.get('/metrics', async (req, res) => {
+	console.log('[REQ-HIT] /metrics received');
+	try {
+			// read current bot status and set gauge accordingly
+		try {
+			const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'telegram_bot_status'");
+			const data = r.rows && r.rows[0] ? r.rows[0].data : null;
+			if (data && data.last_success) {
+				telegramBotGauge.set(1);
+			} else {
+				telegramBotGauge.set(0);
+			}
+		} catch (e) {
+			telegramBotGauge.set(0);
+		}
+			// expose matview refresh state gauges
+			try {
+				const { getMatviewRefreshState } = require('./lib/matview_refresh_state');
+				const st = getMatviewRefreshState();
+				if (!app.locals.matviewRunningGauge) {
+					app.locals.matviewRunningGauge = new client.Gauge({ name: 'cmp_matview_refresh_running', help: 'Matview refresh currently running (1) or idle (0)' });
+				}
+				if (!app.locals.matviewPendingGauge) {
+					app.locals.matviewPendingGauge = new client.Gauge({ name: 'cmp_matview_refresh_pending', help: 'Matview refresh pending flag (1 if another refresh queued)' });
+				}
+				app.locals.matviewRunningGauge.set(st.isRunning ? 1 : 0);
+				app.locals.matviewPendingGauge.set(st.pending ? 1 : 0);
+			} catch (e) {
+				// swallow errors; gauges just won't update
+			}
+		// general settings key count & drop detection gauges (lightweight)
+		try {
+			if (!app.locals.generalKeyCountGauge) {
+				app.locals.generalKeyCountGauge = new client.Gauge({ name: 'cmp_general_settings_key_count', help: 'Number of top-level keys in app_settings.general' });
+			}
+			if (!app.locals.generalKeyDropCounter) {
+				app.locals.generalKeyDropCounter = new client.Counter({ name: 'cmp_general_settings_key_drop_events', help: 'Count of detected significant key-drop warning audit events' });
+			}
+			const gRow = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'general'");
+			const gData = gRow.rows && gRow.rows[0] ? (gRow.rows[0].data || {}) : {};
+			app.locals.generalKeyCountGauge.set(Object.keys(gData).length);
+			// read recent WARNING_KEY_DROP events to increment counter since last scrape (best-effort)
+			const warnRows = await pool.query("SELECT COUNT(*)::int AS c FROM settings_audit WHERE settings_key = 'general' AND action = 'WARNING_KEY_DROP' AND created_at >= (now() - interval '10 minutes')");
+			const recentDrops = warnRows.rows && warnRows.rows[0] ? warnRows.rows[0].c : 0;
+			if (recentDrops > 0) {
+				// increment counter by recentDrops (counter is cumulative so this adds; slight overcount possible on overlapping scrapes)
+				app.locals.generalKeyDropCounter.inc(recentDrops);
+			}
+		} catch (e) {
+			// ignore errors; metrics are ancillary
+		}
+		res.set('Content-Type', client.register.contentType);
+		return res.end(await client.register.metrics());
+	} catch (e) {
+		console.error('Failed to render /metrics:', e && e.message ? e.message : e);
+		res.status(500).end();
+	}
+});
+
+// Simple readiness/liveness endpoints for orchestration
+// - /internal/live: always 200 when process is up
+// - /internal/ready: checks DB connectivity briefly
+app.get('/internal/live', (req, res) => {
+	res.json({ ok: true, pid: process.pid, uptimeSec: Math.round(process.uptime()) });
+});
+
+app.get('/internal/ready', async (req, res) => {
+	try {
+		// very light query; if db env not set (test), still return ok
+		if (!process.env.DB_HOST) return res.json({ ok: true, db: 'skipped' });
+		const r = await pool.query('SELECT 1 as x');
+		if (r && r.rows && r.rows[0] && r.rows[0].x === 1) {
+			return res.json({ ok: true, db: 'ok' });
+		}
+		return res.status(500).json({ ok: false, db: 'unexpected result' });
+	} catch (e) {
+		return res.status(500).json({ ok: false, db: 'error', error: e && e.message ? e.message : String(e) });
+	}
+});
+
+// Lightweight health & feature flags endpoint
+// Returns process uptime, timestamp, and feature toggles (matview usage) for UI indicators.
+app.get('/api/health', async (req, res) => {
+	try {
+		let useMatview = false;
+		try {
+			const { detectMatviewSupport } = require('./lib/matview_detect');
+			const mv = await detectMatviewSupport(pool);
+			useMatview = !!mv.enabled;
+		} catch (e) {
+			const v = String(process.env.USE_USER_STATUS_MATVIEW || '').trim().toLowerCase();
+			useMatview = (v === '1' || v === 'true' || v === 'yes' || v === 'on');
+			console.warn('matview dynamic detection failed in /api/health; using env only:', e && e.message ? e.message : e);
+		}
+		// Report whether a refresh is currently running (best-effort): require matview_refresh lazily
+		let refreshState = null;
+		try {
+			const { isMatviewRefreshRunning } = require('./lib/matview_refresh_state');
+			refreshState = typeof isMatviewRefreshRunning === 'function' ? !!isMatviewRefreshRunning() : null;
+		} catch (_) { /* ignore missing helper */ }
+		// Versions block: git SHA + build timestamp (if available)
+		let gitSha = null;
+		try {
+			const rev = require('child_process').execSync('git rev-parse --short HEAD', { cwd: path.resolve(__dirname, '..'), stdio: ['ignore','pipe','ignore'] }).toString().trim();
+			gitSha = rev || null;
+		} catch (_) {}
+		const buildTs = process.env.BUILD_TIMESTAMP || null;
+		return res.json({
+			ok: true,
+			ts: Date.now(),
+			uptimeSec: Math.round(process.uptime()),
+			features: { useUserStatusMatview: useMatview },
+			matview: { refreshing: refreshState },
+			versions: { gitSha, buildTimestamp: buildTs, appVersion: app.locals.appVersion || null }
+		});
+	} catch (e) {
+		return res.status(500).json({ ok: false, error: e && e.message ? e.message : 'health failed' });
+	}
+});
+
+// Admin-only Matview status and control endpoints
+app.get('/api/admin/matviews', async (req, res, next) => {
+	try {
+		return authenticateToken(req, res, async () => {
+			try {
+				if (!req.user || req.user.role !== 'ADMIN') return res.status(403).json({ msg: 'Forbidden' });
+				// Read in-process state
+				let running = null, pendingFlag = null;
+				try {
+					const { getMatviewRefreshState } = require('./lib/matview_refresh_state');
+					const st = getMatviewRefreshState();
+					running = !!st.isRunning;
+					pendingFlag = !!st.pending;
+				} catch (_) {}
+				// Read last success timestamp (if app_settings available)
+				let lastSuccess = null;
+				try {
+					const r = await pool.query("SELECT data->>'last_success' AS last_success FROM app_settings WHERE settings_key = 'user_status_matview_refresh'");
+					lastSuccess = r.rows && r.rows[0] ? (r.rows[0].last_success || null) : null;
+				} catch (_) {}
+				// Check existence and unique index support for CONCURRENT refresh
+				let exists = null;
+				let uniqueIndex = null;
+				try {
+					const mv = await pool.query("SELECT to_regclass('public.user_status_matview') AS name");
+					exists = !!(mv.rows && mv.rows[0] && mv.rows[0].name);
+				} catch (_) { exists = null; }
+				try {
+					// check specific unique index created by our migration
+					const iq = await pool.query(
+						"SELECT EXISTS (\n                           SELECT 1\n                           FROM pg_class c\n                           JOIN pg_index i ON c.oid = i.indrelid\n                           JOIN pg_class ic ON i.indexrelid = ic.oid\n                           WHERE c.relname = 'user_status_matview'\n                             AND ic.relname = 'user_status_matview_id_unique_idx'\n                             AND i.indisunique = true\n                         ) AS has_unique"
+					);
+					uniqueIndex = iq.rows && iq.rows[0] ? !!iq.rows[0].has_unique : false;
+				} catch (_) { uniqueIndex = null; }
+				const concurrent_supported = exists === true && uniqueIndex === true;
+				return res.json({ ok: true, matviews: [{ name: 'user_status_matview', refreshing: running, pending: pendingFlag, last_success: lastSuccess, exists, unique_index: uniqueIndex, concurrent_supported }] });
+			} catch (e) {
+				console.error('GET /api/admin/matviews error:', e);
+				return res.status(500).json({ msg: 'Server Error' });
+			}
+		});
+	} catch (e) { return next(e); }
+});
+
+app.post('/api/admin/matviews/:name/refresh', async (req, res, next) => {
+	try {
+		return authenticateToken(req, res, async () => {
+			try {
+				if (!req.user || req.user.role !== 'ADMIN') return res.status(403).json({ msg: 'Forbidden' });
+				const name = String(req.params.name || '').toLowerCase();
+				if (name !== 'user_status_matview') return res.status(400).json({ msg: 'Unknown matview' });
+				const mode = (String(req.query.mode || 'enqueue').toLowerCase());
+				const { enqueueRefresh, refreshNow } = require('./lib/matview_refresh');
+				if (mode === 'now') {
+					await refreshNow();
+					return res.json({ ok: true, refreshed: true });
+				}
+				enqueueRefresh();
+				return res.json({ ok: true, enqueued: true });
+			} catch (e) {
+				console.error('POST /api/admin/matviews/:name/refresh error:', e);
+				return res.status(500).json({ msg: 'Server Error' });
+			}
+		});
+	} catch (e) { return next(e); }
+});
 
 // Development-only debug endpoints to assist during local troubleshooting
 if (process.env.NODE_ENV !== 'production') {
@@ -345,6 +637,11 @@ app.use((err, req, res, next) => {
 		if (err.type === 'entity.too.large' || err.status === 413) {
 			console.error('Raw body/entity too large:', err.message || err);
 			return res.status(413).json({ msg: 'Payload too large' });
+		}
+		// For API routes, return JSON instead of the default HTML error page
+		if (req && typeof req.originalUrl === 'string' && req.originalUrl.startsWith('/api/')) {
+			const status = err.status && Number.isFinite(Number(err.status)) ? Number(err.status) : 500;
+			return res.status(status).json({ msg: err.message || 'Server Error' });
 		}
 	} catch (e) {
 		console.error('Error in error handler', e);

@@ -24,8 +24,17 @@ router.get('/public/settings/:key', async (req, res) => {
   try {
     const { key } = req.params;
     if (key !== 'general') return res.status(404).json({ msg: 'Not found' });
-    const { rows } = await pool.query('SELECT data FROM app_settings WHERE settings_key = $1', [key]);
-    const data = rows && rows[0] ? rows[0].data : {};
+    // Prefer cached general settings preloaded at startup; fall back to DB on cache miss
+    let data;
+    try {
+      const settingsCache = require('../lib/settingsCache');
+      const cached = settingsCache.getGeneralCached();
+      if (cached && Object.keys(cached).length) data = cached;
+    } catch (_) { /* ignore cache errors */ }
+    if (!data) {
+      const { rows } = await pool.query('SELECT data FROM app_settings WHERE settings_key = $1', [key]);
+      data = rows && rows[0] ? rows[0].data : {};
+    }
     return res.json({ key, data: maskSecrets(key, data) });
   } catch (err) {
     console.error('public settings read failed:', err && err.stack ? err.stack : err);
@@ -523,6 +532,60 @@ function maskSecrets(key, data) {
 
 const { validateSettings } = require('../lib/validateSettings');
 
+// --- Helpers for safe settings merges on restore/update paths
+function isMaskedSecret(v) {
+  return typeof v === 'string' && v.replace(/\*/g, '*') === '********';
+}
+
+function shallowMerge(objA, objB) {
+  return Object.assign({}, objA || {}, objB || {});
+}
+
+function safeMergeSettings(key, current, incoming) {
+  const cur = current && typeof current === 'object' ? current : {};
+  const inc = incoming && typeof incoming === 'object' ? incoming : {};
+  // For most keys, a shallow merge preserves existing fields not present in backup
+  let merged = shallowMerge(cur, inc);
+  if (key === 'telegram') {
+    // Don't overwrite secrets with masked placeholders or omitted fields
+    if (typeof inc.botToken === 'undefined' || isMaskedSecret(inc.botToken)) {
+      if (typeof cur.botToken !== 'undefined') merged.botToken = cur.botToken;
+      else delete merged.botToken;
+    }
+    // normalize boolean defaults handled by validateSettings elsewhere
+  } else if (key === 'database') {
+    if (typeof inc.password === 'undefined' || isMaskedSecret(inc.password)) {
+      if (typeof cur.password !== 'undefined') merged.password = cur.password;
+      else delete merged.password;
+    }
+  } else if (key === 'remoteServer') {
+    for (const secretField of ['password','privateKey','passphrase']) {
+      if (typeof inc[secretField] === 'undefined' || isMaskedSecret(inc[secretField])) {
+        if (typeof cur[secretField] !== 'undefined') merged[secretField] = cur[secretField];
+        else delete merged[secretField];
+      }
+    }
+  }
+  return merged;
+}
+
+async function warnIfKeyDrop(client, key, beforeObj, afterObj) {
+  try {
+    if (!beforeObj || typeof beforeObj !== 'object') return;
+    const beforeCount = Object.keys(beforeObj).length;
+    const afterCount = afterObj && typeof afterObj === 'object' ? Object.keys(afterObj).length : 0;
+    if (beforeCount >= 2 && afterCount < beforeCount / 2) {
+      await client.query(
+        'INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)',
+        [null, key, 'WARNING_KEY_DROP', { _meta: { beforeCount } }, { _meta: { afterCount } }]
+      );
+    }
+  } catch (e) {
+    // best-effort; do not fail restores
+    try { console.warn('warnIfKeyDrop failed:', e && e.message ? e.message : e); } catch(_) {}
+  }
+}
+
 // Financial reports: monthly/yearly summaries using historical prices from settings_audit
 router.get('/financial', authenticateToken, async (req, res) => {
   try {
@@ -664,8 +727,8 @@ router.put('/settings/:key', authenticateToken, isAdmin, async (req, res) => {
     if (!ok) return res.status(400).json({ msg: 'Validation failed', errors });
 
     // read current (before) value
-    const beforeRes = await pool.query('SELECT data FROM app_settings WHERE settings_key = $1', [key]);
-    const before = beforeRes.rows && beforeRes.rows[0] ? beforeRes.rows[0].data : null;
+  const beforeRes = await pool.query('SELECT data FROM app_settings WHERE settings_key = $1', [key]);
+  const before = beforeRes.rows && beforeRes.rows[0] ? beforeRes.rows[0].data : null;
 
   // For 'general' and 'telegram', merge with existing data to preserve non-validated or secret fields
   // (e.g. botToken is masked on reads; omitting it from an update should keep the existing secret)
@@ -690,10 +753,61 @@ router.put('/settings/:key', authenticateToken, isAdmin, async (req, res) => {
       console.warn('Failed to write settings audit:', auditErr && auditErr.message ? auditErr.message : auditErr);
     }
 
+    // Extra: if telegram bot enabled flag changed, write a compact audit row into telegram_login_notify_audit
+    if (key === 'telegram') {
+      try {
+        const readEnabled = (obj) => {
+          if (!obj || typeof obj !== 'object') return null;
+          if (typeof obj.enabled !== 'undefined') return !!obj.enabled;
+          if (typeof obj.botEnabled !== 'undefined') return !!obj.botEnabled;
+          if (typeof obj.enabled_bot !== 'undefined') return !!obj.enabled_bot;
+          return null;
+        };
+        const was = readEnabled(before);
+        const now = readEnabled(after);
+        if (was !== null && now !== null && was !== now) {
+          const status = now ? 'bot_enabled' : 'bot_disabled';
+          const payload = { before_enabled: !!was, after_enabled: !!now };
+          await pool.query(
+            'INSERT INTO telegram_login_notify_audit (chat_id, admin_id, role, username, ip, user_agent, status, payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+            [null, req.user && req.user.id ? req.user.id : null, req.user && req.user.role ? req.user.role : null, req.user && req.user.username ? req.user.username : null, null, null, status, payload]
+          );
+        }
+      } catch (e) {
+        console.warn('Failed to write bot toggle audit:', e && e.message ? e.message : e);
+      }
+    }
+
+    // If general settings were updated, refresh cache
+    if (key === 'general') {
+      try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
+      // detect unexpected key drops and record a warning audit (best-effort)
+      try { await warnIfKeyDrop(pool, 'general', before || {}, after || {}); } catch (_) {}
+    }
     return res.json({ key, data: maskSecrets(key, after) });
   } catch (err) {
     console.error('PUT settings failed:', err && err.stack ? err.stack : err);
     res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
+// Apply-now endpoint for Telegram bot: reload settings and re-apply without waiting for the timer
+router.post('/settings/telegram/apply-now', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const bot = require('../telegram_bot');
+    if (bot && typeof bot.applySettingsNow === 'function') {
+      const info = await bot.applySettingsNow();
+      return res.json({ ok: true, info });
+    }
+    // Fallback: if apply not available, try starting bot (which reloads settings) without erroring if already running
+    if (bot && typeof bot.startTelegramBot === 'function') {
+      try { await bot.startTelegramBot(); } catch (_) {}
+      return res.json({ ok: true, info: { started: true } });
+    }
+    return res.status(500).json({ ok: false, msg: 'Bot module not available' });
+  } catch (err) {
+    console.error('apply-now failed:', err && err.message ? err.message : err);
+    return res.status(500).json({ ok: false, msg: 'Server Error' });
   }
 });
 
@@ -772,9 +886,134 @@ router.post('/settings/general/logo', authenticateToken, isAdmin, upload.single(
   const origin = req.protocol + '://' + req.get('host');
   const absolute = logoUrl.startsWith('http') ? logoUrl : (origin + logoUrl);
   const absolute2x = logoUrl2x ? (logoUrl2x.startsWith('http') ? logoUrl2x : (origin + logoUrl2x)) : undefined;
+  // refresh cache so public endpoint reflects new logo immediately
+  try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
   return res.json({ ok: true, logo_url: logoUrl, logo_url_2x: logoUrl2x, url: absolute, url2x: absolute2x });
   } catch (err) {
     console.error('Upload general logo failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
+// ADMIN: Upload and set General favicon (stores URL under app_settings.general.favicon_url)
+// Accept common favicon image types; generate a 32x32 PNG for broad compatibility
+router.post('/settings/general/favicon', authenticateToken, isAdmin, upload.single('favicon'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ msg: 'No file uploaded' });
+    const allowed = ['image/png', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/svg+xml', 'image/jpeg', 'image/webp'];
+    if (req.file.mimetype && !allowed.includes(req.file.mimetype)) {
+      try { fs.unlinkSync(req.file.path); } catch (_) {}
+      return res.status(400).json({ msg: 'Unsupported file type' });
+    }
+
+    // Read existing general to capture previous favicon for cleanup
+    const { rows } = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'general'");
+    const current = rows && rows[0] ? (rows[0].data || {}) : {};
+
+    const inputPath = req.file.path;
+    const baseName = path.basename(req.file.filename, path.extname(req.file.filename));
+    const outName32 = `${baseName}-32x32.png`;
+    const outName180 = `${baseName}-180x180.png`;
+    const outPath32 = path.join(uploadsPath, outName32);
+    const outPath180 = path.join(uploadsPath, outName180);
+    try {
+      // Generate 180x180 (Apple touch icon) first for quality, then 32x32
+      await sharp(inputPath)
+        .resize(180, 180, { fit: 'cover', position: 'centre' })
+        .png({ compressionLevel: 9, adaptiveFiltering: false })
+        .toFile(outPath180);
+      await sharp(inputPath)
+        .resize(32, 32, { fit: 'cover', position: 'centre' })
+        .png({ compressionLevel: 9, adaptiveFiltering: false })
+        .toFile(outPath32);
+      try { fs.unlinkSync(inputPath); } catch (_) {}
+    } catch (e) {
+      console.error('sharp resize (favicon multi-size) failed:', e && e.message ? e.message : e);
+      // fallback: move original as 32x32 name (no resize) if 32x32 missing
+      try { if (!fs.existsSync(outPath32)) fs.renameSync(inputPath, outPath32); } catch (_) {}
+    }
+
+    const faviconUrl = `/uploads/${outName32}`;
+    const touchUrl = fs.existsSync(outPath180) ? `/uploads/${outName180}` : undefined;
+    const next = { ...current, favicon_url: faviconUrl };
+    if (touchUrl) next.apple_touch_icon_url = touchUrl; else delete next.apple_touch_icon_url;
+    await pool.query(
+      `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
+       VALUES ($1,$2,$3, now())
+       ON CONFLICT (settings_key) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+      ['general', next, req.user && req.user.id ? req.user.id : null]
+    );
+    // audit write (masked)
+    try {
+      await pool.query(
+        'INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)',
+        [req.user && req.user.id ? req.user.id : null, 'general', 'UPDATE_FAVICON', maskSecrets('general', current), maskSecrets('general', next)]
+      );
+    } catch (_) {}
+
+    // Cleanup old favicon file if different
+    try {
+      const oldUrl = current && current.favicon_url;
+      if (oldUrl && typeof oldUrl === 'string' && oldUrl.startsWith('/uploads/')) {
+        const oldPath = path.join(uploadsPath, path.basename(oldUrl));
+        if (fs.existsSync(oldPath) && path.dirname(oldPath) === uploadsPath) {
+          try { fs.unlinkSync(oldPath); } catch (_) {}
+        }
+      }
+    } catch (_) {}
+
+    const origin = req.protocol + '://' + req.get('host');
+    const absolute = faviconUrl.startsWith('http') ? faviconUrl : (origin + faviconUrl);
+    const absoluteTouch = touchUrl ? (touchUrl.startsWith('http') ? touchUrl : (origin + touchUrl)) : undefined;
+    // refresh cache so public endpoint reflects new favicon immediately
+    try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
+    return res.json({ ok: true, favicon_url: faviconUrl, apple_touch_icon_url: touchUrl, url: absolute, url_touch: absoluteTouch });
+  } catch (err) {
+    console.error('Upload general favicon failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
+// ADMIN: Clear General favicon (delete file and remove from app_settings)
+router.delete('/settings/general/favicon', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'general'");
+    const current = rows && rows[0] ? (rows[0].data || {}) : {};
+    const oldUrl = current && current.favicon_url;
+    const oldTouch = current && current.apple_touch_icon_url;
+    const next = { ...current };
+    delete next.favicon_url;
+    delete next.apple_touch_icon_url;
+    await pool.query(
+      `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
+       VALUES ($1,$2,$3, now())
+       ON CONFLICT (settings_key) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+      ['general', next, req.user && req.user.id ? req.user.id : null]
+    );
+    try {
+      if (oldUrl && typeof oldUrl === 'string' && oldUrl.startsWith('/uploads/')) {
+        const p = path.join(uploadsPath, path.basename(oldUrl));
+        if (fs.existsSync(p) && path.dirname(p) === uploadsPath) {
+          try { fs.unlinkSync(p); } catch (_) {}
+        }
+      }
+      if (oldTouch && typeof oldTouch === 'string' && oldTouch.startsWith('/uploads/')) {
+        const p2 = path.join(uploadsPath, path.basename(oldTouch));
+        if (fs.existsSync(p2) && path.dirname(p2) === uploadsPath) {
+          try { fs.unlinkSync(p2); } catch (_) {}
+        }
+      }
+    } catch (_) {}
+    try {
+      await pool.query(
+        'INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)',
+        [req.user && req.user.id ? req.user.id : null, 'general', 'CLEAR_FAVICON', maskSecrets('general', current), maskSecrets('general', next)]
+      );
+    } catch (_) {}
+    try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Clear general favicon failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ msg: 'Server Error' });
   }
 });
@@ -814,6 +1053,8 @@ router.delete('/settings/general/logo', authenticateToken, isAdmin, async (req, 
         [req.user && req.user.id ? req.user.id : null, 'general', 'CLEAR_LOGO', maskSecrets('general', current), maskSecrets('general', next)]
       );
     } catch (_) {}
+    // refresh cache so public endpoint reflects cleared logo immediately
+    try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
     return res.json({ ok: true });
   } catch (err) {
     console.error('Clear general logo failed:', err && err.stack ? err.stack : err);
@@ -981,16 +1222,20 @@ router.post('/restore/config', authenticateToken, isAdmin, upload.single('file')
     if (Array.isArray(data.app_settings)) {
       for (const s of data.app_settings) {
         const key = s.settings_key;
-        const raw = s.data || {};
-        // we will accept data as-is; it may be masked; caller should re-enter secrets after restore
+        const incoming = s.data || {};
+        const curRes = await client.query('SELECT data FROM app_settings WHERE settings_key = $1', [key]);
+        const current = curRes.rows && curRes.rows[0] ? (curRes.rows[0].data || {}) : {};
+        const toStore = safeMergeSettings(key, current, incoming);
         await client.query(
           `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
            VALUES ($1,$2,$3, now())
            ON CONFLICT (settings_key) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-          [key, raw, req.user && req.user.id ? req.user.id : null]
+          [key, toStore, req.user && req.user.id ? req.user.id : null]
         );
         // audit
-        try { await client.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, key, 'UPDATE', null, maskSecrets(key, raw)]); } catch (_) {}
+        try { await client.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, key, 'UPDATE', maskSecrets(key, current), maskSecrets(key, toStore)]); } catch (_) {}
+        // key-drop warning (best-effort)
+        try { await warnIfKeyDrop(client, key, current, toStore); } catch (_) {}
       }
     }
     // merge admins by username (no password updates)
@@ -1006,8 +1251,10 @@ router.post('/restore/config', authenticateToken, isAdmin, upload.single('file')
         );
       }
     }
-    await client.query('COMMIT');
-    return res.json({ msg: 'Config restored (merge)', admins: data.admins ? data.admins.length : 0, settings: data.app_settings ? data.app_settings.length : 0 });
+  await client.query('COMMIT');
+  // refresh general settings cache after restore
+  try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
+  return res.json({ msg: 'Config restored (merge)', admins: data.admins ? data.admins.length : 0, settings: data.app_settings ? data.app_settings.length : 0 });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('restore config failed:', err);
@@ -1050,6 +1297,115 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
   } catch (err) {
     console.error('backup db failed:', err);
     return res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
+// GET unified snapshot compatible with Telegram bot backup (cmp-backup-*.json)
+// Shape: { created_at, app_settings: [...], servers: [...], users: [...] }
+router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    // Optional: record a backup audit if ?record=1
+    try {
+      if (String(req.query.record || '') === '1') {
+        await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, 'backup', 'BACKUP', null, null]);
+      }
+    } catch (_) {}
+    const [settingsRes, serversRes, usersRes] = await Promise.all([
+      pool.query('SELECT * FROM app_settings'),
+      pool.query('SELECT id, server_name, ip_address, domain_name, owner, created_at FROM servers'),
+      pool.query('SELECT id, server_id, account_name, service_type, expire_date FROM users')
+    ]);
+    const payload = {
+      created_at: new Date().toISOString(),
+      app_settings: settingsRes.rows || [],
+      servers: serversRes.rows || [],
+      users: usersRes.rows || []
+    };
+    const json = JSON.stringify(payload, null, 2);
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${tsName('cmp-backup', 'json')}"`);
+    return res.send(json);
+  } catch (err) {
+    console.error('backup snapshot failed:', err);
+    return res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
+// POST restore snapshot compatible with Telegram bot backup (cmp-backup-*.json)
+// Merge-only, safe subset. Accepts multipart upload (file) or raw JSON body.
+router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
+  // Parse JSON from uploaded file or body
+  let data = null;
+  try {
+    if (req.file && req.file.buffer) data = JSON.parse(req.file.buffer.toString('utf8'));
+    else if (req.body && typeof req.body === 'object') data = req.body;
+  } catch (e) {
+    return res.status(400).json({ msg: 'Invalid JSON' });
+  }
+  if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.users))) {
+    return res.status(400).json({ msg: 'Invalid snapshot format' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // app_settings: upsert by settings_key (take data as-is; secrets may need re-entry separately)
+    if (Array.isArray(data.app_settings)) {
+      for (const s of data.app_settings) {
+        const key = s.settings_key || s.key || s.settingsKey;
+        if (!key) continue;
+        const incoming = s.data || {};
+        const curRes = await client.query('SELECT data FROM app_settings WHERE settings_key = $1', [key]);
+        const current = curRes.rows && curRes.rows[0] ? (curRes.rows[0].data || {}) : {};
+        const toStore = safeMergeSettings(key, current, incoming);
+        await client.query(
+          `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
+           VALUES ($1,$2,$3, now())
+           ON CONFLICT (settings_key) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+          [key, toStore, req.user && req.user.id ? req.user.id : null]
+        );
+        try { await client.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, key, 'UPDATE', maskSecrets(key, current), maskSecrets(key, toStore)]); } catch (_) {}
+        try { await warnIfKeyDrop(client, key, current, toStore); } catch (_) {}
+      }
+    }
+    // servers: upsert by id (if present) else by name
+    if (Array.isArray(data.servers)) {
+      for (const s of data.servers) {
+        const name = s.server_name || s.name;
+        if (!name) continue;
+        await client.query(
+          `INSERT INTO servers (id, server_name, ip_address, domain_name, owner, created_at)
+           VALUES ($1,$2,$3,$4,$5, COALESCE($6, now()))
+           ON CONFLICT (id) DO UPDATE SET server_name = EXCLUDED.server_name, ip_address = EXCLUDED.ip_address, domain_name = EXCLUDED.domain_name, owner = EXCLUDED.owner`,
+          [s.id || null, name, s.ip_address || null, s.domain_name || null, s.owner || null, s.created_at || null]
+        );
+      }
+    }
+    // users: upsert by id (safe subset of fields)
+    if (Array.isArray(data.users)) {
+      for (const u of data.users) {
+        if (!u.id) continue;
+        await client.query(
+          `INSERT INTO users (id, server_id, account_name, service_type, expire_date)
+           VALUES ($1,$2,$3,$4,$5)
+           ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, account_name = EXCLUDED.account_name, service_type = EXCLUDED.service_type, expire_date = EXCLUDED.expire_date`,
+          [u.id, u.server_id || null, u.account_name || null, u.service_type || null, u.expire_date || null]
+        );
+      }
+    }
+    await client.query('COMMIT');
+    // refresh general settings cache after snapshot restore
+    try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
+    return res.json({ msg: 'Snapshot restored (merge)', counts: {
+      settings: Array.isArray(data.app_settings) ? data.app_settings.length : 0,
+      servers: Array.isArray(data.servers) ? data.servers.length : 0,
+      users: Array.isArray(data.users) ? data.users.length : 0,
+    }});
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('restore snapshot failed:', err);
+    return res.status(500).json({ msg: 'Failed to restore snapshot' });
+  } finally {
+    client.release();
   }
 });
 
@@ -1103,14 +1459,18 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
       if (Array.isArray(payload.app_settings)) {
         for (const s of payload.app_settings) {
           const key = s.settings_key;
-          const raw = s.data || {};
+          const incoming = s.data || {};
+          const curRes = await client.query('SELECT data FROM app_settings WHERE settings_key = $1', [key]);
+          const current = curRes.rows && curRes.rows[0] ? (curRes.rows[0].data || {}) : {};
+          const toStore = safeMergeSettings(key, current, incoming);
           await client.query(
             `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
              VALUES ($1,$2,$3, now())
              ON CONFLICT (settings_key) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-            [key, raw, req.user && req.user.id ? req.user.id : null]
+            [key, toStore, req.user && req.user.id ? req.user.id : null]
           );
-          try { await client.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, key, 'UPDATE', null, maskSecrets(key, raw)]); } catch (_) {}
+          try { await client.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, key, 'UPDATE', maskSecrets(key, current), maskSecrets(key, toStore)]); } catch (_) {}
+          try { await warnIfKeyDrop(client, key, current, toStore); } catch (_) {}
         }
       }
       // permissions
@@ -1131,6 +1491,8 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
         }
       }
       await client.query('COMMIT');
+      // refresh general settings cache after DB restore
+      try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
       return res.json({ msg: 'Database restored (merge)',
         counts: {
           servers: payload.servers ? payload.servers.length : 0,
@@ -1183,14 +1545,18 @@ router.post('/restore/config', authenticateToken, isAdmin, upload.single('file')
     if (Array.isArray(data.app_settings)) {
       for (const s of data.app_settings) {
         const key = s.settings_key;
-        const raw = s.data || {};
+        const incoming = s.data || {};
+        const curRes = await client.query('SELECT data FROM app_settings WHERE settings_key = $1', [key]);
+        const current = curRes.rows && curRes.rows[0] ? (curRes.rows[0].data || {}) : {};
+        const toStore = safeMergeSettings(key, current, incoming);
         await client.query(
           `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
            VALUES ($1,$2,$3, now())
            ON CONFLICT (settings_key) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-          [key, raw, req.user && req.user.id ? req.user.id : null]
+          [key, toStore, req.user && req.user.id ? req.user.id : null]
         );
-        try { await client.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, key, 'UPDATE', null, maskSecrets(key, raw)]); } catch (_) {}
+        try { await client.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, key, 'UPDATE', maskSecrets(key, current), maskSecrets(key, toStore)]); } catch (_) {}
+        try { await warnIfKeyDrop(client, key, current, toStore); } catch (_) {}
       }
     }
     if (Array.isArray(data.admins)) {
@@ -1205,14 +1571,31 @@ router.post('/restore/config', authenticateToken, isAdmin, upload.single('file')
         );
       }
     }
-    await client.query('COMMIT');
-    return res.json({ msg: 'Config restored (merge)', admins: data.admins ? data.admins.length : 0, settings: data.app_settings ? data.app_settings.length : 0 });
+  await client.query('COMMIT');
+  // refresh general settings cache after restore (alt route)
+  try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
+  return res.json({ msg: 'Config restored (merge)', admins: data.admins ? data.admins.length : 0, settings: data.app_settings ? data.app_settings.length : 0 });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('restore config failed:', err);
     return res.status(500).json({ msg: 'Failed to restore config' });
   } finally {
     client.release();
+  }
+});
+
+// ADMIN: Raw general settings and recent audit entries (admin only)
+router.get('/settings/general/raw', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const cur = await pool.query("SELECT data, updated_at, updated_by FROM app_settings WHERE settings_key = 'general'");
+    const audit = await pool.query("SELECT id, admin_id, action, created_at, after_data FROM settings_audit WHERE settings_key = 'general' ORDER BY created_at DESC LIMIT 5");
+    return res.json({
+      current: cur.rows && cur.rows[0] ? cur.rows[0] : null,
+      recentAudit: audit.rows || []
+    });
+  } catch (err) {
+    console.error('GET /settings/general/raw failed:', err && err.message ? err.message : err);
+    return res.status(500).json({ msg: 'Server Error' });
   }
 });
 
@@ -1279,3 +1662,342 @@ router.post('/backup/record', authenticateToken, isAdmin, async (req, res) => {
   }
 });
 module.exports = router;
+// =============================
+// Control Panel & System Ops (ADMIN only)
+// =============================
+const os = require('os');
+const crypto = require('crypto');
+const { exec } = require('child_process');
+const fsp = require('fs').promises;
+
+// Ensure control_panel_audit table exists (best-effort, lazy) without failing requests if migration not yet applied.
+async function ensureControlAuditTable() {
+  try {
+    const r = await pool.query("SELECT to_regclass('public.control_panel_audit') AS reg");
+    const exists = r.rows && r.rows[0] && r.rows[0].reg;
+    if (!exists) {
+      await pool.query("CREATE TABLE IF NOT EXISTS control_panel_audit (id serial primary key, admin_id int, action text, payload jsonb, created_at timestamptz default now())");
+    }
+  } catch (e) {
+    // swallow
+  }
+}
+
+async function writeControlAudit(adminId, action, payload) {
+  try {
+    await ensureControlAuditTable();
+    await pool.query('INSERT INTO control_panel_audit (admin_id, action, payload) VALUES ($1,$2,$3)', [adminId || null, action, payload || null]);
+  } catch (e) {
+    console.warn('control audit write failed:', e && e.message ? e.message : e);
+  }
+}
+
+// GET system status
+// Removed /control/system/status endpoint per request (session/status UI removed)
+
+// POST system restart (graceful)
+// Removed /control/system/restart endpoint per request
+
+// Certificate helpers
+function readCertInfo(domain) {
+  try {
+    const live = `/etc/letsencrypt/live/${domain}`;
+    const certPath = path.join(live, 'cert.pem');
+    if (!fs.existsSync(certPath)) return null;
+    const pem = fs.readFileSync(certPath, 'utf8');
+    // Parse dates using openssl x509 if available
+    let notBefore = null, notAfter = null, issuer = null;
+    try {
+      const nb = require('child_process').execSync(`openssl x509 -in '${certPath}' -noout -startdate`).toString().trim();
+      const na = require('child_process').execSync(`openssl x509 -in '${certPath}' -noout -enddate`).toString().trim();
+      const iss = require('child_process').execSync(`openssl x509 -in '${certPath}' -noout -issuer`).toString().trim();
+      notBefore = nb.replace('notBefore=', '');
+      notAfter = na.replace('notAfter=', '');
+      issuer = iss.replace('issuer=', '');
+    } catch(_) {}
+    let daysRemaining = null;
+    try {
+      if (notAfter) {
+        const exp = new Date(notAfter);
+        daysRemaining = Math.floor((exp.getTime() - Date.now()) / (24*60*60*1000));
+      }
+    } catch(_) {}
+    return { certPath, issuer, notBefore, notAfter, daysRemaining };
+  } catch (e) { return null; }
+}
+
+router.get('/control/cert/status', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    // Pull domain from stored config first, fallback to env
+    let domain = null;
+    try {
+      const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'cert'");
+      const data = r.rows && r.rows[0] ? (r.rows[0].data || {}) : {};
+      if (data && typeof data.domain === 'string' && data.domain.trim()) domain = data.domain.trim();
+    } catch (_) {}
+    if (!domain) domain = process.env.DOMAIN_NAME || null;
+    if (!domain) return res.json({ ok: true, domain: null, status: null });
+    const info = readCertInfo(domain);
+    await writeControlAudit(req.user && req.user.id, 'cert_status', { domain, found: !!info });
+    return res.json({ ok: true, domain, cert: info });
+  } catch (e) { return res.status(500).json({ ok: false, error: e && e.message ? e.message : 'cert status failed' }); }
+});
+
+function runCmd(cmd, cwd) {
+  return new Promise((resolve, reject) => {
+    exec(cmd, { cwd }, (err, stdout, stderr) => {
+      if (err) return reject({ err, stdout, stderr });
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+router.post('/control/cert/issue', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    // Prefer body > stored app_settings > env
+    const body = req.body || {};
+    let domain = typeof body.domain === 'string' && body.domain.trim() ? body.domain.trim() : null;
+    let email = typeof body.email === 'string' && body.email.trim() ? body.email.trim() : null;
+    let apiToken = typeof body.api_token === 'string' && body.api_token.trim() ? body.api_token.trim() : null;
+    if (!domain || !email || !apiToken) {
+      try {
+        const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'cert'");
+        const data = r.rows && r.rows[0] ? (r.rows[0].data || {}) : {};
+        if (!domain && data.domain) domain = data.domain;
+        if (!email && data.email) email = data.email;
+        if (!apiToken && (data.api_token || data.cloudflare_api_token)) apiToken = data.api_token || data.cloudflare_api_token;
+      } catch (_) {}
+    }
+    if (!domain) domain = process.env.DOMAIN_NAME;
+    if (!email) email = process.env.LETSENCRYPT_EMAIL;
+    if (!apiToken) apiToken = process.env.CLOUDFLARE_API_TOKEN;
+    if (!domain || !email || !apiToken) return res.status(400).json({ ok: false, msg: 'domain, email, and api_token are required (in body or stored config or env)' });
+    const credsFile = '/root/.cloudflare.ini';
+    // ensure credentials file exists with secure perms
+    try {
+      await fsp.writeFile(credsFile, `dns_cloudflare_api_token = ${apiToken}\n`, { encoding: 'utf8' });
+      try { await fsp.chmod(credsFile, 0o600); } catch(_) {}
+    } catch (e) {
+      console.warn('Failed to write Cloudflare credentials file:', e && e.message ? e.message : e);
+    }
+    await writeControlAudit(req.user && req.user.id, 'cert_issue', { domain });
+    const cmd = `certbot certonly --dns-cloudflare --dns-cloudflare-credentials ${credsFile} -d ${domain} -m ${email} --agree-tos --non-interactive --preferred-challenges dns`;
+    try {
+      const { stdout, stderr } = await runCmd(cmd, process.cwd());
+      return res.json({ ok: true, stdout: stdout.slice(0,8000), stderr: stderr.slice(0,8000) });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: e.err && e.err.message ? e.err.message : 'issue failed', stderr: e.stderr && e.stderr.slice ? e.stderr.slice(0,8000) : null });
+    }
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message || 'cert issue failed' }); }
+});
+
+router.post('/control/cert/renew', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    // Attempt to ensure credentials file exists from stored config before renew
+    try {
+      const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'cert'");
+      const data = r.rows && r.rows[0] ? (r.rows[0].data || {}) : {};
+      const tok = data.api_token || data.cloudflare_api_token || process.env.CLOUDFLARE_API_TOKEN || null;
+      if (tok) {
+        try { await fsp.writeFile('/root/.cloudflare.ini', `dns_cloudflare_api_token = ${tok}\n`, { encoding: 'utf8' }); try { await fsp.chmod('/root/.cloudflare.ini', 0o600); } catch(_) {} } catch(_) {}
+      }
+    } catch (_) {}
+    let domain = null;
+    try {
+      const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'cert'");
+      domain = r.rows && r.rows[0] && r.rows[0].data && r.rows[0].data.domain ? r.rows[0].data.domain : null;
+    } catch (_) {}
+    if (!domain) domain = process.env.DOMAIN_NAME || null;
+    await writeControlAudit(req.user && req.user.id, 'cert_renew', { domain });
+    try {
+      const { stdout, stderr } = await runCmd('certbot renew --quiet', process.cwd());
+      return res.json({ ok: true, stdout: stdout.slice(0,4000), stderr: stderr.slice(0,4000) });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: e.err && e.err.message ? e.err.message : 'renew failed', stderr: e.stderr && e.stderr.slice ? e.stderr.slice(0,4000) : null });
+    }
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message || 'cert renew failed' }); }
+});
+
+// --- Service Port configuration ---
+// GET configured service port and current runtime port
+// Removed /control/system/port endpoint per request
+
+// PUT update configured service port (applies on next restart)
+// Removed PUT /control/system/port endpoint per request
+
+// GET/PUT certificate configuration (domain, email, api_token)
+router.get('/control/cert/config', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'cert'");
+    const data = r.rows && r.rows[0] ? (r.rows[0].data || {}) : {};
+    const out = {
+      domain: data.domain || process.env.DOMAIN_NAME || '',
+      email: data.email || process.env.LETSENCRYPT_EMAIL || '',
+      api_token: data.api_token ? '********' : (process.env.CLOUDFLARE_API_TOKEN ? '********' : '')
+    };
+    return res.json({ ok: true, config: out });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e && e.message ? e.message : 'cert config read failed' });
+  }
+});
+
+router.put('/control/cert/config', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const domain = typeof body.domain === 'string' ? body.domain.trim() : '';
+    const email = typeof body.email === 'string' ? body.email.trim() : '';
+    const api_token_raw = typeof body.api_token === 'string' ? body.api_token.trim() : '';
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const cur = await client.query("SELECT data FROM app_settings WHERE settings_key = 'cert'");
+      const current = cur.rows && cur.rows[0] ? (cur.rows[0].data || {}) : {};
+      const next = { ...current };
+      if (domain) next.domain = domain;
+      if (email) next.email = email;
+      if (api_token_raw && api_token_raw !== '********') next.api_token = api_token_raw;
+      await client.query(
+        `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
+         VALUES ($1,$2,$3, now())
+         ON CONFLICT (settings_key) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+        ['cert', next, req.user && req.user.id ? req.user.id : null]
+      );
+      await client.query('COMMIT');
+      // Best-effort: write credentials file if api_token present
+      try {
+        const tok = next.api_token || null;
+        if (tok) { await fsp.writeFile('/root/.cloudflare.ini', `dns_cloudflare_api_token = ${tok}\n`, { encoding: 'utf8' }); try { await fsp.chmod('/root/.cloudflare.ini', 0o600); } catch(_) {} }
+      } catch (_) {}
+      await writeControlAudit(req.user && req.user.id, 'cert_config_update', { domain: next.domain || null, email: next.email || null, has_token: !!next.api_token });
+      return res.json({ ok: true });
+    } catch (tx) {
+      try { await client.query('ROLLBACK'); } catch(_) {}
+      throw tx;
+    } finally {
+      client.release();
+    }
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e && e.message ? e.message : 'cert config update failed' });
+  }
+});
+
+// Update check
+router.get('/control/update/check', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const adminId = req.user && req.user.id;
+    const repoDir = path.resolve(__dirname, '..', '..');
+    let localSha = null, remoteSha = null, branch = null;
+    try { localSha = require('child_process').execSync('git rev-parse HEAD', { cwd: repoDir }).toString().trim(); } catch(_) {}
+    try { branch = require('child_process').execSync('git rev-parse --abbrev-ref HEAD', { cwd: repoDir }).toString().trim(); } catch(_) {}
+    try { require('child_process').execSync('git fetch --quiet', { cwd: repoDir }); } catch(_) {}
+    try { remoteSha = require('child_process').execSync(`git rev-parse origin/${branch}`, { cwd: repoDir }).toString().trim(); } catch(_) {}
+    const behind = localSha && remoteSha && localSha !== remoteSha;
+    // Fetch current origin URL
+    let originUrl = null;
+    try { originUrl = require('child_process').execSync('git remote get-url origin', { cwd: repoDir }).toString().trim(); } catch(_) {}
+    await writeControlAudit(adminId, 'update_check', { branch, localSha, remoteSha, behind, originUrl });
+    return res.json({ ok: true, branch, localSha, remoteSha, behind, originUrl });
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message || 'update check failed' }); }
+});
+
+// Apply update (git pull + optional rebuild). Simple optimistic flow; production script handles rollback externally.
+router.post('/control/update/apply', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const adminId = req.user && req.user.id;
+    const repoDir = path.resolve(__dirname, '..', '..');
+    await writeControlAudit(adminId, 'update_apply_start', {});
+    let output = '';
+    const run = async (cmd) => { const r = await runCmd(cmd, repoDir); output += `\n$ ${cmd}\n${r.stdout}\n${r.stderr}`; };
+    try { await run('git fetch --quiet'); } catch(_) {}
+    await run('git pull --ff-only');
+    // Rebuild frontend if package-lock changed or forced
+    try {
+      const frontendDir = path.join(repoDir, 'frontend');
+      await runCmd('npm install --no-audit --no-fund', frontendDir);
+      await runCmd('npm run build', frontendDir);
+      output += '\nFrontend rebuild complete';
+    } catch (e) {
+      await writeControlAudit(adminId, 'update_apply_failed', { error: e && e.err && e.err.message ? e.err.message : (e && e.message ? e.message : 'unknown') });
+      return res.status(500).json({ ok: false, error: e && e.err && e.err.message ? e.err.message : e.message || 'build failed', output: output.slice(0,16000) });
+    }
+    await writeControlAudit(adminId, 'update_apply_success', {});
+    // schedule restart to load new code
+    setTimeout(() => { try { process.kill(process.pid, 'SIGTERM'); } catch(_) { process.exit(0); } }, 300);
+    return res.json({ ok: true, msg: 'Update applied; restarting shortly', output: output.slice(0,16000) });
+  } catch (e) { return res.status(500).json({ ok: false, error: e.message || 'update apply failed' }); }
+});
+
+// GET/PUT update source (git origin URL)
+// GET/PUT update source (git origin URL) with persistence in app_settings (settings_key='update')
+router.get('/control/update/source', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const repoDir = path.resolve(__dirname, '..', '..');
+    let originUrl = null;
+    // Attempt read from git first
+    try { originUrl = require('child_process').execSync('git remote get-url origin', { cwd: repoDir }).toString().trim(); } catch(_) {}
+    // If git remote missing / empty, fall back to stored value
+    if (!originUrl) {
+      try {
+        const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'update'");
+        if (r.rows && r.rows[0]) {
+          const data = r.rows[0].data || {};
+            if (data.originUrl) originUrl = data.originUrl;
+        }
+      } catch(_) {}
+    }
+    return res.json({ ok: true, originUrl: originUrl || null });
+  } catch (e) { return res.status(500).json({ ok: false, error: e && e.message ? e.message : 'read source failed' }); }
+});
+
+router.put('/control/update/source', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const url = req.body && typeof req.body.url === 'string' ? req.body.url.trim() : '';
+    if (!url) return res.status(400).json({ ok: false, msg: 'url is required' });
+    const repoDir = path.resolve(__dirname, '..', '..');
+    let gitError = null;
+    try {
+      await runCmd(`git remote set-url origin ${url}`, repoDir);
+    } catch (e) {
+      // capture git error but still allow persistence so user sees saved value
+      gitError = e && e.err && e.err.message ? e.err.message : (e && e.message ? e.message : 'set-url failed');
+    }
+    // Persist to app_settings
+    try {
+      await pool.query(`INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
+        VALUES ($1,$2,$3, now())
+        ON CONFLICT (settings_key) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+        ['update', { originUrl: url }, req.user && req.user.id ? req.user.id : null]);
+    } catch (dbErr) {
+      return res.status(500).json({ ok: false, error: dbErr && dbErr.message ? dbErr.message : 'persist failed', gitError });
+    }
+    await writeControlAudit(req.user && req.user.id, 'update_source_change', { url, git_ok: !gitError });
+    if (gitError) return res.status(207).json({ ok: true, gitError, persisted: true }); // 207 Multi-Status: saved but git failed
+    return res.json({ ok: true, persisted: true });
+  } catch (e) { return res.status(500).json({ ok: false, error: e && e.message ? e.message : 'update source failed' }); }
+});
+
+// Lightweight status endpoint to compare git remote vs stored origin
+router.get('/control/update/status', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const repoDir = path.resolve(__dirname, '..', '..');
+    let gitOrigin = null;
+    try { gitOrigin = require('child_process').execSync('git remote get-url origin', { cwd: repoDir }).toString().trim(); } catch(_) {}
+    let storedOrigin = null;
+    let updatedBy = null;
+    let updatedAt = null;
+    try {
+      const r = await pool.query("SELECT data, updated_by, updated_at FROM app_settings WHERE settings_key = 'update'");
+      if (r.rows && r.rows[0]) {
+        const row = r.rows[0];
+        if (row.data && row.data.originUrl) storedOrigin = row.data.originUrl;
+        updatedBy = row.updated_by || null;
+        updatedAt = row.updated_at || null;
+      }
+    } catch(_) {}
+    return res.json({ ok: true, gitOrigin: gitOrigin || null, storedOrigin: storedOrigin || null, updatedBy, updatedAt });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: e && e.message ? e.message : 'status failed' });
+  }
+});
+
+

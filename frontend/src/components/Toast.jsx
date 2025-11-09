@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 
 export function Toast({ open, onClose, title, message, variant = 'success', duration = 3500 }) {

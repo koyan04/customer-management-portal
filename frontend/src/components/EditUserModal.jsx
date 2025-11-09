@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import GlassSelect from './GlassSelect.jsx';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -9,10 +9,10 @@ function EditUserModal({ user, onClose, onSave }) {
   const initialFormState = {
     account_name: '',
     service_type: 'Mini',
-    account_type: 'Basic',
+    contact: '',
     expire_date: '',
     total_devices: 1,
-    data_limit_gb: 50,
+    data_limit_gb: 100,
     remark: '',
   };
   const [formData, setFormData] = useState(initialFormState);
@@ -28,16 +28,31 @@ function EditUserModal({ user, onClose, onSave }) {
         if (legacy === 'mini' || legacy === 'basic' || legacy === 'unlimited') return user.service_type;
         return 'Mini';
       })();
-      setFormData(prev => ({
-        ...prev,
-        account_name: user.account_name ?? prev.account_name,
-        service_type: normalizedService,
-        account_type: user.account_type ?? prev.account_type,
-        expire_date: user.expire_date ? new Date(user.expire_date).toISOString().split('T')[0] : prev.expire_date,
-        total_devices: user.total_devices ?? prev.total_devices,
-        data_limit_gb: (user.account_type === 'Unlimited') ? '' : (user.data_limit_gb !== null && user.data_limit_gb !== undefined ? user.data_limit_gb : (normalizedService === 'Mini' ? 50 : 100)),
-        remark: user.remark ?? prev.remark,
-      }));
+      // Helpers to keep date as date-only (YYYY-MM-DD) to avoid timezone shifts
+      const pad2 = (n) => (n < 10 ? '0' + n : '' + n);
+      const toYMD = (val) => {
+        if (!val) return '';
+        const s = String(val);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        const d = new Date(s);
+        if (!isNaN(d.getTime())) return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+        return '';
+      };
+      setFormData(prev => {
+        const defaultDevices = normalizedService === 'Mini' ? 1 : 2;
+        const defaultData = normalizedService === 'Unlimited' ? '' : 100;
+        return ({
+          ...prev,
+          account_name: user.account_name ?? prev.account_name,
+          service_type: normalizedService,
+          // NOTE: service tiers moved from `account_type` to `service_type`.
+          expire_date: user.expire_date ? toYMD(user.expire_date) : prev.expire_date,
+          contact: user.contact ?? prev.contact,
+          total_devices: (user.total_devices != null ? user.total_devices : defaultDevices),
+          data_limit_gb: (normalizedService === 'Unlimited') ? '' : (user.data_limit_gb != null ? user.data_limit_gb : defaultData),
+          remark: user.remark ?? prev.remark,
+        });
+      });
     }
   }, [user]);
 
@@ -46,13 +61,11 @@ function EditUserModal({ user, onClose, onSave }) {
     if (name === 'service_type') {
       setFormData(prev => {
         if (value === 'Unlimited') {
-          return { ...prev, service_type: value, account_type: 'Unlimited', data_limit_gb: '' };
+          return { ...prev, service_type: value, total_devices: 2, data_limit_gb: '' };
         }
-        const defaultLimit = value === 'Mini' ? 50 : 100;
-        const nextLimit = (prev.account_type === 'Unlimited' || prev.data_limit_gb === '' || prev.data_limit_gb === null || prev.data_limit_gb === undefined)
-          ? defaultLimit
-          : prev.data_limit_gb;
-        return { ...prev, service_type: value, account_type: 'Basic', data_limit_gb: nextLimit };
+        const nextDevices = value === 'Mini' ? 1 : 2;
+        const nextData = 100;
+        return { ...prev, service_type: value, total_devices: nextDevices, data_limit_gb: nextData };
       });
     } else {
       setFormData(prev => ({ ...prev, [name]: e.target.value }));
@@ -64,7 +77,7 @@ function EditUserModal({ user, onClose, onSave }) {
     try {
       setSaving(true);
       setError('');
-      const dataToSubmit = { ...formData, data_limit_gb: formData.account_type === 'Unlimited' ? null : formData.data_limit_gb };
+  const dataToSubmit = { ...formData, data_limit_gb: formData.service_type === 'Unlimited' ? null : formData.data_limit_gb };
       const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
       const token = authToken || localStorage.getItem('token');
   const res = await axios.put(`${backendOrigin}/api/users/${user.id}`, dataToSubmit, { headers: { Authorization: `Bearer ${token}` } });
@@ -118,6 +131,11 @@ function EditUserModal({ user, onClose, onSave }) {
                 ariaLabel="Service"
               />
             </div>
+
+            <div className="form-group">
+              <label htmlFor="edit_contact">Contact</label>
+              <input id="edit_contact" name="contact" value={formData.contact} onChange={handleChange} placeholder="Phone, Telegram, etc." />
+            </div>
             
             {/* Row 3: Devices | Data Limit (hidden for Unlimited) */}
             <div className="form-grid">
@@ -125,7 +143,7 @@ function EditUserModal({ user, onClose, onSave }) {
                 <label htmlFor="edit_total_devices">Devices</label>
                 <input id="edit_total_devices" name="total_devices" value={formData.total_devices} onChange={handleChange} type="number" min="1" />
               </div>
-              {formData.account_type !== 'Unlimited' && (
+              {formData.service_type !== 'Unlimited' && (
                 <div className="form-group">
                   <label htmlFor="edit_data_limit_gb">Data Limit (GB)</label>
                   <input id="edit_data_limit_gb" name="data_limit_gb" value={formData.data_limit_gb} onChange={handleChange} type="number" min="0" />

@@ -1,4 +1,5 @@
-import React from 'react';
+// React 19+ auto JSX runtime doesn't need default React import unless used
+import { StrictMode } from 'react';
 import ReactDOM from 'react-dom/client';
 import { createBrowserRouter, RouterProvider, Outlet } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext.jsx';
@@ -12,7 +13,6 @@ import AdminPanelPage from './pages/AdminPanelPage.jsx';
 import ServerListPage from './pages/ServerListPage.jsx';
 import FinancialPage from './pages/FinancialPage.jsx';
 import AdminOnlyRoute from './components/AdminOnlyRoute.jsx';
-import ChangePasswordPage from './pages/ChangePasswordPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import './index.css';
 
@@ -88,9 +88,9 @@ const router = createBrowserRouter([
 ]);
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
+  <StrictMode>
     {/* Now, the RouterProvider is the top-level wrapper, as required */}
     <RouterProvider router={router} />
-  </React.StrictMode>,
+  </StrictMode>,
 );
 

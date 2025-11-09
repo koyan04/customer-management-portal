@@ -5,7 +5,7 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
   const initialFormState = {
     account_name: '',
     service_type: 'X-Ray',
-    account_type: 'Basic',
+    contact: 'Basic',
     expire_date: '',
     total_devices: 1,
     data_limit_gb: 100,
@@ -18,7 +18,7 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
     if (name === "unlimited") {
       setFormData(prevState => ({
         ...prevState,
-        account_type: checked ? 'Unlimited' : 'Basic',
+        service_type: checked ? 'Unlimited' : 'Basic',
         data_limit_gb: checked ? '' : 100,
       }));
     } else {
@@ -32,7 +32,7 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
       const dataToSubmit = {
         ...formData,
         server_id: serverId,
-        data_limit_gb: formData.account_type === 'Unlimited' ? null : formData.data_limit_gb,
+        data_limit_gb: formData.service_type === 'Unlimited' ? null : formData.data_limit_gb,
       };
       await axios.post('http://localhost:3001/api/users', dataToSubmit);
       onUserAdded();
@@ -69,8 +69,8 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
               <label htmlFor="total_devices">Devices</label>
               <input id="total_devices" name="total_devices" value={formData.total_devices} onChange={handleChange} type="number" min="1" />
           </div>
-          {/* Data Limit input only shows for 'Basic' accounts */}
-          {formData.account_type === 'Basic' && (
+          {/* Data Limit input only shows for 'Basic' service types */}
+          {formData.service_type === 'Basic' && (
             <div className="form-group">
                 <label htmlFor="data_limit_gb">Data Limit (GB)</label>
                 <input id="data_limit_gb" name="data_limit_gb" value={formData.data_limit_gb} onChange={handleChange} type="number" min="0" />
@@ -84,7 +84,7 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
       </div>
       
       <label className="checkbox-label">
-            <input name="unlimited" type="checkbox" checked={formData.account_type === 'Unlimited'} onChange={handleChange} />
+            <input name="unlimited" type="checkbox" checked={formData.service_type === 'Unlimited'} onChange={handleChange} />
             {/* New structure for custom checkbox */}
             <span className="custom-checkbox">
                 <span className="checkmark">

@@ -23,3 +23,23 @@ This app now supports a global Time Zone setting (Settings → General → Time 
 Implementation notes:
 - The selected value is persisted server-side in `app_settings.general.timezone` and propagated to clients on save.
 - The frontend formats displayed dates/times using `frontend/src/lib/timezone.js` which uses `Intl.DateTimeFormat` and the `timeZone` option. When `auto` is selected the browser's local timezone is used.
+
+Reorder servers on the Server List
+----------------------------------
+
+Admins can rearrange the display order of servers and persist it to the database:
+
+- Open the Server List page.
+- Click the "Reorder" button in the toolbar above the list.
+- Drag and drop items into the desired order (you’ll see a grab cursor and subtle highlight).
+- Click "Save Order" to persist. Click "Cancel" to discard changes.
+
+Details:
+
+- Order is stored in the `servers.display_pos` column and used by the API (`GET /api/servers`) so it persists across sessions and devices.
+- New servers are appended to the end of the list by default.
+- Bulk reorder endpoint: `PUT /api/servers/order` with JSON body `{ "ids": [<serverId1>, <serverId2>, ...] }` (admin only).
+
+Troubleshooting:
+
+- If the list doesn’t reflect your new order, refresh the page. Ensure your account has admin privileges. If issues persist, verify the backend migration adding `display_pos` is applied and the server is restarted.
