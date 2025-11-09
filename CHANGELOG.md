@@ -40,6 +40,12 @@ All notable changes to this project will be documented in this file.
 - Add missing permission tables for fresh installs: `viewer_server_permissions`, `server_admin_permissions`
   - Aligns schema with routes and auth middleware checks
 
+## 1.0.5 – 2025-11-10
+
+- Harden migrations and installer to prevent "relation users does not exist" on fresh VPS installs
+  - Wrap `display_pos` backfill and index creation in existence checks to avoid failing when `users` table isn't yet created by partial/legacy setups
+  - Installer enhancements: optionally checkout a specific ref via `CMP_CHECKOUT_REF` or auto-checkout the latest tag; stop on migration errors
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:

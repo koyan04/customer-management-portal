@@ -139,19 +139,39 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_admin_id ON refresh_tokens(admin_i
 -- ==================================================================
 
 -- Add persistent display position for users so client ordering can be preserved
-ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS display_pos integer;
+DO $$
+BEGIN
+  IF to_regclass('public.users') IS NOT NULL THEN
+    -- Add persistent display position column if missing
+    BEGIN
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS display_pos integer;
+    EXCEPTION WHEN undefined_table THEN
+      -- table still doesn't exist; skip safely
+      NULL;
+    END;
 
--- Populate with row_number per server ordered by created_at (older first -> smaller pos)
-WITH numbered AS (
-  SELECT id, ROW_NUMBER() OVER (PARTITION BY server_id ORDER BY created_at ASC) as rn
-  FROM users
-)
-UPDATE users u
-SET display_pos = n.rn
-FROM numbered n
-WHERE u.id = n.id AND (u.display_pos IS NULL OR u.display_pos = 0);
+    -- Populate with row_number per server ordered by created_at (older first -> smaller pos)
+    BEGIN
+      WITH numbered AS (
+        SELECT id, ROW_NUMBER() OVER (PARTITION BY server_id ORDER BY created_at ASC) as rn
+        FROM users
+      )
+      UPDATE users u
+      SET display_pos = n.rn
+      FROM numbered n
+      WHERE u.id = n.id AND (u.display_pos IS NULL OR u.display_pos = 0);
+    EXCEPTION WHEN undefined_table THEN
+      NULL;
+    END;
 
-CREATE INDEX IF NOT EXISTS users_display_pos_idx ON users (server_id, display_pos);
+    -- Create index if users table exists
+    BEGIN
+      CREATE INDEX IF NOT EXISTS users_display_pos_idx ON users (server_id, display_pos);
+    EXCEPTION WHEN undefined_table THEN
+      NULL;
+    END;
+  END IF;
+END$$;
 
 -- ==================================================================
 -- Migration added: 2025-10-27 add server_keys table
@@ -182,7 +202,7 @@ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_name = 'users' AND column_name = 'account_type'
   ) THEN
-    EXECUTE 'UPDATE users SET service_type = account_type WHERE service_type IS NULL AND account_type IS NOT NULL';
+  EXECUTE 'UPDATE users SET service_type = account_type WHERE service_type IS NULL AND account_type IS NOT NULL';
   END IF;
 END
 $$;
