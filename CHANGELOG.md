@@ -18,6 +18,12 @@ All notable changes to this project will be documented in this file.
   - Set `CMP_SKIP_NODE_AUTO_INSTALL=1` to disable and require preinstalled Node
   - Improves first-time install experience on minimal servers
 
+## 1.0.2 – 2025-11-10
+
+- Add Debian/Ubuntu bootstrap script (`scripts/bootstrap.sh`) to install prerequisites automatically
+  - New beginner-friendly one-liner in README points to the bootstrap
+  - Keeps direct installer path for non-Debian distros
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:
