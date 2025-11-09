@@ -194,6 +194,20 @@ Keep production secure by default:
 - Admin bootstrap: change seeded admin credentials immediately; create additional admins and remove defaults.
 - Database: enforce least-privilege DB user; ensure regular backups and offsite snapshots.
 
+### Integrity-pinned installer (optional)
+
+You can pin and verify the installer script:
+
+```bash
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.1/scripts/install.sh
+sha256sum install.sh
+# Optionally export expected hash then run
+export CMP_INSTALL_EXPECTED_SHA256=<paste-output-sha>
+sudo bash install.sh
+```
+
+Set `CMP_SKIP_NODE_AUTO_INSTALL=1` before running if you want to require a preinstalled Node instead of auto-install.
+
 ## Upgrade notes (pre-1.0 → 1.0.0)
 
 - Materialized view flag is now auto-detected (presence + unique index); env override remains as `USE_USER_STATUS_MATVIEW`.
@@ -201,6 +215,11 @@ Keep production secure by default:
 - Backend serves the built frontend from `frontend/dist`; most deployments need only a single systemd service.
 - Dev convenience endpoints and the “Frontend Dev Port” feature were removed; Vite dev port is now fixed (5173).
 - New `backend/.env.example` provided; MIT `LICENSE` added.
+
+## Contributing & Security
+
+- See `CONTRIBUTING.md` for guidelines on PRs and development workflow.
+- See `SECURITY.md` to report vulnerabilities privately (responsible disclosure).
 
 ## CI
 
