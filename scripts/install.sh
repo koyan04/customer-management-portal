@@ -143,6 +143,29 @@ else
   (cd "$APP_DIR" && git fetch --all --tags)
 fi
 
+# Optional checkout of a specific ref (tag/branch) to ensure updated migrations are present.
+# Behavior:
+#   - If CMP_CHECKOUT_REF is set, checkout that ref (branch, tag, or commit).
+#   - Else if CMP_SKIP_AUTO_CHECKOUT=1, leave current working copy as-is.
+#   - Else attempt to checkout the latest tag (annotated or lightweight) for deterministic installs.
+if [ -d "$APP_DIR/.git" ]; then
+  if [ -n "${CMP_CHECKOUT_REF:-}" ]; then
+    color "Checking out ref: $CMP_CHECKOUT_REF"
+    (cd "$APP_DIR" && git checkout "$CMP_CHECKOUT_REF") || die "Failed to checkout $CMP_CHECKOUT_REF"
+  elif [ "${CMP_SKIP_AUTO_CHECKOUT:-}" != "1" ]; then
+    # Determine latest tag (by commit date) and checkout it; fallback to current HEAD if none.
+    LATEST_TAG=$(cd "$APP_DIR" && git tag --sort=-creatordate | head -n1 || true)
+    if [ -n "$LATEST_TAG" ]; then
+      color "Auto-checkout latest tag: $LATEST_TAG"
+      (cd "$APP_DIR" && git checkout "$LATEST_TAG") || warn "Failed to checkout $LATEST_TAG; continuing on existing HEAD"
+    else
+      warn "No tags found; staying on current branch"
+    fi
+  else
+    warn "Skipping auto checkout per CMP_SKIP_AUTO_CHECKOUT=1"
+  fi
+fi
+
 # Install Cloudflare credentials for certbot
 if [ ! -f "$CF_CREDS_FILE" ]; then
   if [ "$CF_AUTH_MODE" = "key" ]; then
@@ -209,7 +232,7 @@ sudo -u postgres bash -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='$DB_U
 sudo -u postgres bash -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'\" | grep -q 1 || psql -c \"CREATE DATABASE $DB_DATABASE OWNER $DB_USER;\"" || true
 
 color "Running migrations..."
-(cd "$BACKEND_DIR" && node run_migrations.js)
+(cd "$BACKEND_DIR" && node run_migrations.js || die "Migrations failed")
 
 color "Seeding admin & servers..."
 (cd "$BACKEND_DIR" && node seedAdmin.js)
