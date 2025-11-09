@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import AdminEditorForm from '../components/AdminEditorForm.jsx';
 import { FaTrashAlt, FaUserPlus, FaTools, FaSearch, FaInfoCircle } from 'react-icons/fa';
+import MatviewStatus from '../components/MatviewStatus.jsx';
 import Modal from '../components/Modal.jsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import formatWithAppTZ, { isSameDayInAppTZ } from '../lib/timezone';
@@ -73,9 +74,11 @@ function AdminPanelPage() {
   };
 
   // Ensure we always work with an array even if the API returns an object or unexpected shape
-  const accountsList = Array.isArray(accounts)
-    ? accounts
-    : (accounts && Array.isArray(accounts.data) ? accounts.data : (accounts && Array.isArray(accounts.accounts) ? accounts.accounts : []));
+  const accountsList = useMemo(() => (
+    Array.isArray(accounts)
+      ? accounts
+      : (accounts && Array.isArray(accounts.data) ? accounts.data : (accounts && Array.isArray(accounts.accounts) ? accounts.accounts : []))
+  ), [accounts]);
 
   const filteredAndPaged = useMemo(() => {
     const filtered = accountsList.filter(a => (a.display_name || '').toLowerCase().includes(query.toLowerCase()) || (a.username || '').toLowerCase().includes(query.toLowerCase()));
@@ -108,7 +111,7 @@ function AdminPanelPage() {
         console.debug('Failed to fetch server-admin counts', err);
       }
     })();
-  }, [filteredAndPaged, token]);
+  }, [filteredAndPaged, token, serverAdminCounts]);
 
   // Fetch last seen audit entry for visible accounts (one call per visible id, cached)
   useEffect(() => {
@@ -212,6 +215,12 @@ function AdminPanelPage() {
           <div>
             <h2 className="admin-title">Admin Panel</h2>
             <p className="admin-subtitle">Manage viewers and server permissions here.</p>
+            {/* Matview status widget for admins */}
+            {(user && (user.user?.role || user.role) === 'ADMIN') && (
+              <div style={{ marginTop: '0.5rem' }}>
+                <MatviewStatus />
+              </div>
+            )}
           </div>
         </div>
         <div className="admin-header-actions">

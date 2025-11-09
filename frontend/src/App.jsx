@@ -1,14 +1,15 @@
 import { Outlet, Link, NavLink } from 'react-router-dom';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from './context/AuthContext';
 import './App.css';
 import { ToastProvider } from './context/ToastContext.jsx';
-import { FaArrowUp } from 'react-icons/fa';
+import { FaArrowUp, FaTachometerAlt, FaChartBar, FaListUl, FaTools, FaCog } from 'react-icons/fa';
 import AdminEditorForm from './components/AdminEditorForm';
-import { FaUser, FaSignOutAlt, FaLeaf, FaMoon, FaSun, FaDesktop, FaCheck } from 'react-icons/fa';
+import { FaUser, FaSignOutAlt, FaLeaf, FaMoon, FaSun, FaDesktop, FaCheck, FaTelegramPlane } from 'react-icons/fa';
 import axios from 'axios';
-import ConfirmModal from './components/ConfirmModal.jsx';
+// import ConfirmModal from './components/ConfirmModal.jsx';
 import IdleToast from './components/IdleToast.jsx';
+import AboutModal from './components/AboutModal.jsx';
 
 function BackToTop() {
   const [visible, setVisible] = React.useState(false);
@@ -35,6 +36,17 @@ function App() {
   // App title and theme from General settings
   const [appTitle, setAppTitle] = useState('VChannel');
   const [appTheme, setAppTheme] = useState('system'); // 'system' | 'dark' | 'light'
+  // App version surfaced from /api/health
+  const [appVersion, setAppVersion] = useState(() => {
+    try { return localStorage.getItem('app.version') || ''; } catch (_) { return ''; }
+  });
+  const [appGitSha, setAppGitSha] = useState(() => {
+    try { return (JSON.parse(localStorage.getItem('app.build.info') || '{}').gitSha) || ''; } catch (_) { return ''; }
+  });
+  const [appBuildTs, setAppBuildTs] = useState(() => {
+    try { return (JSON.parse(localStorage.getItem('app.build.info') || '{}').buildTimestamp) || ''; } catch (_) { return ''; }
+  });
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   // helper to apply theme to <body> respecting system preference
   useEffect(() => {
@@ -80,6 +92,34 @@ function App() {
   // Fetch General settings (public)
   useEffect(() => {
     const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? `${window.location.protocol}//${window.location.hostname}:3001` : '';
+    // Also fetch health to surface app version in footer
+    const fetchHealth = async () => {
+      try {
+        const r = await fetch(backendOrigin + '/api/health');
+        if (r.ok) {
+          const j = await r.json();
+          const v = j && j.versions && j.versions.appVersion ? j.versions.appVersion : null;
+          const sha = j && j.versions && (j.versions.gitSha || j.versions.gitSHA || j.versions.sha) ? (j.versions.gitSha || j.versions.gitSHA || j.versions.sha) : null;
+          const ts = j && (j.buildTimestamp || (j.versions && j.versions.buildTimestamp)) ? (j.buildTimestamp || j.versions.buildTimestamp) : null;
+          if (v) {
+            try { localStorage.setItem('app.version', v); } catch (_) {}
+            // Expose version on body dataset for potential CSS hooks
+            try { document.body.setAttribute('data-app-version', v); } catch (_) {}
+            // Ensure React re-renders footer with version
+            try { setAppVersion(v); } catch (_) {}
+          }
+          // Persist build info
+          if (sha || ts) {
+            try {
+              const info = { gitSha: sha || '', buildTimestamp: ts || '' };
+              localStorage.setItem('app.build.info', JSON.stringify(info));
+              setAppGitSha(info.gitSha);
+              setAppBuildTs(info.buildTimestamp);
+            } catch (_) {}
+          }
+        }
+      } catch (_) { /* ignore */ }
+    };
     const applyGeneral = (general) => {
       // Use VChannel as the default when no title is provided
       if (general && typeof general.title === 'string' && general.title.trim()) {
@@ -137,6 +177,55 @@ function App() {
           }
         }
       } catch (_) {}
+
+      // Update favicon (tab icon) from general settings. Prefer favicon_url, else fallback to logo_url.
+      try {
+        const setFavicon = (href) => {
+          if (!href) return;
+          let full = href;
+          try {
+            if (!/^https?:\/\//i.test(href)) {
+              // relative path served by backend
+              full = backendOrigin + href;
+            }
+          } catch (_) {}
+          const head = document.head || document.getElementsByTagName('head')[0];
+          if (!head) return;
+          // Remove existing icon links to avoid duplicates
+          try { head.querySelectorAll('link[rel~="icon"]').forEach(n => n.parentNode && n.parentNode.removeChild(n)); } catch (_) {}
+          const link = document.createElement('link');
+          link.setAttribute('rel', 'icon');
+          link.setAttribute('href', full);
+          // best-effort MIME type by extension
+          try {
+            const lower = full.toLowerCase();
+            if (lower.endsWith('.svg')) link.setAttribute('type', 'image/svg+xml');
+            else if (lower.endsWith('.png')) link.setAttribute('type', 'image/png');
+            else if (lower.endsWith('.ico')) link.setAttribute('type', 'image/x-icon');
+          } catch (_) {}
+          head.appendChild(link);
+        };
+        const setAppleTouch = (href) => {
+          if (!href) return;
+          let full = href;
+          try {
+            if (!/^https?:\/\//i.test(href)) full = backendOrigin + href;
+          } catch (_) {}
+          const head = document.head || document.getElementsByTagName('head')[0];
+          if (!head) return;
+          try { head.querySelectorAll('link[rel="apple-touch-icon"]').forEach(n => n.parentNode && n.parentNode.removeChild(n)); } catch (_) {}
+          const link = document.createElement('link');
+          link.setAttribute('rel', 'apple-touch-icon');
+          link.setAttribute('sizes', '180x180');
+          link.setAttribute('href', full);
+          head.appendChild(link);
+        };
+        if (general && general.favicon_url) setFavicon(general.favicon_url);
+        else if (general && general.logo_url) setFavicon(general.logo_url);
+        // Add Apple Touch Icon if provided; otherwise, optionally fallback to logo
+        if (general && general.apple_touch_icon_url) setAppleTouch(general.apple_touch_icon_url);
+        else if (general && general.logo_url) setAppleTouch(general.logo_url);
+      } catch (_) {}
     };
     const fetchGeneral = async () => {
       try {
@@ -149,6 +238,7 @@ function App() {
     };
     // initial load
     fetchGeneral();
+  fetchHealth();
     // react to storage signal (cross-tab or same-tab)
     const onStorage = (e) => {
       try {
@@ -277,7 +367,7 @@ function App() {
 
   // Always fetch the authoritative account record for the header (strong consistency)
   // helper to fetch the authoritative account record for the header (strong consistency)
-  const fetchAccount = async () => {
+  const fetchAccount = useCallback(async () => {
     try {
       if (!token) return;
       // determine id from profile or localStorage
@@ -311,9 +401,9 @@ function App() {
     } catch (err) {
       // ignore
     }
-  };
+  }, [token, profile]);
 
-  useEffect(() => { fetchAccount(); }, [token, profile]);
+  useEffect(() => { fetchAccount(); }, [fetchAccount]);
 
   const effectiveProfile = accountProfile || profile;
   const [showProfileEditor, setShowProfileEditor] = useState(false);
@@ -380,7 +470,7 @@ function App() {
 
     checkWithRetry();
     return () => { mounted = false; };
-  }, [effectiveProfile]);
+  }, [effectiveProfile, FALLBACK_AVATAR]);
 
   // Fetch servers list so the profile modal can map IDs -> names.
   // Non-admins will receive only their accessible servers; admins receive all.
@@ -414,7 +504,7 @@ function App() {
     };
     window.addEventListener('storage', handler);
     return () => window.removeEventListener('storage', handler);
-  }, [effectiveProfile]);
+  }, [effectiveProfile, FALLBACK_AVATAR]);
 
   // ref used to detect clicks outside the avatar/menu
   const avatarRef = useRef(null);
@@ -471,7 +561,7 @@ function App() {
 
   return (
     <ToastProvider>
-    <div className="app-container">
+  <div className="app-container">
       {/* This is the single, main header for the entire application */}
       <div className="main-header">
   {/* Brand logo on the far left (70x70). If a logo_url exists in General settings, render an <img>; else render blank circle with subtle icon */}
@@ -488,11 +578,11 @@ function App() {
           </div>
         </Link>
         <nav className="main-nav" aria-label="Primary">
-          <NavLink to="/" end className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>Dashboard</NavLink>
-          <NavLink to="/financial" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>Financial</NavLink>
-          <NavLink to="/server-list" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>Server List</NavLink>
-          {role === 'ADMIN' && <NavLink to="/admin" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>Admin</NavLink>}
-          {role === 'ADMIN' && <NavLink to="/settings" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}>Settings</NavLink>}
+          <NavLink to="/" end className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaTachometerAlt aria-hidden className="nav-icon" /> <span className="nav-text">Dashboard</span></NavLink>
+          <NavLink to="/financial" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaChartBar aria-hidden className="nav-icon" /> <span className="nav-text">Financial</span></NavLink>
+          <NavLink to="/server-list" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaListUl aria-hidden className="nav-icon" /> <span className="nav-text">Server List</span></NavLink>
+          {role === 'ADMIN' && <NavLink to="/admin" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaTools aria-hidden className="nav-icon" /> <span className="nav-text">Admin</span></NavLink>}
+          {role === 'ADMIN' && <NavLink to="/settings" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaCog aria-hidden className="nav-icon" /> <span className="nav-text">Settings</span></NavLink>}
         </nav>
         {/* Logout moved into avatar menu */}
         {/* Avatar on the right side of the banner */}
@@ -567,6 +657,11 @@ function App() {
                   </button>
                 </div>
                 <div className="avatar-menu-divider" aria-hidden="true" />
+                <button type="button" className="avatar-menu-item" role="menuitem" onClick={() => { setAboutOpen(true); setMenuOpen(false); }}>
+                  <span className="menu-icon" aria-hidden>ℹ️</span>
+                  <span>About</span>
+                </button>
+                <div className="avatar-menu-divider" aria-hidden="true" />
                 <button type="button" className="avatar-menu-item" role="menuitem" onClick={() => { setMenuOpen(false); try { logout(); } catch (e) {} }}>
                   <FaSignOutAlt className="menu-icon" aria-hidden />
                   <span>Logout</span>
@@ -586,7 +681,37 @@ function App() {
       </div>
 
       {/* Child pages (like the dashboard) will be rendered here */}
-      <Outlet />
+      <main className="main-content">
+        <Outlet />
+      </main>
+      {/* App footer */}
+      <footer className="app-footer" role="contentinfo">
+        <span className="footer-text">Created by</span>
+        <a
+          href="https://t.me/sir_yan"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="footer-link"
+          aria-label="Open Telegram profile @sir_yan"
+          title="Open Telegram profile @sir_yan"
+        >
+          <span className="footer-handle">@sir_yan</span>
+          <FaTelegramPlane aria-hidden className="tg-icon" />
+        </a>
+        {appVersion ? (
+          <span className="footer-version" style={{ marginLeft: '0.75rem', opacity: 0.7 }} title="Application Version">
+            {appVersion}
+          </span>
+        ) : null}
+      </footer>
+      <AboutModal
+        isOpen={aboutOpen}
+        onClose={() => setAboutOpen(false)}
+        version={appVersion}
+        gitSha={appGitSha}
+        buildTimestamp={appBuildTs}
+        backendOrigin={(typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) ? `${window.location.protocol}//${window.location.hostname}:3001` : ''}
+      />
       <BackToTop />
       <IdleToast isOpen={idleWarning.show} remainingMs={idleWarning.remainingMs} onExtend={extendSession} onClose={() => setIdleWarning({ show: false, remainingMs: 0 })} />
     </div>

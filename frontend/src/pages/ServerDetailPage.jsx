@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
@@ -29,7 +29,7 @@ function ServerDetailPage() {
   const [importModeOpen, setImportModeOpen] = useState(false);
   const [pendingImportFile, setPendingImportFile] = useState(null);
   const [overwriteConfirmOpen, setOverwriteConfirmOpen] = useState(false);
-  const [pendingMode, setPendingMode] = useState(null);
+  // pendingMode removed (unused)
   const { show: showToast } = useToast();
   const [isDesktop, setIsDesktop] = useState(typeof window !== 'undefined' ? window.innerWidth >= 1000 : false);
   // prefer AuthContext for token/user info
@@ -42,7 +42,7 @@ function ServerDetailPage() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  const fetchPageData = async () => {
+  const fetchPageData = useCallback(async () => {
     try {
       setLoading(true);
   const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
@@ -75,17 +75,23 @@ function ServerDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [authToken, id]);
 
-  useEffect(() => {
-    fetchPageData();
-  }, [id]);
+  useEffect(() => { fetchPageData(); }, [fetchPageData]);
 
   const filteredUsers = useMemo(() => {
   // preserve stable display order by sorting on display_pos (persisted server-side)
   const ordered = (users || []).slice().sort((a, b) => (typeof a.display_pos === 'number' ? a.display_pos : 0) - (typeof b.display_pos === 'number' ? b.display_pos : 0));
     const q = (searchQuery || '').toLowerCase().trim();
     const now = new Date();
+    const parseDateOnly = (val) => {
+      if (!val) return null;
+      const s = String(val);
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    };
     const normalizeService = (s) => {
       const v = (s || '').toLowerCase();
       if (v === 'x-ray' || v === 'xray' || v === 'outline') return 'Mini';
@@ -101,8 +107,10 @@ function ServerDetailPage() {
       if (q && !(name.includes(q) || remark.includes(q))) return false;
       // status
       if (statusFilter !== 'all') {
-        const diff = new Date(u.expire_date) - now;
-        const status = diff < 0 ? 'expired' : (diff <= 24 * 60 * 60 * 1000 ? 'soon' : 'active');
+        const exp = parseDateOnly(u.expire_date);
+        const cutoff = exp ? new Date(exp.getFullYear(), exp.getMonth(), exp.getDate() + 1) : null; // exclusive end-of-day
+        const diff = (cutoff ? cutoff.getTime() : NaN) - now.getTime();
+        const status = diff <= 0 ? 'expired' : (diff <= 24 * 60 * 60 * 1000 ? 'soon' : 'active');
         if (status !== statusFilter) return false;
       }
       // service
@@ -177,25 +185,22 @@ function ServerDetailPage() {
         title: 'Import completed',
         message: `Mode: ${mode}. Inserted: ${r?.inserted || 0}, Updated: ${r?.updated || 0}${r?.errors?.length ? `, Errors: ${r.errors.length}` : ''}`
       });
-      setImportModeOpen(false);
-      setOverwriteConfirmOpen(false);
-      setPendingImportFile(null);
-      setPendingMode(null);
+  setImportModeOpen(false);
+  setOverwriteConfirmOpen(false);
+  setPendingImportFile(null);
       fetchPageData();
     } catch (e2) {
   console.error('Import failed', e2);
   const msg = (e2?.response?.data?.msg || e2?.message || 'Import failed');
   showToast({ variant: 'error', title: 'Import failed', message: msg });
-      setImportModeOpen(false);
-      setOverwriteConfirmOpen(false);
-      setPendingImportFile(null);
-      setPendingMode(null);
+  setImportModeOpen(false);
+  setOverwriteConfirmOpen(false);
+  setPendingImportFile(null);
     }
   };
 
   const handleImportModeSelect = (mode) => {
     if (mode === 'overwrite') {
-      setPendingMode('overwrite');
       setImportModeOpen(false);
       setOverwriteConfirmOpen(true);
     } else {
@@ -230,14 +235,23 @@ function ServerDetailPage() {
     try {
       const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
       const token = authToken || localStorage.getItem('token');
-      // compute new expire_date on client: if expired, start from now; otherwise from current expiry
-      const now = new Date();
-      const current = user.expire_date ? new Date(user.expire_date) : null;
-      const base = (!current || isNaN(current.getTime()) || current < now) ? now : current;
-      const newDate = new Date(base);
-      newDate.setMonth(newDate.getMonth() + months);
-  // include display_pos so server can preserve ordering on update
-  const payload = { ...user, expire_date: newDate.toISOString().slice(0,10), display_pos: (typeof user.display_pos === 'number' ? user.display_pos : (typeof user.__pos === 'number' ? user.__pos : undefined)) };
+      // compute new expire_date on client without timezone drift: if expired, start from today; else from current date-only
+      const pad2 = (n) => (n < 10 ? '0' + n : '' + n);
+      const parseDateOnly = (val) => {
+        if (!val) return null;
+        const s = String(val);
+        const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])); // local Y-M-D
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+      };
+      const toYMD = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+      const today = new Date();
+      const current = user.expire_date ? parseDateOnly(user.expire_date) : null;
+      const base = (!current || current < today) ? new Date(today.getFullYear(), today.getMonth(), today.getDate()) : current;
+      const next = new Date(base.getFullYear(), base.getMonth() + months, base.getDate());
+      // include display_pos so server can preserve ordering on update
+      const payload = { ...user, expire_date: toYMD(next), display_pos: (typeof user.display_pos === 'number' ? user.display_pos : (typeof user.__pos === 'number' ? user.__pos : undefined)) };
       const res = await axios.put(`${backendOrigin}/api/users/${user.id}`, payload, { headers: { Authorization: `Bearer ${token}` } });
       const updated = res.data;
       setUsers(prev => {
@@ -255,19 +269,25 @@ function ServerDetailPage() {
   };
 
   const stats = useMemo(() => {
-  const now = new Date();
-  let active = 0, soon = 0, expired = 0;
-  users.forEach(user => {
-    const diff = new Date(user.expire_date) - now;
-    if (diff < 0) {
-      expired++;
-    } else if (diff <= 24 * 60 * 60 * 1000) { // <= 24 hours
-      soon++;
-    } else {
-      active++;
-    }
-  });
-  return { total: users.length, active, soon, expired };
+    const now = new Date();
+    let active = 0, soon = 0, expired = 0;
+    const parseDateOnly = (val) => {
+      if (!val) return null;
+      const s = String(val);
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+      const d = new Date(s);
+      return isNaN(d.getTime()) ? null : d;
+    };
+    users.forEach(user => {
+      const exp = parseDateOnly(user.expire_date);
+      const cutoff = exp ? new Date(exp.getFullYear(), exp.getMonth(), exp.getDate() + 1) : null;
+      const diff = (cutoff ? cutoff.getTime() : NaN) - now.getTime();
+      if (diff <= 0) expired++;
+      else if (diff <= 24 * 60 * 60 * 1000) soon++;
+      else active++;
+    });
+    return { total: users.length, active, soon, expired };
   }, [users]);
 
   if (loading) return <div className="app-container">Loading...</div>;
@@ -435,7 +455,7 @@ function ServerDetailPage() {
               )}
 
               {filteredUsers.length > 0 ? (
-                <UserTable users={filteredUsers} onEdit={setUserToEdit} onDelete={setUserToDelete} onQuickRenew={handleQuickRenew} canManageUsers={(role === 'ADMIN') || (userServerAdminFor.includes(Number(id)))} />
+                <UserTable users={filteredUsers} onEdit={setUserToEdit} onDelete={setUserToDelete} onQuickRenew={handleQuickRenew} canManageUsers={(role === 'ADMIN') || (userServerAdminFor.includes(Number(id)))} showContact={isDesktop} />
               ) : (
                 <p className="no-users-message">No users found for this server. { (role === 'ADMIN' || userServerAdminFor.includes(Number(id))) ? 'Click "Add New User" to begin.' : '' }</p>
               )}
@@ -499,7 +519,7 @@ function ServerDetailPage() {
               )}
 
               {filteredUsers.length > 0 ? (
-                <UserTable users={filteredUsers} onEdit={setUserToEdit} onDelete={setUserToDelete} onQuickRenew={handleQuickRenew} canManageUsers={(role === 'ADMIN') || (userServerAdminFor.includes(Number(id)))} />
+                <UserTable users={filteredUsers} onEdit={setUserToEdit} onDelete={setUserToDelete} onQuickRenew={handleQuickRenew} canManageUsers={(role === 'ADMIN') || (userServerAdminFor.includes(Number(id)))} showContact={isDesktop} />
               ) : (
                 <p className="no-users-message">No users found for this server. { (role === 'ADMIN' || userServerAdminFor.includes(Number(id))) ? 'Click "Add New User" to begin.' : '' }</p>
               )}
@@ -526,14 +546,14 @@ function ServerDetailPage() {
       {/* Import mode prompt */}
       <ImportModeModal
         isOpen={importModeOpen}
-        onClose={() => { setImportModeOpen(false); setPendingImportFile(null); setPendingMode(null); }}
+        onClose={() => { setImportModeOpen(false); setPendingImportFile(null); }}
         onSelect={handleImportModeSelect}
       />
 
       {/* Overwrite confirmation warning */}
       <ConfirmModal
         isOpen={overwriteConfirmOpen}
-        onClose={() => { setOverwriteConfirmOpen(false); setPendingMode(null); }}
+        onClose={() => { setOverwriteConfirmOpen(false); }}
         onConfirm={() => runImportWithMode('overwrite')}
         title="Overwrite all users?"
         confirmLabel="Yes, overwrite"

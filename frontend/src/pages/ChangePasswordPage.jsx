@@ -1,4 +1,4 @@
-import React from 'react';
+// React not needed
 import ChangePassword from '../components/ChangePassword';
 
 export default function ChangePasswordPage() {

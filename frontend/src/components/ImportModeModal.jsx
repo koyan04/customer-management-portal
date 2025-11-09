@@ -1,4 +1,4 @@
-import React from 'react';
+// React not needed
 import Modal from './Modal.jsx';
 
 export default function ImportModeModal({ isOpen, onClose, onSelect }) {

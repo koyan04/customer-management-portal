@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import Modal from './Modal';
 import { FaKey, FaServer } from 'react-icons/fa';
+import './AdminEditorForm.mobile.css';
 
 export default function AdminEditorForm({ isOpen, onClose, onSaved, account, servers = [] }) {
   const { token, user: authUser } = useAuth();
@@ -15,6 +16,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
   const [errorToast, setErrorToast] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(null);
   const [showReset, setShowReset] = useState(false);
+  const [fullHeightReset, setFullHeightReset] = useState(false);
   const [resetPassword, setResetPassword] = useState('');
   const [resetPasswordConfirm, setResetPasswordConfirm] = useState('');
   const [avatarPreview, setAvatarPreview] = useState(null);
@@ -32,6 +34,11 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
       return origin + url;
     } catch (e) { return url; }
   };
+
+  const isProfile = useMemo(() => {
+    const currentUserId = authUser?.user?.id || authUser?.id;
+    return Boolean(account && account.id && currentUserId && account.id === currentUserId);
+  }, [account, authUser]);
 
   useEffect(() => {
     if (account) {
@@ -67,11 +74,18 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
       // no server-admin state
       setAvatarPreview(null);
     }
-  }, [account, token, isOpen]);
+  }, [account, token, isOpen, isProfile]);
+
+  // clear any transient full-height behavior when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setFullHeightReset(false);
+      setShowReset(false);
+    }
+  }, [isOpen]);
 
   // determine if this editor is the current logged-in user's profile
-  const currentUserId = authUser?.user?.id || authUser?.id;
-  const isProfile = Boolean(account && account.id && currentUserId && account.id === currentUserId);
+  // currentUserId logic moved into memoized isProfile above
   // when editing your own profile as a VIEWER or SERVER_ADMIN we hide some admin-only controls
   const hideRoleAndReset = isProfile && (form.role === 'VIEWER' || form.role === 'SERVER_ADMIN');
   // compact modal styling applies for non-global-admin account types (viewer/server-admin)
@@ -80,6 +94,8 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
   const isAddViewer = !isProfile && !isEdit && form.role === 'VIEWER';
   // Add Server Admin modal detection: non-profile, add mode, and role is SERVER_ADMIN
   const isAddServerAdmin = !isProfile && !isEdit && form.role === 'SERVER_ADMIN';
+  // Add Admin modal detection: non-profile, add mode, and role is ADMIN
+  const isAddAdmin = !isProfile && !isEdit && form.role === 'ADMIN';
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -184,8 +200,8 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
           fd.append('username', form.username);
           fd.append('password', form.password);
         }
-        if (isEdit && !isProfile && form.username) {
-          // allow admin panel to update username when editing
+        if (isEdit && ( !isProfile || form.role === 'ADMIN') && form.username) {
+          // allow admin panel (and admin profile edits) to update username when editing
           fd.append('username', form.username);
         }
         fd.append('avatar', avatarFile);
@@ -209,7 +225,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
           // fallback: send base64 avatar in JSON (we already have avatarPreview)
           if (isEdit) {
             const payload = { display_name: form.display_name, role: form.role, avatar_data: avatarPreview, clear_avatar: clearAvatar };
-            if (!isProfile && form.username) payload.username = form.username;
+            if (( !isProfile || form.role === 'ADMIN') && form.username) payload.username = form.username;
             await axios.put(`/api/admin/accounts/${editorId}`, payload, { headers: { Authorization: `Bearer ${token}` } });
           } else {
             const res = await axios.post('/api/admin/accounts', { display_name: form.display_name, username: form.username, password: form.password, role: form.role, avatar_data: avatarPreview, clear_avatar: clearAvatar }, { headers: { Authorization: `Bearer ${token}` } });
@@ -220,7 +236,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
         console.debug('Submitting JSON payload. avatarPreview length:', avatarPreview ? avatarPreview.length : 0);
         if (isEdit) {
           const payload = { display_name: form.display_name, role: form.role, avatar_data: avatarPreview, clear_avatar: clearAvatar };
-          if (!isProfile && form.username) payload.username = form.username;
+          if (( !isProfile || form.role === 'ADMIN') && form.username) payload.username = form.username;
           await axios.put(`/api/admin/accounts/${editorId}`, payload, { headers: { Authorization: `Bearer ${token}` } });
         } else {
           const res = await axios.post('/api/admin/accounts', { display_name: form.display_name, username: form.username, password: form.password, role: form.role, avatar_data: avatarPreview, clear_avatar: clearAvatar }, { headers: { Authorization: `Bearer ${token}` } });
@@ -326,7 +342,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
     <AnimatePresence>
       {isOpen && (
         <motion.div className="modal-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
-  <motion.div className={`modal-content ${compactForRole ? 'compact-form' : ''} ${isProfile ? 'profile-modal' : ''} ${!isProfile ? 'edit-sized' : ''} ${(isAddViewer || isAddServerAdmin) ? 'add-viewer-wide' : ''} ${isProfile && isEdit && form.role === 'ADMIN' ? 'admin-profile-edit' : ''}`} aria-busy={saving ? 'true' : 'false'} initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} onClick={e => e.stopPropagation()}>
+  <motion.div className={`modal-content ${compactForRole ? 'compact-form' : ''} ${isProfile ? 'profile-modal' : ''} ${!isProfile ? 'edit-sized' : ''} ${(isAddViewer || isAddServerAdmin) ? 'add-viewer-wide' : ''} ${isAddAdmin ? 'add-admin' : ''} ${isProfile && isEdit && form.role === 'ADMIN' ? 'admin-profile-edit' : ''} ${fullHeightReset ? 'full-height-reset' : ''}`} aria-busy={saving ? 'true' : 'false'} initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} onClick={e => e.stopPropagation()}>
             {showToast && (
               <div className="save-toast" role="status" aria-live="polite">Profile updated</div>
             )}
@@ -385,14 +401,42 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
                         </>
                       );
                     }
-                    // Default behavior for non-profile editor modal: single-line header includes the name
+                    // Default behavior for non-profile editor modal: separate role/title and name so CSS can
+                    // move the name to the next row on small screens if it doesn't fit.
                     return (
-                      <h3>{isEdit ? `${action} ${roleTitle}: ${nameTitle}` : `${action} ${roleTitle}`}</h3>
+                      <h3>
+                        <span className="modal-action-role">{action} {roleTitle}{isEdit ? ':' : ''}</span>
+                        {isEdit && nameTitle ? (
+                          <span className="modal-action-name">{` ${nameTitle}`}</span>
+                        ) : null}
+                      </h3>
                     );
                   })()}
                   {isEdit && !hideRoleAndReset && (
                     <div style={{ marginTop: '0.5rem' }}>
-                      <button type="button" className="reset-btn header-reset-btn" onClick={() => setShowReset(s => !s)}>
+                      <button type="button" className="reset-btn header-reset-btn" onClick={() => {
+                        // clicking Reset opens inline fields on desktop but on small screens
+                        // we expand the modal to a near-full height and make the body scrollable
+                        const willShow = !showReset;
+                        if (willShow) {
+                          const isPhone = (typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width:520px)').matches);
+                          // For mobile: expand modal for VIEWER/SERVER_ADMIN (existing) and
+                          // also for editing an ADMIN account (user requested 72vh for edit-admin)
+                              // For mobile viewers/server-admins keep existing behavior
+                              if (isPhone && (form.role === 'VIEWER' || form.role === 'SERVER_ADMIN')) {
+                                setFullHeightReset(true);
+                              // Also enable full-height scrolling when editing an ADMIN, even on desktop
+                              } else if (isEdit && form.role === 'ADMIN') {
+                                setFullHeightReset(true);
+                              } else {
+                                setFullHeightReset(false);
+                              }
+                          setShowReset(true);
+                        } else {
+                          setShowReset(false);
+                          setFullHeightReset(false);
+                        }
+                      }}>
                         <FaKey style={{ marginRight: '0.45rem' }} aria-hidden />
                         {showReset ? 'Cancel Reset' : 'Reset Password'}
                       </button>
@@ -416,7 +460,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
                   </div>
                 </>
               )}
-              {isEdit && !isProfile && (
+              {isEdit && (!isProfile || form.role === 'ADMIN') && (
                 <div className="form-group">
                   <label>Username</label>
                   <input name="username" value={form.username} onChange={handleChange} required />

@@ -49,4 +49,18 @@ describe('validateSettings - telegram', () => {
     expect(res.cleaned.loginNotification).toBe(false);
     expect(res.cleaned.botToken).toBeUndefined();
   });
+
+  test('accepts settings_reload_seconds as positive number', () => {
+    const body = { settings_reload_seconds: 15 };
+    const res = validateSettings('telegram', body);
+    expect(res.ok).toBe(true);
+    expect(res.cleaned.settings_reload_seconds).toBe(15);
+  });
+
+  test('rejects invalid settings_reload_seconds', () => {
+    const body = { settings_reload_seconds: 'abc' };
+    const res = validateSettings('telegram', body);
+    expect(res.ok).toBe(false);
+    expect(res.errors).toEqual(expect.arrayContaining(['settings_reload_seconds must be a positive number']));
+  });
 });

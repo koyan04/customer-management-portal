@@ -1,5 +1,6 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import SettingsPage from '../pages/SettingsPage.jsx';
 // using Vitest globals per config
 
@@ -36,15 +37,19 @@ describe('SettingsPage basic', () => {
 
     // switch to Telegram, ensure lastTab is stored
     const telBtn = await screen.findByRole('tab', { name: /Telegram Bot/i });
-    fireEvent.click(telBtn);
+    await userEvent.click(telBtn);
+    await (async () => {
+      // wait for effect to persist lastTab
+      await new Promise(r => setTimeout(r, 0));
+    })();
     expect(window.localStorage.getItem('settings.lastTab')).toBe('telegram');
   });
 
   it('renders financial inputs and allows editing', async () => {
     render(<SettingsPage />);
     // Switch to General tab
-    const genBtn = await screen.findByRole('tab', { name: /General/i });
-    fireEvent.click(genBtn);
+  const genBtn = await screen.findByRole('tab', { name: /General/i });
+  await userEvent.click(genBtn);
     // Wait for price inputs
     const priceMini = await screen.findByLabelText(/Price \(Mini\)/i);
     const priceBasic = await screen.findByLabelText(/Price \(Basic\)/i);
@@ -52,17 +57,21 @@ describe('SettingsPage basic', () => {
     const currency = await screen.findByLabelText(/Currency/i);
 
     expect(priceMini).toBeTruthy();
-  fireEvent.change(priceMini, { target: { value: '3.50' } });
+    await userEvent.clear(priceMini);
+    await userEvent.type(priceMini, '3.50');
   // value may stringify differently; compare as Number
   expect(Number(priceMini.value)).toBeCloseTo(3.5);
 
-  fireEvent.change(priceBasic, { target: { value: '4.00' } });
+  await userEvent.clear(priceBasic);
+  await userEvent.type(priceBasic, '4.00');
   expect(Number(priceBasic.value)).toBeCloseTo(4.0);
 
-  fireEvent.change(priceUnl, { target: { value: '0' } });
+  await userEvent.clear(priceUnl);
+  await userEvent.type(priceUnl, '0');
   expect(Number(priceUnl.value)).toBeCloseTo(0);
 
-  fireEvent.change(currency, { target: { value: 'eur' } });
+  await userEvent.clear(currency);
+  await userEvent.type(currency, 'eur');
   expect(currency.value).toBe('eur');
   });
 });

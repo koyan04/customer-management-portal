@@ -1,10 +1,10 @@
-import React from 'react';
+// React not needed
 import ServerList from './ServerList.jsx';
 import AddServerForm from '../components/AddServerForm.jsx';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { FaPlus } from 'react-icons/fa';
+import { FaPlus, FaServer } from 'react-icons/fa';
 
 export default function ServerListPage() {
   const [servers, setServers] = useState([]);
@@ -12,7 +12,7 @@ export default function ServerListPage() {
   const { token, user } = useAuth();
   const role = user?.user?.role || user?.role;
 
-  const fetchServers = async () => {
+  const fetchServers = useCallback(async () => {
     if (!token) return;
     try {
       const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
@@ -24,11 +24,9 @@ export default function ServerListPage() {
     } catch (error) {
       console.error('Error fetching servers:', error);
     }
-  };
-
-  useEffect(() => {
-    fetchServers();
   }, [token]);
+
+  useEffect(() => { fetchServers(); }, [fetchServers]);
 
   const handleServerAdded = () => {
     fetchServers();
@@ -38,7 +36,7 @@ export default function ServerListPage() {
   return (
     <div>
       <div className="header">
-        <h2>Server List</h2>
+        <h2><span className="title-icon" aria-hidden="true"><FaServer /></span>Server List</h2>
         {!isFormVisible && role === 'ADMIN' && (
           <button onClick={() => setIsFormVisible(true)} className="add-server-btn">
             <span className="btn-icon" aria-hidden="true"><FaPlus /></span>

@@ -1,32 +1,47 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import formatWithAppTZ from '../lib/timezone';
 import { createPortal } from 'react-dom';
 import { FaCog, FaTrashAlt, FaClock, FaEllipsisV } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
 
+// Parse a date-only string (YYYY-MM-DD) in local time to avoid UTC midnight shifts
+const parseDateOnly = (val) => {
+  if (!val) return null;
+  const s = String(val);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+};
+
 const getUserStatus = (expireDate) => {
   const now = new Date();
-  const expiry = new Date(expireDate);
-  const msDiff = expiry - now;
-  const hoursDiff = msDiff / (1000 * 60 * 60);
-  if (hoursDiff < 0) return { text: 'Expired', className: 'status-expired' };
-  // Expire Soon is now defined as <= 24 hours
-  if (hoursDiff <= 24) return { text: 'Expire Soon', className: 'status-soon' };
+  const expiry = parseDateOnly(expireDate);
+  if (!expiry) return { text: 'Active', className: 'status-active' };
+  // Treat expire_date as date-only that remains valid THROUGH that day.
+  // Expiration moment = start of the next day (local midnight after expire_date).
+  const cutoff = new Date(expiry.getFullYear(), expiry.getMonth(), expiry.getDate() + 1);
+  const msDiff = cutoff.getTime() - now.getTime();
+  if (msDiff <= 0) return { text: 'Expired', className: 'status-expired' }; // after end-of-day
+  if (msDiff <= 24 * 60 * 60 * 1000) return { text: 'Expire Soon', className: 'status-soon' }; // within next 24h
   return { text: 'Active', className: 'status-active' };
 };
 
 const formatDuration = (expireDate) => {
-    const now = new Date();
-    const expiry = new Date(expireDate);
-    let diff = expiry - now;
-    if (diff < 0) return '0d 0h';
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    diff -= days * (1000 * 60 * 60 * 24);
-    const hours = Math.floor(diff / (1000 * 60 * 60));
-    return `${days}d ${hours}h`;
+  const now = new Date();
+  const expiry = parseDateOnly(expireDate) || new Date(expireDate);
+  if (!expiry || isNaN(expiry)) return '—';
+  // countdown to the exclusive end-of-day cutoff
+  const cutoff = new Date(expiry.getFullYear(), expiry.getMonth(), expiry.getDate() + 1);
+  let diff = cutoff.getTime() - now.getTime();
+  if (diff <= 0) return '0d 0h';
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  diff -= days * (1000 * 60 * 60 * 24);
+  const hours = Math.floor(diff / (1000 * 60 * 60));
+  return `${days}d ${hours}h`;
 };
 
-function UserTable({ users, onEdit, onDelete, onQuickRenew, canManageUsers = null }) {
+function UserTable({ users, onEdit, onDelete, onQuickRenew, canManageUsers = null, showContact = false }) {
   // determine role from localStorage as a fallback to AuthContext
   let role = null;
   try { role = JSON.parse(localStorage.getItem('user'))?.role || (localStorage.getItem('user') || null); } catch(e) { role = null; }
@@ -41,7 +56,7 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, canManageUsers = nul
   // separate refs for overflow menus rendered into the portal
   const overflowRefs = useRef({});
   // store computed positions for portal popups so they can be absolutely positioned in viewport
-  const popupPositions = useRef({});
+  // const popupPositions = useRef({}); // removed unused variable per lint warning
 
   // ensure there's a single container for all portal popups
   const getPopupRoot = () => {
@@ -93,6 +108,7 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, canManageUsers = nul
             <th>Name</th>
             <th>Status</th>
             <th>Service</th>
+            {showContact && (<th>Contact</th>)}
             <th>Duration</th>
             <th>Expire Date</th>
             <th>Actions</th>
@@ -124,6 +140,9 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, canManageUsers = nul
                     {status.text}
                   </td>
                   <td data-label="Service">{user.service_type}</td>
+                  {showContact && (
+                    <td data-label="Contact">{user.contact || '—'}</td>
+                  )}
                   <td data-label="Duration" title={`Expire: ${formatWithAppTZ(user.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB')}`}>{formatDuration(user.expire_date)}</td>
                   <td data-label="Expire Date">
                     {/* THIS LINE FIXES THE DATE FORMAT */}

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { Bar } from 'react-chartjs-2';
@@ -31,7 +31,8 @@ export default function FinancialPage() {
   const [duration, setDuration] = useState('last6');
   const [startDate, setStartDate] = useState(null); // Date
   const [endDate, setEndDate] = useState(null); // Date
-  const [validationMsg, setValidationMsg] = useState(null);
+  // validationMsg was unused; keeping placeholder for future form validation feature
+  // validationMsg placeholder removed (unused) – reintroduce when adding form validation UI
 
   useEffect(() => {
     let mounted = true;
@@ -73,7 +74,7 @@ export default function FinancialPage() {
     };
     fetchData();
     return () => { mounted = false; };
-  }, [token]);
+  }, [token, user]);
 
   // helper: convert month string 'YYYY-MM' to yyyy-mm-01 date string
   const monthToISO = (monthStr) => (monthStr ? `${monthStr}-01` : null);
@@ -197,8 +198,9 @@ export default function FinancialPage() {
   if (!data) return <div className="app-container">No data</div>;
 
   const months = data.months || [];
-  const labels = months.map(m => m.month);
-  const revenues = months.map(m => Number(m.revenue_cents || 0) / 100);
+  // derived chart arrays (currently unused independently; kept for potential summary chips)
+  const labels = months.map(m => m.month); // eslint-disable-line no-unused-vars
+  const revenues = months.map(m => Number(m.revenue_cents || 0) / 100); // eslint-disable-line no-unused-vars
   const currency = (months[0] && months[0].rawAudit && months[0].rawAudit.currency) || (months[0] && months[0].currentApp && months[0].currentApp.currency) || 'USD';
 
   const chartData = {
@@ -257,33 +259,11 @@ export default function FinancialPage() {
   };
 
   // simple data-labels plugin to draw values on top of bars (avoids external dependency)
-  const barDataLabelsPlugin = {
-    id: 'barDataLabels',
-    afterDatasetsDraw: (chart) => {
-      const { ctx, data } = chart;
-      ctx.save();
-      data.datasets.forEach((dataset, datasetIndex) => {
-        const meta = chart.getDatasetMeta(datasetIndex);
-        meta.data.forEach((bar, i) => {
-          const val = dataset.data[i];
-          if (val == null) return;
-          const x = bar.x !== undefined ? bar.x : bar.x;
-          const y = bar.y !== undefined ? bar.y : bar.y;
-          ctx.fillStyle = '#e6f7f0';
-          ctx.font = '600 11px Inter, system-ui, Arial';
-          ctx.textAlign = 'center';
-          // position above bar
-          const offset = (bar.height ? Math.min(12, Math.abs(bar.height)) : 12);
-          ctx.fillText(String(val).replace(/\B(?=(\d{3})+(?!\d))/g, ','), x, y - offset);
-        });
-      });
-      ctx.restore();
-    }
-  };
+  // Removed inline barDataLabelsPlugin (unused) – can be restored if value labels are desired.
 
   return (
     <div className="app-container">
-      <h2 className="admin-title">Financials</h2>
+      <h2 className="admin-title"><FiTrendingUp aria-hidden style={{ marginRight: 10, verticalAlign: 'middle' }} />Financials</h2>
       <p>Year: {data.year} — Year-to-date revenue: {fmtCurrency(data.yearTotals.revenue_cents, currency)}</p>
 
       <div className="stat-banners">

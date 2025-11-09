@@ -26,10 +26,13 @@ afterEach(() => { vi.clearAllMocks(); });
 
 describe('AdminPanel integration', () => {
   it('clicking a card opens edit modal with prefilled fields', async () => {
-    // Arrange: first GET /api/admin/accounts returns one account, second GET /api/servers returns empty
-    axios.get
-      .mockResolvedValueOnce({ data: [{ id: 42, display_name: 'Jane Doe', username: 'jdoe', role: 'VIEWER' }] })
-      .mockResolvedValueOnce({ data: [] });
+    // Arrange: mock by URL instead of call order to tolerate additional widgets making requests
+    axios.get.mockImplementation(async (url) => {
+      if (url.includes('/api/admin/accounts')) return { data: [{ id: 42, display_name: 'Jane Doe', username: 'jdoe', role: 'VIEWER' }] };
+      if (url.includes('/api/servers')) return { data: [] };
+      if (url.includes('/api/admin/matviews')) return { data: { ok: true, matviews: [{ name: 'user_status_matview', refreshing: false, pending: false, last_success: null }] } };
+      return { data: [] };
+    });
 
   const AdminPanelPage = (await import('../pages/AdminPanelPage.jsx')).default;
   render(<AdminPanelPage />);

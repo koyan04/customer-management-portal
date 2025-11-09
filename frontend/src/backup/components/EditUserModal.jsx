@@ -6,7 +6,7 @@ function EditUserModal({ user, onClose, onSave }) {
   const initialFormState = {
     account_name: '',
     service_type: 'X-Ray',
-    account_type: 'Basic',
+    contact: 'Basic',
     expire_date: '',
     total_devices: 1,
     data_limit_gb: 100,
@@ -20,7 +20,7 @@ function EditUserModal({ user, onClose, onSave }) {
         ...prev,
         account_name: user.account_name ?? prev.account_name,
         service_type: user.service_type ?? prev.service_type,
-        account_type: user.account_type ?? prev.account_type,
+        contact: user.contact ?? prev.contact,
         expire_date: user.expire_date ? new Date(user.expire_date).toISOString().split('T')[0] : prev.expire_date,
         total_devices: user.total_devices ?? prev.total_devices,
         data_limit_gb: user.data_limit_gb !== null && user.data_limit_gb !== undefined ? user.data_limit_gb : prev.data_limit_gb,
@@ -34,7 +34,7 @@ function EditUserModal({ user, onClose, onSave }) {
     if (name === "unlimited") {
       setFormData(prevState => ({
         ...prevState,
-        account_type: checked ? 'Unlimited' : 'Basic',
+        service_type: checked ? 'Unlimited' : 'Basic',
         data_limit_gb: checked ? '' : (prevState.data_limit_gb || 100),
       }));
     } else {
@@ -45,7 +45,7 @@ function EditUserModal({ user, onClose, onSave }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-      const dataToSubmit = { ...formData, data_limit_gb: formData.account_type === 'Unlimited' ? null : formData.data_limit_gb };
+  const dataToSubmit = { ...formData, data_limit_gb: formData.service_type === 'Unlimited' ? null : formData.data_limit_gb };
       await axios.put(`http://localhost:3001/api/users/${user.id}`, dataToSubmit);
       onSave();
     } catch (error) {
@@ -85,7 +85,7 @@ function EditUserModal({ user, onClose, onSave }) {
               <label htmlFor="edit_total_devices">Devices</label>
               <input id="edit_total_devices" name="total_devices" value={formData.total_devices} onChange={handleChange} type="number" min="1" />
             </div>
-            {formData.account_type === 'Basic' && (
+            {formData.service_type === 'Basic' && (
               <div className="form-group">
                 <label htmlFor="edit_data_limit_gb">Data Limit (GB)</label>
                 <input id="edit_data_limit_gb" name="data_limit_gb" value={formData.data_limit_gb} onChange={handleChange} type="number" min="0" />
@@ -98,7 +98,7 @@ function EditUserModal({ user, onClose, onSave }) {
             </div>
 
             <label className="checkbox-label">
-              <input name="unlimited" type="checkbox" checked={formData.account_type === 'Unlimited'} onChange={handleChange} />
+              <input name="unlimited" type="checkbox" checked={formData.service_type === 'Unlimited'} onChange={handleChange} />
               <span className="custom-checkbox"><span className="checkmark"></span></span>
               <span>Unlimited Account</span>
             </label>

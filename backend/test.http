@@ -53,8 +53,7 @@ Content-Type: application/json
 
 {
   "account_name": "customer_jane_doe",
-  "service_type": "Outline",
-  "account_type": "Unlimited",
+  "service_type": "Unlimited",
   "expire_date": "2026-10-09",
   "total_devices": 10,
   "data_limit_gb": null,

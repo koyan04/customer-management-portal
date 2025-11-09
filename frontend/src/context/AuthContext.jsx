@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useMemo, useEffect, useRef } from 'react';
+import { createContext, useState, useContext, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 // lightweight JWT payload decoder (no external dependency)
@@ -69,19 +69,22 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = () => {
-    (async () => {
-      try {
-        const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
-        // Call logout endpoint which clears the refresh cookie and server-side row
-        await fetch(backendOrigin + '/api/auth/logout', { method: 'POST', credentials: 'include', headers: {} }).catch(() => {});
-      } catch (e) {}
-      setToken(null);
-      localStorage.removeItem('token');
-      try { localStorage.removeItem('user'); } catch(e) {}
-      navigate('/login'); // Redirect to login page after logout
-    })();
-  };
+  const logout = useMemo(() => {
+    // memoize a stable logout function so effects can depend on it safely
+    return () => {
+      (async () => {
+        try {
+          const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+          // Call logout endpoint which clears the refresh cookie and server-side row
+          await fetch(backendOrigin + '/api/auth/logout', { method: 'POST', credentials: 'include', headers: {} }).catch(() => {});
+        } catch (e) {}
+        setToken(null);
+        localStorage.removeItem('token');
+        try { localStorage.removeItem('user'); } catch(e) {}
+        navigate('/login'); // Redirect to login page after logout
+      })();
+    };
+  }, [navigate]);
 
   // Idle auto-logout: reads `autoLogoutMinutes` from localStorage (0 = disabled)
   useEffect(() => {
@@ -99,8 +102,7 @@ export const AuthProvider = ({ children }) => {
       if (!token || !minutes || minutes <= 0) return; // disabled or not logged in
       const ms = minutes * 60 * 1000;
       // schedule warning 60 seconds before logout (if duration allows)
-      const warnBefore = Math.min(60 * 1000, Math.max(0, ms - 1000));
-      if (ms > 60 * 1000) {
+  if (ms > 60 * 1000) {
         warningTimer = setTimeout(() => {
           const remaining = Math.max(0, ms - (Date.now() - lastActivity));
           // dispatch a global event to show UI warning; include remaining ms
@@ -154,7 +156,7 @@ export const AuthProvider = ({ children }) => {
       window.removeEventListener('storage', storageHandler);
       window.removeEventListener('extend-session', extendHandler);
     };
-  }, [token]);
+  }, [token, logout]);
 
   // Auto-logout when token is expired (or about to expire)
   useEffect(() => {
@@ -179,7 +181,7 @@ export const AuthProvider = ({ children }) => {
     return () => {
       if (expiryTimerRef.current) clearTimeout(expiryTimerRef.current);
     };
-  }, [token]);
+  }, [token, logout]);
 
   return (
     <AuthContext.Provider value={{ token, login, logout, user, replaceToken, refreshWithCookie }}>

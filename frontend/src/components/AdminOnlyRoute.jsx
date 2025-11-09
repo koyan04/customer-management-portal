@@ -1,4 +1,4 @@
-import React from 'react';
+// React 19+ auto JSX runtime: no need to import React when not referencing it directly
 import { Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 

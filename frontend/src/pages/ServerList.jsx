@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { FaCog, FaTrashAlt, FaUser, FaCogs, FaNetworkWired, FaGlobe, FaRegCopy, FaCheck } from 'react-icons/fa';
+import { FaCog, FaTrashAlt, FaUser, FaCogs, FaNetworkWired, FaGlobe, FaRegCopy, FaCheck, FaArrowsAlt, FaGripVertical, FaSave, FaTimes } from 'react-icons/fa';
 // Corrected import paths below
 import ConfirmModal from '../components/ConfirmModal.jsx';
 import EditServerModal from '../components/EditServerModal.jsx';
@@ -11,34 +11,43 @@ function ServerList({ servers, fetchServers }) {
   const [serverToDelete, setServerToDelete] = useState(null);
   const [serverToEdit, setServerToEdit] = useState(null);
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const [reorderMode, setReorderMode] = useState(false);
+  const [localOrder, setLocalOrder] = useState([]);
+  const pageSize = reorderMode ? 1000 : 10; // show all while reordering
   const totalPages = Math.max(1, Math.ceil((servers?.length || 0) / pageSize));
   const firstIndex = (page - 1) * pageSize;
-  const visibleServers = Array.isArray(servers) ? servers.slice(firstIndex, firstIndex + pageSize) : [];
+  const sourceList = reorderMode ? (localOrder.length ? localOrder : servers) : servers;
+  const visibleServers = Array.isArray(sourceList) ? sourceList.slice(firstIndex, firstIndex + pageSize) : [];
   const [copiedIp, setCopiedIp] = useState(null);
   const [userServerAdminFor, setUserServerAdminFor] = useState([]);
+  const [currentRole, setCurrentRole] = useState(null);
   // get current user role from local storage or AuthContext if available
   let role = null;
   try { role = JSON.parse(localStorage.getItem('user'))?.role || (localStorage.getItem('user') || null); } catch(e) { role = null; }
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
-        const token = localStorage.getItem('token');
-        const res = await axios.get(`${backendOrigin}/api/my-server-admins`, { headers: { Authorization: `Bearer ${token}` } });
-        const list = res && res.data && Array.isArray(res.data.server_admin_for) ? res.data.server_admin_for : (res && res.data && res.data.server_admin_for ? res.data.server_admin_for : []);
-        if (!mounted) return;
-        // normalize to numbers
-        setUserServerAdminFor(Array.isArray(list) ? list.map((v) => Number(v)) : []);
-      } catch (e) {
-        if (!mounted) return;
-        setUserServerAdminFor([]);
-      }
-    })();
-    return () => { mounted = false; };
+  const fetchMyServerAdmins = useCallback(async () => {
+    try {
+      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const token = localStorage.getItem('token');
+      const res = await axios.get(`${backendOrigin}/api/my-server-admins`, { headers: { Authorization: `Bearer ${token}` } });
+      const list = res && res.data && Array.isArray(res.data.server_admin_for) ? res.data.server_admin_for : (res && res.data && res.data.server_admin_for ? res.data.server_admin_for : []);
+      const r = res && res.data && res.data.role ? res.data.role : null;
+      setUserServerAdminFor(Array.isArray(list) ? list.map((v) => Number(v)) : []);
+      if (r) setCurrentRole(r);
+    } catch (e) {
+      setUserServerAdminFor([]);
+      setCurrentRole(null);
+    }
   }, []);
+
+  useEffect(() => { fetchMyServerAdmins(); }, [fetchMyServerAdmins]);
+
+  // Keep local order in sync when entering reorder mode or servers change
+  useEffect(() => {
+    if (!reorderMode) return;
+    setLocalOrder(Array.isArray(servers) ? [...servers] : []);
+    setPage(1);
+  }, [reorderMode, servers]);
 
   const handleDelete = async (id) => {
     try {
@@ -74,8 +83,87 @@ function ServerList({ servers, fetchServers }) {
     } catch (e) { /* ignore */ }
   };
 
+  // HTML5 drag-and-drop handlers (reorderMode only)
+  const onDragStart = (e, id) => {
+    if (!reorderMode) return;
+    e.dataTransfer.setData('text/plain', String(id));
+    // hint dragging effect
+    e.dataTransfer.effectAllowed = 'move';
+  };
+  const onDragOver = (e) => {
+    if (!reorderMode) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+  const onDrop = (e, targetId) => {
+    if (!reorderMode) return;
+    e.preventDefault();
+    const draggedId = Number(e.dataTransfer.getData('text/plain'));
+    if (!draggedId || draggedId === targetId) return;
+    setLocalOrder(prev => {
+      const arr = Array.isArray(prev) && prev.length ? [...prev] : [];
+      const fromIdx = arr.findIndex(s => Number(s.id) === draggedId);
+      const toIdx = arr.findIndex(s => Number(s.id) === targetId);
+      if (fromIdx === -1 || toIdx === -1) return arr;
+      const [item] = arr.splice(fromIdx, 1);
+      arr.splice(toIdx, 0, item);
+      return arr;
+    });
+  };
+
+  const saveOrder = async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const ids = (localOrder || []).map(s => s.id);
+      await axios.put(`${backendOrigin}/api/servers/order`, { ids }, { headers: { Authorization: `Bearer ${token}` } });
+      setReorderMode(false);
+      await fetchServers();
+    } catch (e) {
+      console.error('Failed to save order:', e && (e.response ? (e.response.status + ' ' + (e.response.data && (e.response.data.msg || e.response.data.error) || '')) : (e.message || e)));
+      if (e && e.response && e.response.status === 403) {
+        alert('Not authorized: only admins can reorder servers.');
+      } else if (e && e.response && e.response.data && (e.response.data.msg || e.response.data.error)) {
+        alert('Failed to save order: ' + (e.response.data.msg || e.response.data.error));
+      } else {
+        alert('Failed to save order');
+      }
+    }
+  };
+  const cancelOrder = () => {
+    setReorderMode(false);
+    setLocalOrder([]);
+  };
+
   return (
     <div>
+      {reorderMode && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+          className="reorder-banner"
+        >
+          <span className="banner-icon"><FaArrowsAlt /></span>
+          <strong>Reorder mode</strong> — drag items to rearrange, then Save or Cancel.
+        </motion.div>
+      )}
+      <div className="list-toolbar">
+        <div className="flex-spacer" />
+        <div className="actions">
+          {((role === 'ADMIN') || (currentRole === 'ADMIN')) && (
+            <button className={`page-btn${reorderMode ? ' active' : ''}`} onClick={() => setReorderMode(m => !m)}>
+              {reorderMode ? (<><FaTimes /> Exit Reorder</>) : (<><FaArrowsAlt /> Reorder</>)}
+            </button>
+          )}
+          {reorderMode && (
+            <>
+              <button className="page-btn" onClick={saveOrder}><FaSave /> Save Order</button>
+              <button className="page-btn" onClick={cancelOrder}><FaTimes /> Cancel</button>
+            </>
+          )}
+        </div>
+      </div>
       {(!servers || servers.length === 0) && <p className="no-users-message">No servers found. Click "Add New Server" to begin.</p>}
       
       <ul className="server-list">
@@ -87,8 +175,16 @@ function ServerList({ servers, fetchServers }) {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, x: -100, transition: { duration: 0.3 } }}
-              className="server-list-item"
+              className={`server-list-item${reorderMode ? ' draggable' : ''}`}
+              draggable={reorderMode}
+              onDragStart={(e) => onDragStart(e, server.id)}
+              onDragOver={onDragOver}
+              onDrop={(e) => onDrop(e, server.id)}
+              whileHover={reorderMode ? { scale: 1.005 } : undefined}
             >
+              {reorderMode && (
+                <span className="drag-handle" title="Drag to reorder"><FaGripVertical /></span>
+              )}
               <div className="server-info">
                 <Link to={`/servers/${server.id}`} className="server-name-link">
                   <div className="server-name">{server.server_name}</div>
@@ -110,7 +206,7 @@ function ServerList({ servers, fetchServers }) {
                 </div>
               </div>
               <div className="server-actions">
-                { ((role === 'ADMIN') || userServerAdminFor.includes(Number(server.id))) && (
+                { !reorderMode && ((role === 'ADMIN') || userServerAdminFor.includes(Number(server.id))) && (
                   <>
                     <button onClick={() => setServerToEdit(server)} className="icon-btn edit-btn" title="Edit server">
                       <FaCog />
@@ -128,7 +224,7 @@ function ServerList({ servers, fetchServers }) {
         </AnimatePresence>
       </ul>
 
-      {servers && servers.length > pageSize && (
+      {!reorderMode && servers && servers.length > pageSize && (
         <div className="pagination">
           <button className="page-btn" disabled={page === 1} onClick={() => setPage(p => Math.max(1, p - 1))}>Prev</button>
           {Array.from({ length: totalPages }).map((_, idx) => {

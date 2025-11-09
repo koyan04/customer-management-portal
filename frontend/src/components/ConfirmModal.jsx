@@ -1,4 +1,3 @@
-import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 function ConfirmModal({ isOpen, onClose, onConfirm, title, children, confirmLabel = 'Confirm Delete', confirmClassName = 'btn-danger' }) {
