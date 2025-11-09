@@ -2,7 +2,7 @@
 
 A full-stack portal for managing servers and their user accounts, with roles (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and performance features like a materialized view for user status.
 
-Current Version: `cmp ver 1.0.0`
+Current Version: `cmp ver 1.0.1`
 
 Repository: https://github.com/koyan-testpilot/customer-management-portal.git
 
@@ -41,7 +41,7 @@ Run the installer (as root):
 
 ```bash
 # one-liner; clones to /srv/cmp and installs services
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.0/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.1/scripts/install.sh | bash"
 ```
 
 What the script does:

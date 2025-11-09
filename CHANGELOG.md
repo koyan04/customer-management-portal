@@ -12,6 +12,12 @@ All notable changes to this project will be documented in this file.
   - Documentation: installation guide, security notes, upgrade notes
   - Admin matview widget with coalesced refresh and health visibility
 
+## 1.0.1 – 2025-11-10
+
+- Installer enhancement: auto-install Node.js 20.x LTS if missing (Debian/Ubuntu via NodeSource)
+  - Set `CMP_SKIP_NODE_AUTO_INSTALL=1` to disable and require preinstalled Node
+  - Improves first-time install experience on minimal servers
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:

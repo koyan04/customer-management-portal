@@ -2,7 +2,8 @@
 set -euo pipefail
 
 # User Management Portal Installer (certbot + Cloudflare DNS)
-# Requirements: bash, sudo/root, git, curl, node>=18, npm, openssl, systemd, certbot, python3-certbot-dns-cloudflare
+# Requirements: bash, sudo/root, git, curl, openssl, systemd, certbot, python3-certbot-dns-cloudflare
+# Node (>=18) will be auto-installed if missing unless CMP_SKIP_NODE_AUTO_INSTALL=1
 # This script is idempotent where possible; re-running updates missing pieces.
 
 APP_NAME="customer-management-portal"
@@ -23,10 +24,36 @@ err() { echo -e "\033[1;31m$1\033[0m"; }
 die() { err "ERROR: $1"; exit 1; }
 require_root() { [ "$(id -u)" -eq 0 ] || die "Run as root"; }
 
-require_cmd() { command -v "$1" >/dev/null 2>&1 || die "Missing required command: $1"; }
+require_cmd() { command -v "$1" >/dev/null 2>&1 || return 1; }
+
+auto_install_node() {
+  if [ "${CMP_SKIP_NODE_AUTO_INSTALL:-}" = "1" ]; then
+    die "Missing required command: node (auto-install skipped due to CMP_SKIP_NODE_AUTO_INSTALL=1)"
+  fi
+  warn "Node.js not found – attempting automatic install (20.x LTS)."
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || die "NodeSource setup failed"
+    apt-get install -y nodejs || die "Node.js install failed"
+  else
+    die "curl missing; cannot auto-install Node.js"
+  fi
+}
 
 check_deps() {
-  for c in git curl openssl node npm certbot python3; do require_cmd "$c"; done
+  local missing=()
+  for c in git curl openssl certbot python3; do
+    require_cmd "$c" || missing+=("$c")
+  done
+  if [ ${#missing[@]} -gt 0 ]; then
+    die "Missing required commands: ${missing[*]}"
+  fi
+  if ! require_cmd node; then
+    auto_install_node
+  fi
+  if ! require_cmd npm; then
+    warn "npm not found; attempting to install (usually with nodejs package)."
+    apt-get install -y npm || die "npm install failed"
+  fi
 }
 
 prompt_if_empty() {
