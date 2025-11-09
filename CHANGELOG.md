@@ -31,6 +31,15 @@ All notable changes to this project will be documented in this file.
   - `install.sh` reads prompts from /dev/tty (with fallback) and aborts with guidance if no TTY available
   - Prevents variables like ADMIN_USER being unset due to stdin consumed by script body
 
+## 1.0.4 – 2025-11-10
+
+- Fix installer migration failure: add base `users` table creation to migrations
+  - Creates `users` with columns used by API/import/export flows (account_name, service_type, contact, expire_date, quotas, remark, display_pos, server_id)
+  - Adds UNIQUE constraint on `(server_id, account_name)` and index on `server_id`
+  - Keeps later additive migrations (display_pos backfill, service_type backfill) idempotent
+- Add missing permission tables for fresh installs: `viewer_server_permissions`, `server_admin_permissions`
+  - Aligns schema with routes and auth middleware checks
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:
