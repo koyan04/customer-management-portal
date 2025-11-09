@@ -2,7 +2,7 @@
 
 A full-stack portal for managing servers and their user accounts, with roles (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and performance features like a materialized view for user status.
 
-Current Version: `cmp ver 1.0.1`
+Current Version: `cmp ver 1.0.2`
 
 Repository: https://github.com/koyan-testpilot/customer-management-portal.git
 
@@ -40,8 +40,8 @@ Prerequisites: Ubuntu/Debian-like system with sudo/root, Node 18+, npm, PostgreS
 Run the installer (as root):
 
 ```bash
-# one-liner; clones to /srv/cmp and installs services
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.1/scripts/install.sh | bash"
+# Debian/Ubuntu bootstrap: installs prerequisites, then runs the installer
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.2/scripts/bootstrap.sh | bash"
 ```
 
 What the script does:
@@ -181,6 +181,12 @@ Note: For security, prefer downloading to a file, verifying, then executing inst
 - The backend serves the built frontend in production from `frontend/dist`
  - Tests (frontend): Vitest collects only project `*.test|*.spec` files; library test files are excluded for speed
 
+Note: On non-Debian systems, install prerequisites (git, curl, openssl, python3, postgresql, certbot, python3-certbot-dns-cloudflare) and then run the installer directly:
+
+```bash
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.2/scripts/install.sh | bash"
+```
+
 ## Security considerations
 
 Keep production secure by default:
@@ -199,7 +205,7 @@ Keep production secure by default:
 You can pin and verify the installer script:
 
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.1/scripts/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.2/scripts/install.sh
 sha256sum install.sh
 # Optionally export expected hash then run
 export CMP_INSTALL_EXPECTED_SHA256=<paste-output-sha>
