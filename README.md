@@ -2,7 +2,7 @@
 
 A full-stack portal for managing servers and their user accounts, with roles (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and performance features like a materialized view for user status.
 
-Current Version: `cmp ver 1.0.2`
+Current Version: `cmp ver 1.0.3`
 
 Repository: https://github.com/koyan-testpilot/customer-management-portal.git
 
@@ -41,7 +41,7 @@ Run the installer (as root):
 
 ```bash
 # Debian/Ubuntu bootstrap: installs prerequisites, then runs the installer
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.2/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.3/scripts/bootstrap.sh | bash"
 ```
 
 What the script does:
@@ -184,7 +184,7 @@ Note: For security, prefer downloading to a file, verifying, then executing inst
 Note: On non-Debian systems, install prerequisites (git, curl, openssl, python3, postgresql, certbot, python3-certbot-dns-cloudflare) and then run the installer directly:
 
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.2/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.3/scripts/install.sh | bash"
 ```
 
 ## Security considerations
@@ -205,7 +205,7 @@ Keep production secure by default:
 You can pin and verify the installer script:
 
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.2/scripts/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.3/scripts/install.sh
 sha256sum install.sh
 # Optionally export expected hash then run
 export CMP_INSTALL_EXPECTED_SHA256=<paste-output-sha>

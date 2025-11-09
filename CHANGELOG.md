@@ -24,6 +24,13 @@ All notable changes to this project will be documented in this file.
   - New beginner-friendly one-liner in README points to the bootstrap
   - Keeps direct installer path for non-Debian distros
 
+## 1.0.3 – 2025-11-10
+
+- Fix bootstrap & installer interactive prompts when using piping
+  - `bootstrap.sh` now downloads installer to a temp file instead of piping
+  - `install.sh` reads prompts from /dev/tty (with fallback) and aborts with guidance if no TTY available
+  - Prevents variables like ADMIN_USER being unset due to stdin consumed by script body
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:

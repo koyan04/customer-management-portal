@@ -60,19 +60,28 @@ prompt_if_empty() {
   local var="$1" message="$2" secret="${3:-false}" default_val="${4:-}";
   local current="${!var:-}";
   if [ -n "$current" ]; then return; fi
+  # Prefer reading from TTY to avoid issues when script is piped via curl | bash
+  local tty_in="/dev/tty"
+  if [ ! -t 0 ] && [ ! -r "$tty_in" ]; then
+    die "Interactive prompt required: $message. Re-run via: curl -fsSL ... -o install.sh && sudo bash install.sh"
+  fi
   while true; do
     if [ -n "$default_val" ]; then
-      read -r -p "$message [$default_val]: " input
+      if [ -r "$tty_in" ]; then
+        read -r -p "$message [$default_val]: " input < "$tty_in"
+      else
+        read -r -p "$message [$default_val]: " input
+      fi
       input="${input:-$default_val}"
     else
-      read -r -p "$message: " input
+      if [ -r "$tty_in" ]; then
+        read -r -p "$message: " input < "$tty_in"
+      else
+        read -r -p "$message: " input
+      fi
     fi
     if [ -n "$input" ]; then
-      if [ "$secret" = true ]; then
-        printf -v $var '%s' "$input"
-      else
-        printf -v $var '%s' "$input"
-      fi
+      printf -v $var '%s' "$input"
       break
     fi
   done
