@@ -41,7 +41,7 @@ Run the installer (as root):
 
 ```bash
 # one-liner; clones to /srv/cmp and installs services
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/main/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.0/scripts/install.sh | bash"
 ```
 
 What the script does:
