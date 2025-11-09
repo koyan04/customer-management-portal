@@ -19,6 +19,41 @@ CREATE TABLE IF NOT EXISTS servers (
   created_at TIMESTAMP DEFAULT now()
 );
 
+-- ==================================================================
+-- Migration added: 2025-11-10 create users table (initial schema)
+-- ==================================================================
+-- Base users table required by subsequent migrations (display_pos, service_type) and import/export logic.
+-- If this table already exists (legacy installs), the CREATE TABLE IF NOT EXISTS will be a no-op.
+-- Columns:
+--   account_name   : user/account identifier within a server (NOT NULL)
+--   service_type   : tier/category (nullable; later backfilled or set via imports)
+--   contact        : free-form contact info (nullable)
+--   expire_date    : subscription/service expiry (nullable)
+--   total_devices  : optional device count quota (nullable)
+--   data_limit_gb  : optional data limit in GB (nullable)
+--   remark         : free-form notes (nullable)
+--   display_pos    : ordering position (added later; included here defensively for idempotency)
+--   created_at     : row creation timestamp
+-- Index/constraints:
+--   UNIQUE(server_id, account_name) for fast upsert-by-name within a server
+--   INDEX on server_id for common filtering
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  account_name TEXT NOT NULL,
+  service_type TEXT,
+  contact TEXT,
+  expire_date TIMESTAMPTZ,
+  total_devices INTEGER,
+  data_limit_gb INTEGER,
+  remark TEXT,
+  display_pos INTEGER,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(server_id, account_name)
+);
+
+CREATE INDEX IF NOT EXISTS users_server_id_idx ON users(server_id);
+
 -- Table that maps editors to servers they may manage
 CREATE TABLE IF NOT EXISTS editor_server_permissions (
   id SERIAL PRIMARY KEY,
@@ -26,6 +61,24 @@ CREATE TABLE IF NOT EXISTS editor_server_permissions (
   server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
   created_at TIMESTAMP DEFAULT now(),
   UNIQUE(editor_id, server_id)
+);
+
+-- Viewer permissions mapping (VIEWER role accounts to servers they can see)
+CREATE TABLE IF NOT EXISTS viewer_server_permissions (
+  id SERIAL PRIMARY KEY,
+  editor_id INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+  server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  created_at TIMESTAMP DEFAULT now(),
+  UNIQUE(editor_id, server_id)
+);
+
+-- Server admin permissions mapping (ADMIN of specific servers; broader than VIEWER)
+CREATE TABLE IF NOT EXISTS server_admin_permissions (
+  id SERIAL PRIMARY KEY,
+  admin_id INTEGER NOT NULL REFERENCES admins(id) ON DELETE CASCADE,
+  server_id INTEGER NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+  created_at TIMESTAMP DEFAULT now(),
+  UNIQUE(admin_id, server_id)
 );
 
 
