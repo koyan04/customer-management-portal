@@ -15,52 +15,7 @@ CREATE TABLE IF NOT EXISTS admins (
 -- Minimal servers table (created if missing) so permissions FK works
 CREATE TABLE IF NOT EXISTS servers (
   id SERIAL PRIMARY KEY,
-  server_name TEXT NOT NULL,
--- Reconcile minimal pre-bootstrap schema (ensure all columns exist if table was created in a prior minimal form)
-DO $$
-BEGIN
-  IF to_regclass('public.users') IS NOT NULL THEN
-    -- Add missing columns if needed (no-op if already present)
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='service_type') THEN
-      ALTER TABLE users ADD COLUMN service_type TEXT;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='contact') THEN
-      ALTER TABLE users ADD COLUMN contact TEXT;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='expire_date') THEN
-      ALTER TABLE users ADD COLUMN expire_date TIMESTAMPTZ;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='total_devices') THEN
-      ALTER TABLE users ADD COLUMN total_devices INTEGER;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='data_limit_gb') THEN
-      ALTER TABLE users ADD COLUMN data_limit_gb INTEGER;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='remark') THEN
-      ALTER TABLE users ADD COLUMN remark TEXT;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='display_pos') THEN
-      ALTER TABLE users ADD COLUMN display_pos INTEGER;
-    END IF;
-    -- Ensure UNIQUE(server_id, account_name) via unique index (safe if constraint missing)
-    BEGIN
-      CREATE UNIQUE INDEX IF NOT EXISTS users_server_account_unique_idx ON users(server_id, account_name);
-    EXCEPTION WHEN undefined_table THEN
-      NULL;
-    END;
-  END IF;
-END$$;
-
-DO $$
-BEGIN
-  IF to_regclass('public.users') IS NOT NULL THEN
-    BEGIN
-      CREATE INDEX IF NOT EXISTS users_server_id_idx ON users(server_id);
-    EXCEPTION WHEN undefined_table THEN
-      NULL;
-    END;
-  END IF;
-END$$;
+  server_name TEXT NOT NULL
 );
 
 -- ==================================================================
@@ -96,17 +51,18 @@ CREATE TABLE IF NOT EXISTS users (
   UNIQUE(server_id, account_name)
 );
 
--- Guard index creation in case users table is missing on mixed-state installs
-DO $$
-BEGIN
-  IF to_regclass('public.users') IS NOT NULL THEN
-    BEGIN
-      CREATE INDEX IF NOT EXISTS users_server_id_idx ON users(server_id);
-    EXCEPTION WHEN undefined_table THEN
-      NULL;
-    END;
-  END IF;
-END$$;
+-- Reconcile minimal pre-bootstrap schema (ensure all user columns exist)
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS service_type TEXT;
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS contact TEXT;
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS expire_date TIMESTAMPTZ;
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS total_devices INTEGER;
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS data_limit_gb INTEGER;
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS remark TEXT;
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS display_pos INTEGER;
+
+-- Ensure indexes/constraints idempotently
+CREATE UNIQUE INDEX IF NOT EXISTS users_server_account_unique_idx ON users(server_id, account_name);
+CREATE INDEX IF NOT EXISTS users_server_id_idx ON users(server_id);
 
 -- Table that maps editors to servers they may manage
 CREATE TABLE IF NOT EXISTS editor_server_permissions (
@@ -192,40 +148,9 @@ CREATE INDEX IF NOT EXISTS idx_refresh_tokens_admin_id ON refresh_tokens(admin_i
 -- Migration added: 2025-10-21 add display_pos to users for stable order
 -- ==================================================================
 
--- Add persistent display position for users so client ordering can be preserved
-DO $$
-BEGIN
-  IF to_regclass('public.users') IS NOT NULL THEN
-    -- Add persistent display position column if missing
-    BEGIN
-      ALTER TABLE users ADD COLUMN IF NOT EXISTS display_pos integer;
-    EXCEPTION WHEN undefined_table THEN
-      -- table still doesn't exist; skip safely
-      NULL;
-    END;
-
-    -- Populate with row_number per server ordered by created_at (older first -> smaller pos)
-    BEGIN
-      WITH numbered AS (
-        SELECT id, ROW_NUMBER() OVER (PARTITION BY server_id ORDER BY created_at ASC) as rn
-        FROM users
-      )
-      UPDATE users u
-      SET display_pos = n.rn
-      FROM numbered n
-      WHERE u.id = n.id AND (u.display_pos IS NULL OR u.display_pos = 0);
-    EXCEPTION WHEN undefined_table THEN
-      NULL;
-    END;
-
-    -- Create index if users table exists
-    BEGIN
-      CREATE INDEX IF NOT EXISTS users_display_pos_idx ON users (server_id, display_pos);
-    EXCEPTION WHEN undefined_table THEN
-      NULL;
-    END;
-  END IF;
-END$$;
+-- Add persistent display position column (safe if exists) and index
+ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS display_pos integer;
+CREATE INDEX IF NOT EXISTS users_display_pos_idx ON users (server_id, display_pos);
 
 -- ==================================================================
 -- Migration added: 2025-10-27 add server_keys table
@@ -249,17 +174,7 @@ CREATE INDEX IF NOT EXISTS server_keys_server_id_idx ON server_keys(server_id);
 -- Non-destructive migration: add `service_type` column and copy values from `account_type` when present.
 ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS service_type text;
 
--- Backfill existing rows where service_type is NULL only if account_type column exists
-DO $$
-BEGIN
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'users' AND column_name = 'account_type'
-  ) THEN
-  EXECUTE 'UPDATE users SET service_type = account_type WHERE service_type IS NULL AND account_type IS NOT NULL';
-  END IF;
-END
-$$;
+-- Note: legacy backfill from account_type is skipped in DO-free mode; safe to ignore on fresh installs.
 
 -- Note: we keep `account_type` for a safe transition. Later you may rename or drop it once all code uses `service_type`.
 

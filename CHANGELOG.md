@@ -105,6 +105,16 @@ All notable changes to this project will be documented in this file.
   - Ensures a unique constraint via a unique index on `(server_id, account_name)` when missing and recreates the `server_id` index idempotently.
   - Fixes seeding failure: `Failed to seed users: column "expire_date" of relation "users" does not exist` observed right after a successful migration on fresh VPS installs.
 
+## 1.0.14 – 2025-11-11
+
+- DO-free migrations hotfix:
+  - Removed PL/pgSQL `DO $$ ... $$` blocks that caused `syntax error at or near "DO"` when a malformed block was injected before the end of a `CREATE TABLE ... servers` statement and when migration runners split statements differently.
+  - Properly closed `servers` table definition and moved schema reconciliation to idempotent SQL:
+    - `ALTER TABLE IF EXISTS users ADD COLUMN IF NOT EXISTS ...` for all expected columns.
+    - `CREATE UNIQUE INDEX IF NOT EXISTS users_server_account_unique_idx` and `CREATE INDEX IF NOT EXISTS users_server_id_idx` after `users` table creation.
+  - Simplified the `display_pos` migration to add the column and index without backfill (non-critical); removed the legacy `service_type` backfill from `account_type` to avoid DO/dynamic SQL.
+  - Outcome: migrations now run without `DO` and avoid parser issues across environments; fresh installs and upgrades proceed cleanly.
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:
