@@ -149,16 +149,22 @@ prompt_if_empty BACKEND_PORT "Backend port" false 3001
 prompt_if_empty ADMIN_USER "Admin username" false admin
 prompt_if_empty ADMIN_PASS "Admin password (will be stored hashed in DB)" true admin123
 
-# Ask whether to set up Nginx unless overridden via env
+# Ask whether to set up Nginx unless overridden via env (robust, works when piped)
 if [ -z "${CMP_ENABLE_NGINX:-}" ]; then
-  read -r -p "Set up Nginx reverse proxy for HTTPS? [Y/n]: " CMP_ENABLE_NGINX
+  # Prefer interactive prompt when a TTY is available
+  if [ -t 0 ] || [ -r "/dev/tty" ]; then
+    if [ -r "/dev/tty" ]; then
+      read -r -p "Set up Nginx reverse proxy for HTTPS? [Y/n]: " CMP_ENABLE_NGINX < "/dev/tty" || true
+    else
+      read -r -p "Set up Nginx reverse proxy for HTTPS? [Y/n]: " CMP_ENABLE_NGINX || true
+    fi
+  fi
   CMP_ENABLE_NGINX=${CMP_ENABLE_NGINX:-Y}
 fi
-if echo "$CMP_ENABLE_NGINX" | grep -iqE '^(y|yes|1|true)$'; then
-  CMP_ENABLE_NGINX=1
-else
-  CMP_ENABLE_NGINX=0
-fi
+case "$(printf '%s' "$CMP_ENABLE_NGINX" | tr '[:upper:]' '[:lower:]')" in
+  y|yes|1|true) CMP_ENABLE_NGINX=1 ;;
+  *) CMP_ENABLE_NGINX=0 ;;
+esac
 
 warn "Primary domain: $DOMAIN"; warn "Additional domains: ${EXTRA_DOMAINS[*]:-(none)}"; warn "Port: $BACKEND_PORT"; warn "Admin user: $ADMIN_USER"
 
