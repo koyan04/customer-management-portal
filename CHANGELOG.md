@@ -47,6 +47,13 @@ All notable changes to this project will be documented in this file.
   - Installer enhancements: optionally checkout a specific ref via `CMP_CHECKOUT_REF` or auto-checkout the latest tag; stop on migration errors
 
 ## 1.0.6 – 2025-11-10
+## 1.0.7 – 2025-11-10
+
+- Installer polish after successful real-world Cloudflare issuance
+  - Adds Cloudflare token & zone preflight verification (informational, non-fatal)
+  - Configurable DNS propagation wait via `CMP_DNS_PROPAGATION_SECONDS` (default 10)
+  - Suppresses noisy Postgres "could not change directory to /root" by running psql from postgres home
+  - Minor output wording improvements
 
 - Installer refinements for smoother TLS issuance and post-install validation
   - Cloudflare credentials file is now always rewritten based on chosen auth mode (Token vs Global Key) to avoid mixed settings that cause 6003 errors

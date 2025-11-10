@@ -23,6 +23,7 @@ set -euo pipefail
 #   CF_AUTH_MODE=token|key                  Pre-select Cloudflare auth mode
 #   CMP_HEALTH_PROBE_RETRIES=10             Health probe attempts (default 6)
 #   CMP_HEALTH_PROBE_INTERVAL=2             Seconds between health probes
+#   CMP_DNS_PROPAGATION_SECONDS=10          Seconds to wait for DNS TXT propagation (Cloudflare plugin)
 #
 # Requirements: bash, sudo/root, git, curl, openssl, systemd, certbot, python3, (python3-certbot-dns-cloudflare for DNS-01)
 # Idempotency: safe to re-run; will skip existing assets & reuse prior configuration.
@@ -217,6 +218,24 @@ fi
 chmod 600 "$CF_CREDS_FILE"
 color "Cloudflare credentials written to $CF_CREDS_FILE"
 
+# Preflight: verify Cloudflare token and zone accessibility when using token auth
+if [ "$CF_AUTH_MODE" = "token" ]; then
+  if command -v curl >/dev/null 2>&1; then
+    color "Verifying Cloudflare API token..."
+    if curl -fsS -H "Authorization: Bearer $CF_API_TOKEN" https://api.cloudflare.com/client/v4/user/tokens/verify >/dev/null; then
+      color "Cloudflare token is valid"
+    else
+      warn "Could not verify Cloudflare token (network or token issue). Proceeding anyway."
+    fi
+    # Best-effort zone check for the exact domain
+    if curl -fsS -H "Authorization: Bearer $CF_API_TOKEN" "https://api.cloudflare.com/client/v4/zones?name=$DOMAIN" | grep -q '"success":true'; then
+      color "Cloudflare zone check: ok for $DOMAIN"
+    else
+      warn "Cloudflare zone not found for $DOMAIN via token (may still work if delegated)."
+    fi
+  fi
+fi
+
 # Install Node dependencies
 color "Installing backend dependencies..."
 (cd "$BACKEND_DIR" && npm install --no-audit --no-fund)
@@ -261,8 +280,9 @@ DB_USER=$(grep '^DB_USER=' "$ENV_FILE" | cut -d= -f2-)
 DB_PASSWORD=$(grep '^DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
 DB_DATABASE=$(grep '^DB_DATABASE=' "$ENV_FILE" | cut -d= -f2-)
 
-sudo -u postgres bash -c "psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'\" | grep -q 1 || psql -c \"CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD';\"" || true
-sudo -u postgres bash -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'\" | grep -q 1 || psql -c \"CREATE DATABASE $DB_DATABASE OWNER $DB_USER;\"" || true
+# Run psql from postgres' home directory to avoid noisy 'could not change directory to /root'
+sudo -u postgres bash -lc "cd; psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'\" | grep -q 1 || psql -c \"CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD';\"" || true
+sudo -u postgres bash -lc "cd; psql -tc \"SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'\" | grep -q 1 || psql -c \"CREATE DATABASE $DB_DATABASE OWNER $DB_USER;\"" || true
 
 color "Running migrations..."
 (cd "$BACKEND_DIR" && node run_migrations.js || die "Migrations failed")
@@ -294,8 +314,11 @@ else
         warn "dns-cloudflare plugin not detected and apt-get unavailable; cert issuance may fail"
       fi
     fi
+    PROP_SECS=${CMP_DNS_PROPAGATION_SECONDS:-10}
     set +e
-    certbot certonly --dns-cloudflare --dns-cloudflare-credentials "$CF_CREDS_FILE" $(build_domain_args) -m "$LE_EMAIL" --agree-tos --non-interactive
+    certbot certonly --dns-cloudflare --dns-cloudflare-credentials "$CF_CREDS_FILE" \
+      --dns-cloudflare-propagation-seconds "$PROP_SECS" \
+      $(build_domain_args) -m "$LE_EMAIL" --agree-tos --non-interactive
     CERT_EXIT=$?
     set -e
     if [ $CERT_EXIT -ne 0 ]; then
