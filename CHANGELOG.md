@@ -98,6 +98,13 @@ All notable changes to this project will be documented in this file.
   - Hardened Nginx enable prompt logic to avoid rare `syntax error near unexpected token 'else'` when the script is piped without a proper TTY or a shell mis-parses the conditional.
   - No functional changes beyond prompt reliability; migrations & JWT improvements from 1.0.11 remain.
 
+## 1.0.13 – 2025-11-11
+
+- Migrations hotfix: reconcile `users` schema after minimal pre-bootstrap
+  - Adds a defensive block in `backend/migrations.sql` to `ALTER TABLE` and add any missing `users` columns if a prior minimal table exists (e.g., `expire_date`, `contact`, `total_devices`, `data_limit_gb`, `remark`, `display_pos`, `service_type`).
+  - Ensures a unique constraint via a unique index on `(server_id, account_name)` when missing and recreates the `server_id` index idempotently.
+  - Fixes seeding failure: `Failed to seed users: column "expire_date" of relation "users" does not exist` observed right after a successful migration on fresh VPS installs.
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:

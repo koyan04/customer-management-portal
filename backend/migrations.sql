@@ -16,7 +16,51 @@ CREATE TABLE IF NOT EXISTS admins (
 CREATE TABLE IF NOT EXISTS servers (
   id SERIAL PRIMARY KEY,
   server_name TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT now()
+-- Reconcile minimal pre-bootstrap schema (ensure all columns exist if table was created in a prior minimal form)
+DO $$
+BEGIN
+  IF to_regclass('public.users') IS NOT NULL THEN
+    -- Add missing columns if needed (no-op if already present)
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='service_type') THEN
+      ALTER TABLE users ADD COLUMN service_type TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='contact') THEN
+      ALTER TABLE users ADD COLUMN contact TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='expire_date') THEN
+      ALTER TABLE users ADD COLUMN expire_date TIMESTAMPTZ;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='total_devices') THEN
+      ALTER TABLE users ADD COLUMN total_devices INTEGER;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='data_limit_gb') THEN
+      ALTER TABLE users ADD COLUMN data_limit_gb INTEGER;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='remark') THEN
+      ALTER TABLE users ADD COLUMN remark TEXT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='display_pos') THEN
+      ALTER TABLE users ADD COLUMN display_pos INTEGER;
+    END IF;
+    -- Ensure UNIQUE(server_id, account_name) via unique index (safe if constraint missing)
+    BEGIN
+      CREATE UNIQUE INDEX IF NOT EXISTS users_server_account_unique_idx ON users(server_id, account_name);
+    EXCEPTION WHEN undefined_table THEN
+      NULL;
+    END;
+  END IF;
+END$$;
+
+DO $$
+BEGIN
+  IF to_regclass('public.users') IS NOT NULL THEN
+    BEGIN
+      CREATE INDEX IF NOT EXISTS users_server_id_idx ON users(server_id);
+    EXCEPTION WHEN undefined_table THEN
+      NULL;
+    END;
+  END IF;
+END$$;
 );
 
 -- ==================================================================
