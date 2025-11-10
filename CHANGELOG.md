@@ -92,6 +92,12 @@ All notable changes to this project will be documented in this file.
   - If the batch execution fails, it now falls back to a robust statement-by-statement mode that respects dollar-quoted blocks and skips only `undefined_table` errors related to `users` while continuing.
   - This eliminates residual edge cases where a stale file order or partial state could still trigger `relation "users" does not exist` mid-run.
 
+## 1.0.12 – 2025-11-10
+
+- Installer robustness hotfix:
+  - Hardened Nginx enable prompt logic to avoid rare `syntax error near unexpected token 'else'` when the script is piped without a proper TTY or a shell mis-parses the conditional.
+  - No functional changes beyond prompt reliability; migrations & JWT improvements from 1.0.11 remain.
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:
