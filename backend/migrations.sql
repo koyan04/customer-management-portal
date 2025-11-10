@@ -52,7 +52,17 @@ CREATE TABLE IF NOT EXISTS users (
   UNIQUE(server_id, account_name)
 );
 
-CREATE INDEX IF NOT EXISTS users_server_id_idx ON users(server_id);
+-- Guard index creation in case users table is missing on mixed-state installs
+DO $$
+BEGIN
+  IF to_regclass('public.users') IS NOT NULL THEN
+    BEGIN
+      CREATE INDEX IF NOT EXISTS users_server_id_idx ON users(server_id);
+    EXCEPTION WHEN undefined_table THEN
+      NULL;
+    END;
+  END IF;
+END$$;
 
 -- Table that maps editors to servers they may manage
 CREATE TABLE IF NOT EXISTS editor_server_permissions (
