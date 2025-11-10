@@ -79,6 +79,13 @@ All notable changes to this project will be documented in this file.
 - Documentation: README updated to clarify JWT secret auto-generation behavior
 - Integrity: updated installer SHA256 baseline
 
+## 1.0.10 – 2025-11-10
+
+- Fix: fresh install migration error `relation "users" does not exist`
+  - Added a defensive pre-bootstrap in `run_migrations.js` to create `admins`, `servers`, and a minimal `users` table before applying `migrations.sql`
+  - Guarded early `users` index creation in `migrations.sql` with a `DO $$ ... $$` block that checks `to_regclass('public.users')`
+  - Result: installer now succeeds even on mixed-state or tag-mismatch scenarios where `users` might not yet exist when indexes are processed
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:
