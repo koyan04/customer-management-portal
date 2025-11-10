@@ -20,6 +20,7 @@ set -euo pipefail
 #   CMP_CERT_DOMAINS="example.com www.example.com"  Additional domains (primary still prompted)
 #   CMP_CERT_HTTP_FALLBACK=1                Attempt standalone HTTP-01 on DNS failure
 #   CMP_SKIP_CERT=1                         Do not issue certificates
+#   CMP_ENABLE_NGINX=1                      Install & configure Nginx reverse proxy for HTTPS (default: prompt)
 #   CF_AUTH_MODE=token|key                  Pre-select Cloudflare auth mode
 #   CMP_HEALTH_PROBE_RETRIES=10             Health probe attempts (default 6)
 #   CMP_HEALTH_PROBE_INTERVAL=2             Seconds between health probes
@@ -147,6 +148,17 @@ prompt_if_empty LE_EMAIL "Enter email for Let's Encrypt notices"
 prompt_if_empty BACKEND_PORT "Backend port" false 3001
 prompt_if_empty ADMIN_USER "Admin username" false admin
 prompt_if_empty ADMIN_PASS "Admin password (will be stored hashed in DB)" true admin123
+
+# Ask whether to set up Nginx unless overridden via env
+if [ -z "${CMP_ENABLE_NGINX:-}" ]; then
+  read -r -p "Set up Nginx reverse proxy for HTTPS? [Y/n]: " CMP_ENABLE_NGINX
+  CMP_ENABLE_NGINX=${CMP_ENABLE_NGINX:-Y}
+fi
+if echo "$CMP_ENABLE_NGINX" | grep -iqE '^(y|yes|1|true)$'; then
+  CMP_ENABLE_NGINX=1
+else
+  CMP_ENABLE_NGINX=0
+fi
 
 warn "Primary domain: $DOMAIN"; warn "Additional domains: ${EXTRA_DOMAINS[*]:-(none)}"; warn "Port: $BACKEND_PORT"; warn "Admin user: $ADMIN_USER"
 
@@ -402,6 +414,82 @@ WantedBy=multi-user.target
 EOF
   systemctl daemon-reload
   systemctl enable $BOT_SERVICE
+fi
+
+# Optional: Install and configure Nginx as reverse proxy for HTTPS
+if [ "$CMP_ENABLE_NGINX" = "1" ]; then
+  if ! command -v nginx >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+      color "Installing nginx..."
+      apt-get update -y || true
+      apt-get install -y nginx || warn "Failed to install nginx"
+    else
+      warn "apt-get not found; skipping nginx installation"
+    fi
+  fi
+  if command -v nginx >/dev/null 2>&1; then
+    color "Configuring nginx for $DOMAIN..."
+    mkdir -p /var/www/letsencrypt
+    NCONF="/etc/nginx/sites-available/cmp-$DOMAIN.conf"
+    cat > "$NCONF" <<EOF
+upstream cmp_backend {
+    server 127.0.0.1:$BACKEND_PORT;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name $DOMAIN;
+
+    ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    location /uploads/ {
+        proxy_pass http://cmp_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        expires 1h;
+        add_header Cache-Control "public";
+    }
+
+    location / {
+        proxy_pass http://cmp_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+EOF
+    ln -sf "$NCONF" "/etc/nginx/sites-enabled/cmp-$DOMAIN.conf"
+    if nginx -t; then
+      systemctl restart nginx
+      color "nginx configured and restarted"
+    else
+      err "nginx configuration test failed; please review $NCONF"
+    fi
+  fi
 fi
 
 # Certbot renewal timer is usually already present; ensure post-renew hook reload if changed

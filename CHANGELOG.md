@@ -48,6 +48,12 @@ All notable changes to this project will be documented in this file.
 
 ## 1.0.6 – 2025-11-10
 ## 1.0.7 – 2025-11-10
+## 1.0.8 – 2025-11-10
+
+- Optional Nginx reverse proxy provisioning in installer
+  - Prompt (or set `CMP_ENABLE_NGINX=1`) to install and configure Nginx
+  - Generates `/etc/nginx/sites-available/cmp-<domain>.conf` using Let's Encrypt certs and proxies to backend port
+  - Enables site and reloads Nginx; includes HTTP->HTTPS redirect and ACME path
 
 - Installer polish after successful real-world Cloudflare issuance
   - Adds Cloudflare token & zone preflight verification (informational, non-fatal)

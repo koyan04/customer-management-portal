@@ -2,7 +2,7 @@
 
 A full-stack portal for managing servers and their user accounts, with roles (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and performance features like a materialized view for user status.
 
-Current Version: `cmp ver 1.0.7`
+Current Version: `cmp ver 1.0.8`
 
 Repository: https://github.com/koyan-testpilot/customer-management-portal.git
 
@@ -41,7 +41,7 @@ Run the installer (as root):
 
 ```bash
 # Debian/Ubuntu bootstrap: installs prerequisites, then runs the installer
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.7/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.8/scripts/bootstrap.sh | bash"
 ```
 
 What the script does:
@@ -51,7 +51,7 @@ What the script does:
 - Writes backend `.env` with your inputs
 - Creates DB user and database (best-effort), runs migrations
 - Seeds admin, four sample servers, and five sample users per server
-- Requests an initial certificate via certbot (Cloudflare DNS). You can include multiple hostnames via `CMP_CERT_DOMAINS` (comma/space separated). If DNS-01 fails, enable fallback with `CMP_CERT_HTTP_FALLBACK=1` to try HTTP-01. Propagation wait can be tuned via `CMP_DNS_PROPAGATION_SECONDS` (default 10).
+- Requests an initial certificate via certbot (Cloudflare DNS). You can include multiple hostnames via `CMP_CERT_DOMAINS` (comma/space separated). If DNS-01 fails, enable fallback with `CMP_CERT_HTTP_FALLBACK=1` to try HTTP-01. Propagation wait can be tuned via `CMP_DNS_PROPAGATION_SECONDS` (default 10). Optionally set up Nginx to terminate HTTPS (prompted; set `CMP_ENABLE_NGINX=1` to auto-enable).
 - Creates and enables `cmp-backend.service` (and `cmp-telegram-bot.service` if present)
 - Ensures a post-renew hook restarts the backend after certificate renewal
 
@@ -184,7 +184,7 @@ Note: For security, prefer downloading to a file, verifying, then executing inst
 Note: On non-Debian systems, install prerequisites (git, curl, openssl, python3, postgresql, certbot, python3-certbot-dns-cloudflare) and then run the installer directly:
 
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.7/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.8/scripts/install.sh | bash"
 ```
 
 ## Security considerations
@@ -205,7 +205,7 @@ Keep production secure by default:
 You can pin and verify the installer script:
 
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.7/scripts/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.8/scripts/install.sh
 sha256sum install.sh
 # Optionally export expected hash then run
 export CMP_INSTALL_EXPECTED_SHA256=<paste-output-sha>
