@@ -31,6 +31,14 @@ const express = require('express');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 
+// Early configuration sanity checks
+try {
+	if (!process.env.JWT_SECRET || String(process.env.JWT_SECRET).trim() === '') {
+		console.warn('[CONFIG] JWT_SECRET is not set. Login and token verification will fail until it is configured.\n' +
+			'If you used the installer, re-run it to auto-generate and append JWT_SECRET to backend/.env, then restart the service.');
+	}
+} catch (_) { /* ignore */ }
+
 let serverRoutes, userRoutes, authRoutes, adminRoutes;
 try {
 	serverRoutes = require('./routes/servers');
