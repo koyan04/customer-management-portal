@@ -269,7 +269,7 @@ CLOUDFLARE_API_TOKEN=${CF_API_TOKEN:-}
 CLOUDFLARE_GLOBAL_KEY=${CF_GLOBAL_KEY:-}
 CLOUDFLARE_ACCOUNT_EMAIL=${CF_ACCOUNT_EMAIL:-}
 START_TELEGRAM_BOT=true
-JWT_SECRET=$(openssl rand -hex 32)
+JWT_SECRET=$(openssl rand -hex 48)
 DB_HOST=localhost
 DB_PORT=5432
 DB_DATABASE=cmp
@@ -281,7 +281,21 @@ EOF
   chmod 600 "$ENV_FILE"
   color ".env created at $ENV_FILE"
 else
-  warn ".env already exists; not overwriting"
+  warn ".env already exists; attempting to ensure JWT_SECRET present"
+  # If JWT_SECRET missing or blank, append a new one (preserve existing settings)
+  if ! grep -q '^JWT_SECRET=' "$ENV_FILE"; then
+    echo "JWT_SECRET=$(openssl rand -hex 48)" >> "$ENV_FILE"
+    color "Appended missing JWT_SECRET to existing .env"
+  else
+    # If present but empty (e.g., JWT_SECRET=), replace line safely
+    current_jwt=$(grep '^JWT_SECRET=' "$ENV_FILE" | cut -d= -f2- || true)
+    if [ -z "${current_jwt}" ]; then
+      # Use temp file to edit in place without risking truncation
+      tmpenv="${ENV_FILE}.tmp.$$"
+      awk -F'=' 'BEGIN{OFS="="} /^JWT_SECRET=/ {print $1,"'$(openssl rand -hex 48)'"; next} {print}' "$ENV_FILE" > "$tmpenv" && mv "$tmpenv" "$ENV_FILE"
+      color "Replaced empty JWT_SECRET with generated value"
+    fi
+  fi
 fi
 
 # Database preparation (PostgreSQL local assumed)

@@ -69,6 +69,16 @@ All notable changes to this project will be documented in this file.
   - Skippable certificate step via `CMP_SKIP_CERT=1`
   - Adds a lightweight `/api/health` probe after services start
 
+## 1.0.9 – 2025-11-10
+
+- Security & robustness: automatic JWT secret generation during install
+  - Installer now ensures `JWT_SECRET` exists in `backend/.env` even if the file already existed
+  - Generates a 48-byte hex secret when missing or blank; preserves existing value if present
+  - Prevents silent login/token verification failures caused by an unset secret on re-installs
+- Startup diagnostics: backend now logs a clear warning if `JWT_SECRET` is missing
+- Documentation: README updated to clarify JWT secret auto-generation behavior
+- Integrity: updated installer SHA256 baseline
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:
