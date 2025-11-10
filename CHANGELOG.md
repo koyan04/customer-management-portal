@@ -46,6 +46,16 @@ All notable changes to this project will be documented in this file.
   - Wrap `display_pos` backfill and index creation in existence checks to avoid failing when `users` table isn't yet created by partial/legacy setups
   - Installer enhancements: optionally checkout a specific ref via `CMP_CHECKOUT_REF` or auto-checkout the latest tag; stop on migration errors
 
+## 1.0.6 – 2025-11-10
+
+- Installer refinements for smoother TLS issuance and post-install validation
+  - Cloudflare credentials file is now always rewritten based on chosen auth mode (Token vs Global Key) to avoid mixed settings that cause 6003 errors
+  - Detects and attempts to install the `dns-cloudflare` plugin (Debian/Ubuntu) if missing
+  - Supports multiple certificate domains via `CMP_CERT_DOMAINS` (comma/space separated)
+  - Optional HTTP-01 fallback (`CMP_CERT_HTTP_FALLBACK=1`) if DNS-01 fails
+  - Skippable certificate step via `CMP_SKIP_CERT=1`
+  - Adds a lightweight `/api/health` probe after services start
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:

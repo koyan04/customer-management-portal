@@ -1,10 +1,31 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# User Management Portal Installer (certbot + Cloudflare DNS)
-# Requirements: bash, sudo/root, git, curl, openssl, systemd, certbot, python3-certbot-dns-cloudflare
-# Node (>=18) will be auto-installed if missing unless CMP_SKIP_NODE_AUTO_INSTALL=1
-# This script is idempotent where possible; re-running updates missing pieces.
+# Customer Management Portal Installer
+# Features:
+#   - Clones & optionally checks out latest tag or a specified ref (CMP_CHECKOUT_REF)
+#   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
+#   - Builds frontend, runs migrations, seeds admin + sample data
+#   - Issues Let's Encrypt certificate (DNS-01 via Cloudflare) for one or more domains
+#   - Optional HTTP-01 fallback if DNS challenge fails (set CMP_CERT_HTTP_FALLBACK=1)
+#   - Supports multiple domains via CMP_CERT_DOMAINS (comma or space separated)
+#   - Skip certificate issuance entirely with CMP_SKIP_CERT=1
+#   - Health probe after startup (/api/health) with summary
+#   - Integrity self-check if CMP_INSTALL_EXPECTED_SHA256 provided
+# Environment Flags (summary):
+#   CMP_CHECKOUT_REF=ref|tag|commit         Force checkout of specific ref
+#   CMP_SKIP_AUTO_CHECKOUT=1                Keep current repo checkout
+#   CMP_SKIP_NODE_AUTO_INSTALL=1            Require preinstalled Node
+#   CMP_INSTALL_EXPECTED_SHA256=<sha>       Verify installer integrity
+#   CMP_CERT_DOMAINS="example.com www.example.com"  Additional domains (primary still prompted)
+#   CMP_CERT_HTTP_FALLBACK=1                Attempt standalone HTTP-01 on DNS failure
+#   CMP_SKIP_CERT=1                         Do not issue certificates
+#   CF_AUTH_MODE=token|key                  Pre-select Cloudflare auth mode
+#   CMP_HEALTH_PROBE_RETRIES=10             Health probe attempts (default 6)
+#   CMP_HEALTH_PROBE_INTERVAL=2             Seconds between health probes
+#
+# Requirements: bash, sudo/root, git, curl, openssl, systemd, certbot, python3, (python3-certbot-dns-cloudflare for DNS-01)
+# Idempotency: safe to re-run; will skip existing assets & reuse prior configuration.
 
 APP_NAME="customer-management-portal"
 REPO_URL="${REPO_URL_OVERRIDE:-https://github.com/koyan-testpilot/customer-management-portal.git}"
@@ -91,7 +112,18 @@ prompt_if_empty() {
 require_root
 check_deps
 
-prompt_if_empty DOMAIN "Enter domain name (FQDN)"
+prompt_if_empty DOMAIN "Enter PRIMARY domain name (FQDN)"
+
+# Parse additional domains from CMP_CERT_DOMAINS (optional). Accept comma or space separators.
+EXTRA_DOMAINS_RAW="${CMP_CERT_DOMAINS:-}"
+EXTRA_DOMAINS=()
+if [ -n "$EXTRA_DOMAINS_RAW" ]; then
+  # Replace commas with spaces then iterate
+  for d in $(echo "$EXTRA_DOMAINS_RAW" | tr ',' ' '); do
+    d_trim=$(echo "$d" | xargs)
+    [ -n "$d_trim" ] && [ "$d_trim" != "$DOMAIN" ] && EXTRA_DOMAINS+=("$d_trim") || true
+  done
+fi
 
 # Choose Cloudflare auth mode: token (recommended) or global API key
 CF_AUTH_MODE=${CF_AUTH_MODE:-}
@@ -115,7 +147,7 @@ prompt_if_empty BACKEND_PORT "Backend port" false 3001
 prompt_if_empty ADMIN_USER "Admin username" false admin
 prompt_if_empty ADMIN_PASS "Admin password (will be stored hashed in DB)" true admin123
 
-warn "Domain: $DOMAIN"; warn "Port: $BACKEND_PORT"; warn "Admin user: $ADMIN_USER"
+warn "Primary domain: $DOMAIN"; warn "Additional domains: ${EXTRA_DOMAINS[*]:-(none)}"; warn "Port: $BACKEND_PORT"; warn "Admin user: $ADMIN_USER"
 
 # Create directories
 mkdir -p "$APP_DIR"
@@ -166,23 +198,24 @@ if [ -d "$APP_DIR/.git" ]; then
   fi
 fi
 
-# Install Cloudflare credentials for certbot
-if [ ! -f "$CF_CREDS_FILE" ]; then
-  if [ "$CF_AUTH_MODE" = "key" ]; then
-    cat > "$CF_CREDS_FILE" <<EOF
+# Install/refresh Cloudflare credentials for certbot (always rewrite to match chosen mode)
+if [ -f "$CF_CREDS_FILE" ]; then
+  cp -f "$CF_CREDS_FILE" "${CF_CREDS_FILE}.bak.$(date +%s)" || true
+fi
+if [ "$CF_AUTH_MODE" = "key" ]; then
+  cat > "$CF_CREDS_FILE" <<EOF
 # Cloudflare Global API Key auth
 dns_cloudflare_email = ${CF_ACCOUNT_EMAIL}
 dns_cloudflare_api_key = ${CF_GLOBAL_KEY}
 EOF
-  else
-    cat > "$CF_CREDS_FILE" <<EOF
+else
+  cat > "$CF_CREDS_FILE" <<EOF
 # Cloudflare API token with DNS edit for the zone of $DOMAIN
 dns_cloudflare_api_token = $CF_API_TOKEN
 EOF
-  fi
-  chmod 600 "$CF_CREDS_FILE"
-  color "Cloudflare credentials written to $CF_CREDS_FILE"
 fi
+chmod 600 "$CF_CREDS_FILE"
+color "Cloudflare credentials written to $CF_CREDS_FILE"
 
 # Install Node dependencies
 color "Installing backend dependencies..."
@@ -241,13 +274,54 @@ if [ -f "$BACKEND_DIR/seedUsers.js" ]; then
   (cd "$BACKEND_DIR" && node seedUsers.js)
 fi
 
-# Issue certificate if none exists
-CERT_PATH="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
-if [ ! -f "$CERT_PATH" ]; then
-  color "Requesting initial certificate via certbot (Cloudflare DNS)..."
-  certbot certonly --dns-cloudflare --dns-cloudflare-credentials "$CF_CREDS_FILE" -d "$DOMAIN" -m "$LE_EMAIL" --agree-tos --non-interactive || die "Certbot issuance failed"
+# Certificate issuance (DNS-01 via Cloudflare, optional HTTP fallback)
+CERT_PRIMARY_PATH="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+ALL_DOMAINS=("$DOMAIN" "${EXTRA_DOMAINS[@]}")
+build_domain_args() { for host in "${ALL_DOMAINS[@]}"; do printf -- " -d %s" "$host"; done; }
+
+if [ "${CMP_SKIP_CERT:-}" = "1" ]; then
+  warn "Skipping certificate issuance per CMP_SKIP_CERT=1"
 else
-  warn "Certificate already present; skipping issuance"
+  if [ ! -f "$CERT_PRIMARY_PATH" ]; then
+    color "Requesting certificate (DNS-01 Cloudflare) for: ${ALL_DOMAINS[*]}"
+    # Ensure dns-cloudflare plugin present (Debian/Ubuntu best-effort)
+    if ! certbot plugins 2>/dev/null | grep -q dns-cloudflare; then
+      if command -v apt-get >/dev/null 2>&1; then
+        warn "dns-cloudflare plugin missing – attempting apt install..."
+        apt-get update -y || true
+        apt-get install -y python3-certbot-dns-cloudflare || warn "Failed to install python3-certbot-dns-cloudflare; proceeding (may fail)"
+      else
+        warn "dns-cloudflare plugin not detected and apt-get unavailable; cert issuance may fail"
+      fi
+    fi
+    set +e
+    certbot certonly --dns-cloudflare --dns-cloudflare-credentials "$CF_CREDS_FILE" $(build_domain_args) -m "$LE_EMAIL" --agree-tos --non-interactive
+    CERT_EXIT=$?
+    set -e
+    if [ $CERT_EXIT -ne 0 ]; then
+      err "DNS-01 issuance failed (exit $CERT_EXIT)"
+      if [ "${CMP_CERT_HTTP_FALLBACK:-}" = "1" ]; then
+        warn "Attempting HTTP-01 fallback (standalone)..."
+        # Stop backend to free :80 if running
+        systemctl stop $BACKEND_SERVICE 2>/dev/null || true
+        set +e
+        certbot certonly --standalone $(build_domain_args) -m "$LE_EMAIL" --preferred-challenges http --agree-tos --non-interactive
+        FB_EXIT=$?
+        set -e
+        if [ $FB_EXIT -ne 0 ]; then
+          die "HTTP-01 fallback also failed (exit $FB_EXIT)"
+        else
+          color "HTTP-01 fallback succeeded"
+        fi
+      else
+        die "Certificate issuance failed (DNS-01) and fallback disabled (set CMP_CERT_HTTP_FALLBACK=1 to enable)"
+      fi
+    else
+      color "Certificate issuance succeeded"
+    fi
+  else
+    warn "Certificate already present for $DOMAIN; skipping issuance"
+  fi
 fi
 
 # Systemd service files (only create if absent to allow manual edits)
@@ -331,7 +405,24 @@ if systemctl list-unit-files | grep -q "$BOT_SERVICE"; then
   systemctl restart $BOT_SERVICE || true
 fi
 
+# Health probe
+PROBE_RETRIES=${CMP_HEALTH_PROBE_RETRIES:-6}
+PROBE_INTERVAL=${CMP_HEALTH_PROBE_INTERVAL:-2}
+color "Probing backend health (retries=$PROBE_RETRIES interval=${PROBE_INTERVAL}s)..."
+probe_ok=0
+for i in $(seq 1 $PROBE_RETRIES); do
+  if curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/health" >/dev/null 2>&1; then
+    probe_ok=1; break; fi
+  sleep "$PROBE_INTERVAL"
+done
+if [ $probe_ok -eq 1 ]; then
+  color "Health probe: OK"
+else
+  warn "Health probe failed (no successful /api/health in $PROBE_RETRIES attempts)"
+fi
+
 color "Installation complete"
-echo "Domain: https://$DOMAIN"
+echo "Primary domain: https://$DOMAIN"
+echo "All domains: ${ALL_DOMAINS[*]}"
 echo "Backend service: $BACKEND_SERVICE (port $BACKEND_PORT)"
 echo "Admin credentials: $ADMIN_USER / $ADMIN_PASS"
