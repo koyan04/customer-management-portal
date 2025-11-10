@@ -2,7 +2,7 @@
 
 A full-stack portal for managing servers and their user accounts, with roles (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and performance features like a materialized view for user status.
 
-Current Version: `cmp ver 1.0.10`
+Current Version: `cmp ver 1.0.11`
 
 Repository: https://github.com/koyan-testpilot/customer-management-portal.git
 
@@ -51,6 +51,7 @@ What the script does:
 - Writes backend `.env` with your inputs
 - Ensures `JWT_SECRET` exists in `backend/.env` (auto-generates if missing)
 - Creates DB user and database (best-effort), runs migrations
+  - The migration runner includes a sequential fallback to recover if a batch fails unexpectedly
 - Seeds admin, four sample servers, and five sample users per server
 - Requests an initial certificate via certbot (Cloudflare DNS). You can include multiple hostnames via `CMP_CERT_DOMAINS` (comma/space separated). If DNS-01 fails, enable fallback with `CMP_CERT_HTTP_FALLBACK=1` to try HTTP-01. Propagation wait can be tuned via `CMP_DNS_PROPAGATION_SECONDS` (default 10). Optionally set up Nginx to terminate HTTPS (prompted; set `CMP_ENABLE_NGINX=1` to auto-enable).
 - Creates and enables `cmp-backend.service` (and `cmp-telegram-bot.service` if present)
