@@ -86,6 +86,12 @@ All notable changes to this project will be documented in this file.
   - Guarded early `users` index creation in `migrations.sql` with a `DO $$ ... $$` block that checks `to_regclass('public.users')`
   - Result: installer now succeeds even on mixed-state or tag-mismatch scenarios where `users` might not yet exist when indexes are processed
 
+## 1.0.11 – 2025-11-10
+
+- Further hardening of migration runner:
+  - If the batch execution fails, it now falls back to a robust statement-by-statement mode that respects dollar-quoted blocks and skips only `undefined_table` errors related to `users` while continuing.
+  - This eliminates residual edge cases where a stale file order or partial state could still trigger `relation "users" does not exist` mid-run.
+
 ## 2025-11-08
 
 - Removed the entire "Frontend Dev Port" feature across backend and frontend:
