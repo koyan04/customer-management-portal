@@ -431,7 +431,7 @@ if [ "$CMP_ENABLE_NGINX" = "1" ]; then
     color "Configuring nginx for $DOMAIN..."
     mkdir -p /var/www/letsencrypt
     NCONF="/etc/nginx/sites-available/cmp-$DOMAIN.conf"
-    cat > "$NCONF" <<EOF
+  cat > "$NCONF" <<EOF
 upstream cmp_backend {
     server 127.0.0.1:$BACKEND_PORT;
     keepalive 32;
@@ -446,8 +446,8 @@ server {
         root /var/www/letsencrypt;
     }
 
-    location / {
-        return 301 https://$host$request_uri;
+  location / {
+    return 301 https://\$host\$request_uri;
     }
 }
 
@@ -461,25 +461,25 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;
 
-    location /uploads/ {
-        proxy_pass http://cmp_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        expires 1h;
-        add_header Cache-Control "public";
-    }
+  location /uploads/ {
+    proxy_pass http://cmp_backend;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    expires 1h;
+    add_header Cache-Control "public";
+  }
 
-    location / {
-        proxy_pass http://cmp_backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
+  location / {
+    proxy_pass http://cmp_backend;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+  }
 }
 EOF
     ln -sf "$NCONF" "/etc/nginx/sites-enabled/cmp-$DOMAIN.conf"
