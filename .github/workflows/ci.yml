@@ -22,6 +22,9 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
+      - name: Release requirement checks
+        run: bash scripts/ci/check_release_requirements.sh
+
       - name: Compute installer hash
         id: installer_hash
         run: |

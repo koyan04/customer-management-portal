@@ -13,7 +13,7 @@ installer or manage TLS via certbot (use win-acme or Cloudflare origin certs ins
 
 Usage (run as Administrator in PowerShell):
     Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-    .\install-windows.ps1 -InstallDir C:\srv\cmp -RepoUrl https://github.com/koyan-testpilot/customer-management-portal.git
+    .\install-windows.ps1 -InstallDir C:\srv\cmp -RepoUrl https://github.com/koyan04/customer-management-portal.git
 
 Parameters:
     -InstallDir  Directory to install the project (default: C:\srv\cmp)
@@ -24,7 +24,7 @@ Parameters:
 
 param(
     [string]$InstallDir = "C:\\srv\\cmp",
-    [string]$RepoUrl = 'https://github.com/koyan-testpilot/customer-management-portal.git',
+    [string]$RepoUrl = 'https://github.com/koyan04/customer-management-portal.git',
     [switch]$NonInteractive,
     [switch]$InstallPostgres,
     [string]$DBName = 'cmp',

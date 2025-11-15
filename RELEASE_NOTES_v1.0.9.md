@@ -22,6 +22,10 @@ Backend emits a clear warning on process start when `JWT_SECRET` is unset, guidi
 - Existing valid `JWT_SECRET` values are retained.
 - After adding the secret, old access tokens become invalid—users should log in again.
 
+```bash
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.9/scripts/install.sh | bash"
+```
+
 ## Security Considerations
 - Generated secret length increased (48 bytes / 96 hex chars) for stronger entropy.
 - Consider periodically rotating `JWT_SECRET` and invalidating refresh tokens if a compromise is suspected.

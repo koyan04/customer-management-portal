@@ -14,6 +14,10 @@ Date: 2025-11-10
   - To stick to a specific release: set `CMP_CHECKOUT_REF=v1.0.5` in the environment before running the installer.
   - Or rely on the installer to auto-select the latest tag.
 
+```bash
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.5/scripts/install.sh | bash"
+```
+
 ## Notes
 
 - No changes to `scripts/install.sh` integrity baseline are required unless you enforce a hash in CI; if you do, update the baseline accordingly.

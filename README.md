@@ -4,7 +4,7 @@ A full-stack portal for managing servers and their user accounts, with roles (Ad
 
 Current Version: `cmp ver 1.0.14`
 
-Repository: https://github.com/koyan-testpilot/customer-management-portal.git
+Repository: https://github.com/koyan04/customer-management-portal.git
 
 ## Features
 
@@ -42,7 +42,7 @@ Run the installer (as root):
 
 ```bash
 # Debian/Ubuntu bootstrap: installs prerequisites, then runs the installer
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.8/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.14/scripts/bootstrap.sh | bash"
 ```
 
 What the script does:
@@ -95,7 +95,7 @@ Example (run as Administrator PowerShell):
 
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
-.\scripts\install-windows.ps1 -InstallDir C:\srv\cmp -RepoUrl https://github.com/koyan-testpilot/customer-management-portal.git
+.\scripts\install-windows.ps1 -InstallDir C:\srv\cmp -RepoUrl https://github.com/koyan04/customer-management-portal.git
 ```
 
 After running the helper:
@@ -248,7 +248,7 @@ Example:
 
 ```bash
 # Download and verify
-curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/feature/admins-audit-redact/scripts/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/feature/admins-audit-redact/scripts/install.sh
 sha256sum install.sh
 export CMP_INSTALL_EXPECTED_SHA256=<paste-the-sha256>
 sudo bash install.sh
@@ -266,7 +266,7 @@ Note: For security, prefer downloading to a file, verifying, then executing inst
 Note: On non-Debian systems, install prerequisites (git, curl, openssl, python3, postgresql, certbot, python3-certbot-dns-cloudflare) and then run the installer directly:
 
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.8/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.14/scripts/install.sh | bash"
 ```
 
 ## Security considerations
@@ -287,7 +287,7 @@ Keep production secure by default:
 You can pin and verify the installer script:
 
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.8/scripts/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.14/scripts/install.sh
 sha256sum install.sh
 # Optionally export expected hash then run
 export CMP_INSTALL_EXPECTED_SHA256=<paste-output-sha>
@@ -423,7 +423,7 @@ Clients querying `/api/health` will see:
 
 ## Repository
 
-- Issues and contributions welcome via: https://github.com/koyan-testpilot/customer-management-portal
+- Issues and contributions welcome via: https://github.com/koyan04/customer-management-portal
 
 ## Release notes (quick)
 

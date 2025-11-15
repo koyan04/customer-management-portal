@@ -23,10 +23,10 @@ There are no functional changes besides improved reliability. All migration and 
 ### Usage
 Pinned one-liner (direct installer):
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.12/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.12/scripts/install.sh | bash"
 ```
 
 Or force tag checkout explicitly:
 ```bash
-sudo bash -lc "CMP_CHECKOUT_REF=v1.0.12 curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.12/scripts/install.sh | bash"
+sudo bash -lc "CMP_CHECKOUT_REF=v1.0.12 curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.12/scripts/install.sh | bash"
 ```

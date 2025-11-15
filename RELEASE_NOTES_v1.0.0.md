@@ -13,7 +13,7 @@ Initial public release.
 One-liner (immutable tag):
 
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.0/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.0/scripts/install.sh | bash"
 ```
 
 ## Upgrade notes (pre-1.0 → 1.0.0)

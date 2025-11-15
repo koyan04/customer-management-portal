@@ -8,12 +8,12 @@ Patch release fixing interactive installer prompts for beginners.
 
 ## Recommended one-liner (Debian/Ubuntu)
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.3/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.3/scripts/bootstrap.sh | bash"
 ```
 
 ## Direct installer (non-Debian)
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.3/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.3/scripts/install.sh | bash"
 ```
 
 ## Changelog excerpt

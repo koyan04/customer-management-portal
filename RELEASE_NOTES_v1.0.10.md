@@ -16,6 +16,10 @@ Fresh installs no longer fail with missing `users` relation; the full schema (in
 - For failed installs on v1.0.9: simply re-run the installer after pulling v1.0.10 (or run `node backend/run_migrations.js` on the host). No manual SQL required.
 - Existing deployments are unaffected; changes are additive and idempotent.
 
+```bash
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.10/scripts/install.sh | bash"
+```
+
 ### Files Changed
 - `backend/run_migrations.js`
 - `backend/migrations.sql`

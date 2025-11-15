@@ -24,6 +24,10 @@ If you failed previously with `syntax error at or near "DO"`:
 2. Run migrations again: `node backend/run_migrations.js`.
 3. Rerun seeding scripts if needed: `node backend/seedUsers.js`.
 
+```bash
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.14/scripts/install.sh | bash"
+```
+
 ## Manual Backfill (Optional)
 If you previously used `account_type` and want to populate `service_type`:
 ```sql

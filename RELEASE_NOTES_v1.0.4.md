@@ -17,3 +17,9 @@ Date: 2025-11-10
 ## Integrity
 
 - No changes to installer script content in this patch; the existing SHA256 baseline remains valid.
+
+## Install
+
+```bash
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.4/scripts/install.sh | bash"
+```

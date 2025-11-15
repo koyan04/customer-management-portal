@@ -26,7 +26,7 @@ Installer
 ---------
 - README one-liner currently points to the immutable `v1.0.0` tag to avoid 404s until `main` is updated:
   
-  curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.0/scripts/install.sh | bash
+  curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.0/scripts/install.sh | bash
 
 - After merging to `main`, we can optionally switch the README one-liner back to the `main` branch URL.
 

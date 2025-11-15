@@ -25,5 +25,9 @@ Key updates:
      - `node backend/seedUsers.js`
 - Alternatively, re-run the installer one-liner pinned to `v1.0.13`; it is idempotent and will apply the new migration and seed data.
 
+```bash
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.13/scripts/install.sh | bash"
+```
+
 ## Integrity
 - No changes to the installer script in this release; only the migrations were updated.

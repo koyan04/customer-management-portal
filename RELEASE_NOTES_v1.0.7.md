@@ -16,18 +16,18 @@ Following a successful real VPS run and DNS-01 issuance, this patch release refi
 
 Bootstrap (Debian/Ubuntu):
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.7/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.7/scripts/bootstrap.sh | bash"
 ```
 
 Direct installer:
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.7/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.7/scripts/install.sh | bash"
 ```
 
 Tune DNS propagation wait:
 ```bash
 export CMP_DNS_PROPAGATION_SECONDS=20
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.7/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.7/scripts/install.sh | bash"
 ```
 
 ## Upgrade Notes
@@ -40,7 +40,7 @@ sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/cust
 
 Download and verify:
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.7/scripts/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.7/scripts/install.sh
 sha256sum install.sh
 ```
 Then optionally export `CMP_INSTALL_EXPECTED_SHA256` before running.

@@ -30,7 +30,7 @@ set -euo pipefail
 # Idempotency: safe to re-run; will skip existing assets & reuse prior configuration.
 
 APP_NAME="customer-management-portal"
-REPO_URL="${REPO_URL_OVERRIDE:-https://github.com/koyan-testpilot/customer-management-portal.git}"
+REPO_URL="${REPO_URL_OVERRIDE:-https://github.com/koyan04/customer-management-portal.git}"
 APP_DIR="/srv/cmp"
 BACKEND_DIR="$APP_DIR/backend"
 FRONTEND_DIR="$APP_DIR/frontend"

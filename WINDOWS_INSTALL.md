@@ -95,7 +95,7 @@ Choose an install folder, e.g., `C:\srv\cmp`:
 $InstallDir = 'C:\srv\cmp'
 New-Item -ItemType Directory -Path $InstallDir -Force
 cd $InstallDir
-git clone https://github.com/koyan-testpilot/customer-management-portal.git .
+git clone https://github.com/koyan04/customer-management-portal.git .
 ```
 
 Install backend dependencies and build frontend:

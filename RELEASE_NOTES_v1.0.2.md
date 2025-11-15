@@ -9,12 +9,12 @@ Patch release adding a beginner-friendly Debian/Ubuntu bootstrap script.
 
 ## Bootstrap one-liner
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.2/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.2/scripts/bootstrap.sh | bash"
 ```
 
 ## Direct installer (non-Debian)
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.2/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.2/scripts/install.sh | bash"
 ```
 
 ## Changelog excerpt

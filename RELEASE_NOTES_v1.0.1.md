@@ -8,7 +8,7 @@ Patch release focusing on improved first-time installation ergonomics.
 
 ## Install (updated one-liner)
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.1/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.1/scripts/install.sh | bash"
 ```
 
 ## Changelog excerpt

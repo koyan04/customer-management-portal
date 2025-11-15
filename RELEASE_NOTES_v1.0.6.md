@@ -23,20 +23,20 @@ This release focuses on making first‑time installs and re‑installs smoother,
 Debian/Ubuntu (prereqs + installer):
 
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.6/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.6/scripts/bootstrap.sh | bash"
 ```
 
 Direct installer (non‑Debian distros):
 
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.6/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.6/scripts/install.sh | bash"
 ```
 
 To pin a specific tag during installation:
 
 ```bash
 export CMP_CHECKOUT_REF=v1.0.6
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.6/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.6/scripts/install.sh | bash"
 ```
 
 To issue a multi‑domain certificate and enable HTTP fallback if DNS fails:
@@ -44,7 +44,7 @@ To issue a multi‑domain certificate and enable HTTP fallback if DNS fails:
 ```bash
 export CMP_CERT_DOMAINS="www.example.com api.example.com"
 export CMP_CERT_HTTP_FALLBACK=1
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.6/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.6/scripts/install.sh | bash"
 ```
 
 ## Upgrade notes

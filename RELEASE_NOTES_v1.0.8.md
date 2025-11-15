@@ -14,12 +14,12 @@ Fresh installs succeeded but HTTPS page didn’t load because nothing listened o
 
 Bootstrap:
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.8/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.8/scripts/bootstrap.sh | bash"
 ```
 
 Direct install with Nginx:
 ```bash
-sudo bash -lc "export CMP_ENABLE_NGINX=1; curl -fsSL https://raw.githubusercontent.com/koyan-testpilot/customer-management-portal/v1.0.8/scripts/install.sh | bash"
+sudo bash -lc "export CMP_ENABLE_NGINX=1; curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.8/scripts/install.sh | bash"
 ```
 
 ## Notes
