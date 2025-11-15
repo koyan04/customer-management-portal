@@ -82,6 +82,14 @@ export default function SettingsPage() {
   const [statusMsg, setStatusMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [dbStatus, setDbStatus] = useState(null);
+  // Restore UI state
+  const [restoreFileConfig, setRestoreFileConfig] = useState(null);
+  const [restoreFileDB, setRestoreFileDB] = useState(null);
+  const [restoreFileSnapshot, setRestoreFileSnapshot] = useState(null);
+  const [restoreInProgress, setRestoreInProgress] = useState(false);
+  const [restoreProgress, setRestoreProgress] = useState(0);
+  const [restoreMessage, setRestoreMessage] = useState('');
+  const [restoreError, setRestoreError] = useState('');
 
   // helpers
   const showMsg = useCallback((msg) => { setStatusMsg(msg); setTimeout(() => setStatusMsg(''), 4000); }, []);
@@ -467,6 +475,48 @@ export default function SettingsPage() {
     } finally { setBusy(false); }
   };
 
+  const startRestore = async (url, file) => {
+    if (!file) return;
+    setRestoreInProgress(true);
+    setRestoreProgress(0);
+    setRestoreMessage('');
+    setRestoreError('');
+    try {
+      const form = new FormData();
+      form.append('file', file, file.name);
+      const config = { headers: { ...authHeaders } };
+      // Only include onUploadProgress when the XHR upload API is available (some test envs lack it)
+      try {
+        const supportsXhrUpload = typeof window !== 'undefined' && window.XMLHttpRequest && window.XMLHttpRequest.prototype && window.XMLHttpRequest.prototype.upload && typeof window.XMLHttpRequest.prototype.upload.addEventListener === 'function';
+        if (supportsXhrUpload) {
+          config.onUploadProgress = (ev) => {
+            try {
+              const pct = ev.total ? Math.round((ev.loaded / ev.total) * 100) : null;
+              if (pct !== null) setRestoreProgress(pct);
+            } catch (_) {}
+          };
+        }
+      } catch (_) {}
+      const res = await axios.post(url, form, config);
+      const msg = res?.data?.msg || (res?.data ? JSON.stringify(res.data) : 'Restore completed');
+      setRestoreMessage(String(msg));
+      // show success then reload page after brief pause
+      setTimeout(() => {
+        try { window.location.reload(); } catch (_) {}
+      }, 1600);
+    } catch (err) {
+      const errMsg = err.response?.data?.msg || err.response?.data?.error || err.message || 'Restore failed';
+      setRestoreError(String(errMsg));
+    } finally {
+      setRestoreInProgress(false);
+      setRestoreProgress(0);
+      // clear selected file to allow re-select
+      setTimeout(() => {
+        setRestoreFileConfig(null); setRestoreFileDB(null); setRestoreFileSnapshot(null);
+      }, 400);
+    }
+  };
+
   // Let server generate crisp 1x/2x; no client downscaling to avoid double compression
   const passThrough = async (file) => file;
 
@@ -575,6 +625,35 @@ export default function SettingsPage() {
 
       <div className="settings-content">
         {statusMsg && <div className="settings-status" role="status" aria-live="polite">{statusMsg}</div>}
+
+        {/* Restore progress modal (moved out of Telegram tab so it is global) */}
+        {(restoreInProgress || restoreMessage || restoreError) && (
+          <div role="dialog" aria-live="polite" aria-modal style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
+            <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.45)' }} onClick={() => { if (!restoreInProgress) { setRestoreMessage(''); setRestoreError(''); } }} />
+            <div style={{ width: 520, maxWidth: '92%', background: 'var(--panel-bg, #0f1720)', borderRadius: 12, padding: '1rem', boxShadow: '0 10px 30px rgba(0,0,0,0.6)', color: 'var(--text-color,#fff)', zIndex: 10000 }}>
+              <h3 style={{ margin: '0 0 0.5rem 0' }}>{restoreInProgress ? 'Restoring…' : (restoreError ? 'Restore failed' : 'Restore complete')}</h3>
+              <div style={{ marginBottom: '0.75rem' }}>
+                {restoreInProgress ? (
+                  <div>
+                    <div style={{ height: 12, width: '100%', background: 'rgba(255,255,255,0.06)', borderRadius: 6, overflow: 'hidden' }}>
+                      <div style={{ height: '100%', width: `${restoreProgress}%`, background: 'linear-gradient(90deg,#37b24d,#8ce99a)', transition: 'width .25s ease' }} />
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: '0.9rem', opacity: 0.9 }}>{restoreProgress}% uploaded</div>
+                  </div>
+                ) : restoreMessage ? (
+                  <div role="status" style={{ fontSize: '0.95rem' }}>{restoreMessage}</div>
+                ) : restoreError ? (
+                  <div role="alert" style={{ color: '#ffb4b4' }}>{restoreError}</div>
+                ) : null}
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
+                {!restoreInProgress && (
+                  <button className="btn" onClick={() => { setRestoreMessage(''); setRestoreError(''); }}>Close</button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {tab === 'general' && (
           <div role="tabpanel" id="panel-general" aria-labelledby="tab-general" className="tab-panel">
@@ -911,18 +990,30 @@ export default function SettingsPage() {
                 } finally { setBusy(false); }
               }}>Backup Now</button>
             </div>
-            <div className="form-grid" style={{ marginTop: '0.5rem' }}>
+              <div className="form-grid" style={{ marginTop: '0.5rem' }}>
               <label className="full">
                 <span>Restore Config (config.json)</span>
-                <input type="file" accept="application/json,.json" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(backendOrigin + '/api/admin/restore/config', f); e.target.value = ''; }} />
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input aria-label="Restore Config" type="file" accept="application/json,.json" onChange={(e) => { const f = e.target.files?.[0]; if (f) setRestoreFileConfig(f); e.target.value = ''; }} />
+                  <button className="btn primary" disabled={!restoreFileConfig || restoreInProgress} onClick={() => startRestore(backendOrigin + '/api/admin/restore/config', restoreFileConfig)}>Restore</button>
+                  {restoreFileConfig && <small style={{ opacity: 0.85 }}>{restoreFileConfig.name}</small>}
+                </div>
               </label>
               <label className="full">
                 <span>Restore Database (.db)</span>
-                <input type="file" accept=".db" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(backendOrigin + '/api/admin/restore/db', f); e.target.value = ''; }} />
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input aria-label="Restore Database" type="file" accept=".db" onChange={(e) => { const f = e.target.files?.[0]; if (f) setRestoreFileDB(f); e.target.value = ''; }} />
+                  <button className="btn primary" disabled={!restoreFileDB || restoreInProgress} onClick={() => startRestore(backendOrigin + '/api/admin/restore/db', restoreFileDB)}>Restore</button>
+                  {restoreFileDB && <small style={{ opacity: 0.85 }}>{restoreFileDB.name}</small>}
+                </div>
               </label>
               <label className="full">
                 <span>Restore Telegram Snapshot (JSON)</span>
-                <input type="file" accept="application/json,.json" onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadFile(backendOrigin + '/api/admin/restore/snapshot', f); e.target.value = ''; }} />
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input aria-label="Restore Telegram Snapshot (JSON)" type="file" accept="application/json,.json" onChange={(e) => { const f = e.target.files?.[0]; if (f) setRestoreFileSnapshot(f); e.target.value = ''; }} />
+                  <button className="btn primary" disabled={!restoreFileSnapshot || restoreInProgress} onClick={() => startRestore(backendOrigin + '/api/admin/restore/snapshot', restoreFileSnapshot)}>Restore</button>
+                  {restoreFileSnapshot && <small style={{ opacity: 0.85 }}>{restoreFileSnapshot.name}</small>}
+                </div>
               </label>
             </div>
           </div>
@@ -1031,6 +1122,7 @@ export default function SettingsPage() {
                     <span style={{ marginLeft: '0.35rem' }}>{statusRefreshing ? 'Refreshing…' : 'Refresh'}</span>
                   </button>
                 </div>
+                
               </div>
             </div>
             <div className="form-grid">

@@ -1209,11 +1209,23 @@ router.get('/backup/config', authenticateToken, isAdmin, async (req, res) => {
 router.post('/restore/config', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
   const parseBody = () => {
     try {
-      if (req.file && req.file.buffer) return JSON.parse(req.file.buffer.toString('utf8'));
+      if (req.file) {
+        if (req.file.buffer) return JSON.parse(req.file.buffer.toString('utf8'));
+        if (req.file.path) {
+          try {
+            const content = fs.readFileSync(req.file.path);
+            return JSON.parse(content.toString('utf8'));
+          } catch (e) {
+            // fallthrough to body
+          }
+        }
+      }
       return req.body && typeof req.body === 'object' ? req.body : null;
     } catch (e) { return null; }
   };
   const data = parseBody();
+  // cleanup uploaded temp file if multer saved it to disk
+  try { if (req.file && req.file.path) { try { fs.unlinkSync(req.file.path); } catch (_) {} } } catch(_) {}
   if (!data || data.type !== 'config-backup-v1') return res.status(400).json({ msg: 'Invalid config backup format' });
   const client = await pool.connect();
   try {
@@ -1334,20 +1346,31 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
 // POST restore snapshot compatible with Telegram bot backup (cmp-backup-*.json)
 // Merge-only, safe subset. Accepts multipart upload (file) or raw JSON body.
 router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
-  // Parse JSON from uploaded file or body
-  let data = null;
+  const tmpUploadPath = req.file && req.file.path ? req.file.path : null;
   try {
-    if (req.file && req.file.buffer) data = JSON.parse(req.file.buffer.toString('utf8'));
-    else if (req.body && typeof req.body === 'object') data = req.body;
-  } catch (e) {
-    return res.status(400).json({ msg: 'Invalid JSON' });
-  }
-  if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.users))) {
-    return res.status(400).json({ msg: 'Invalid snapshot format' });
-  }
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+    // Parse JSON from uploaded file or body
+    let data = null;
+    try {
+      if (req.file) {
+        try {
+          if (req.file.buffer) data = JSON.parse(req.file.buffer.toString('utf8'));
+          else if (req.file.path) data = JSON.parse(fs.readFileSync(req.file.path).toString('utf8'));
+        } catch (e) {
+          return res.status(400).json({ msg: 'Invalid JSON' });
+        }
+      } else if (req.body && typeof req.body === 'object') {
+        data = req.body;
+      }
+    } catch (e) {
+      return res.status(400).json({ msg: 'Invalid JSON' });
+    }
+
+    if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.users))) {
+      return res.status(400).json({ msg: 'Invalid snapshot format' });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
     // app_settings: upsert by settings_key (take data as-is; secrets may need re-entry separately)
     if (Array.isArray(data.app_settings)) {
       for (const s of data.app_settings) {
@@ -1400,29 +1423,45 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       servers: Array.isArray(data.servers) ? data.servers.length : 0,
       users: Array.isArray(data.users) ? data.users.length : 0,
     }});
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('restore snapshot failed:', err && err.stack ? err.stack : err);
+      return res.status(500).json({ msg: 'Failed to restore snapshot' });
+    } finally {
+      client.release();
+    }
   } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('restore snapshot failed:', err);
-    return res.status(500).json({ msg: 'Failed to restore snapshot' });
+    console.error('restore snapshot outer failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ msg: 'Server Error' });
   } finally {
-    client.release();
+    // best-effort cleanup of uploaded file on disk
+    if (tmpUploadPath) {
+      try { if (fs.existsSync(tmpUploadPath)) fs.unlinkSync(tmpUploadPath); } catch (e) { console.warn('Failed to unlink uploaded snapshot temp file:', tmpUploadPath, e && e.message ? e.message : e); }
+    }
   }
 });
 
 // POST restore DB (.db) — merge only, safe subset
 router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
+  const tmpUploadPath = req.file && req.file.path ? req.file.path : null;
   try {
-    if (!req.file || !req.file.buffer) return res.status(400).json({ msg: 'No file uploaded' });
+    if (!req.file) return res.status(400).json({ msg: 'No file uploaded' });
     if (req.file.size > 5 * 1024 * 1024) return res.status(413).json({ msg: 'File too large' });
     let payload;
-    try { payload = JSON.parse(req.file.buffer.toString('utf8')); } catch (e) { return res.status(400).json({ msg: 'Invalid .db file (must be JSON)' }); }
+    let buf = null;
+    try {
+        if (req.file.buffer) buf = req.file.buffer;
+        else if (req.file.path) buf = fs.readFileSync(req.file.path);
+        else return res.status(400).json({ msg: 'No file data' });
+        payload = JSON.parse(buf.toString('utf8'));
+    } catch (e) { return res.status(400).json({ msg: 'Invalid .db file (must be JSON)' }); }
     if (!payload || payload.type !== 'db-backup-v1') return res.status(400).json({ msg: 'Unsupported .db format' });
     // optional checksum verification if client provided x-checksum-sha256 header (hex)
     try {
       const provided = (req.headers['x-checksum-sha256'] || '').toString().trim().toLowerCase();
       if (provided) {
         const crypto = require('crypto');
-        const actual = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+        const actual = crypto.createHash('sha256').update(buf).digest('hex');
         if (provided !== actual) return res.status(400).json({ msg: 'Checksum mismatch' });
       }
     } catch (_) {}
@@ -1517,21 +1556,30 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
 
 // Config restore: add size limit and checksum support
 router.post('/restore/config', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
+  const tmpUploadPath = req.file && req.file.path ? req.file.path : null;
   const parseBody = () => {
     try {
-      if (req.file && req.file.buffer) return JSON.parse(req.file.buffer.toString('utf8'));
+      if (req.file) {
+        if (req.file.buffer) return JSON.parse(req.file.buffer.toString('utf8'));
+        if (req.file.path) {
+          try { const content = fs.readFileSync(req.file.path); return JSON.parse(content.toString('utf8')); } catch (e) { }
+        }
+      }
       return req.body && typeof req.body === 'object' ? req.body : null;
     } catch (e) { return null; }
   };
   try {
     if (req.file && req.file.size > 1024 * 1024) return res.status(413).json({ msg: 'File too large' });
-    // optional checksum header
+    // optional checksum header (best-effort)
     try {
       if (req.file) {
+        let bufForChecksum = null;
+        if (req.file.buffer) bufForChecksum = req.file.buffer;
+        else if (req.file.path) bufForChecksum = fs.readFileSync(req.file.path);
         const provided = (req.headers['x-checksum-sha256'] || '').toString().trim().toLowerCase();
-        if (provided) {
+        if (provided && bufForChecksum) {
           const crypto = require('crypto');
-          const actual = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+          const actual = crypto.createHash('sha256').update(bufForChecksum).digest('hex');
           if (provided !== actual) return res.status(400).json({ msg: 'Checksum mismatch' });
         }
       }

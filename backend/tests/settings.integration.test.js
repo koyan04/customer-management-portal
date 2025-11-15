@@ -3,6 +3,17 @@ require('dotenv').config();
 const app = require('../app');
 const pool = require('../db');
 
+async function ensureAdmin() {
+  const existing = await pool.query('SELECT id FROM admins ORDER BY id LIMIT 1');
+  if (existing.rows && existing.rows[0]) return existing.rows[0].id;
+  const username = `itest-admin-${Date.now()}`;
+  const res = await pool.query(
+    'INSERT INTO admins (display_name, username, password_hash, role) VALUES ($1,$2,$3,$4) RETURNING id',
+    ['Integration Admin', username, 'test-hash', 'ADMIN']
+  );
+  return res.rows[0].id;
+}
+
 // Create a fake admin token by inserting a temp admin and using a dummy middleware override isn't trivial here,
 // so we'll bypass auth by temporarily stubbing the authenticateToken/isAdmin middleware in the app router for this test.
 
@@ -12,7 +23,7 @@ describe('Settings integration', () => {
     server = app.listen(0, done);
   });
   afterAll(async () => {
-    try { await pool.query("DELETE FROM app_settings WHERE settings_key = 'general'"); } catch(_) {}
+    try { await pool.query("UPDATE app_settings SET data = '{}'::jsonb WHERE settings_key = 'general'"); } catch(_) {}
     try { await pool.end(); } catch(_) {}
     server.close();
   });
@@ -29,7 +40,14 @@ describe('Settings integration', () => {
     // Insert into DB as the route would do
     const before = null;
     const toStore = { ...(before || {}), ...cleaned };
-    await pool.query(`INSERT INTO app_settings (settings_key, data, updated_by, updated_at) VALUES ($1,$2,$3, now()) ON CONFLICT (settings_key) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`, ['general', toStore, null]);
+    const adminId = await ensureAdmin();
+    await pool.query(
+      `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
+       VALUES ($1,$2,$3, now())
+       ON CONFLICT (settings_key)
+       DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+      ['general', toStore, adminId]
+    );
 
     const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'general'");
     const row = r.rows[0].data;

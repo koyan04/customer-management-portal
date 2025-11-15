@@ -16,6 +16,7 @@ Repository: https://github.com/koyan-testpilot/customer-management-portal.git
   - User XLSX template, import, export (per server)
   - Status filters (Active / Soon / Expired) with optional materialized view
   - Ordering servers (drag-and-drop) persisted in DB
+  - Global user search (banner Search icon): partial account name match across accessible servers; actions: open server, extend expiry (+1 month for admins)
 - Settings & Backups
   - General, Database, Telegram bot, Remote server, Certificate config
   - Config/DB snapshot backups and restores (merge-safe)
@@ -72,6 +73,85 @@ Visit the app:
 
 Login:
 - Use the admin credentials you provided during install
+
+## Quick Install (Windows)
+
+This repository includes a helper PowerShell script to assist with common Windows installation tasks. The script attempts to:
+
+- Ensure Node.js and git are present (tries `winget` / `choco` if available).
+- Clone or update the repository into an installation directory.
+- Install backend/frontend dependencies and build the frontend.
+- Start backend processes via `pm2` and optionally register Windows services using `nssm` (if present).
+
+Important notes and limitations:
+
+Note about release selection: both installers (the Linux `scripts/install.sh` and the Windows `scripts/install-windows.ps1` helper) prefer to checkout the latest semantic-release tag when available (for example `v1.2.3` or `1.2.3`) and intentionally avoid common prerelease tags like `-rc`, `-beta`, or `-alpha`. To force a specific ref, set `CMP_CHECKOUT_REF` for the Linux installer or pass `-CheckoutRef <ref>` to the PowerShell helper.
+
+- The Windows helper does not attempt to install PostgreSQL or perform full TLS automation. Installing Postgres on Windows is environment-specific; for production we recommend using a managed database or installing Postgres separately.
+- For TLS on Windows consider using win-acme (https://www.win-acme.com/) to obtain Let's Encrypt certificates, or use Cloudflare Origin Certificates combined with a reverse proxy (IIS, Nginx, Caddy) that terminates TLS.
+- The helper is provided at `scripts/install-windows.ps1`. Run it as Administrator. It will try to install `pm2` and (optionally) `nssm` to register services. If `nssm` is not available, the script leaves PM2 running and prints instructions to register services manually.
+
+Example (run as Administrator PowerShell):
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+.\scripts\install-windows.ps1 -InstallDir C:\srv\cmp -RepoUrl https://github.com/koyan-testpilot/customer-management-portal.git
+```
+
+After running the helper:
+
+- Edit `backend/.env` with your PostgreSQL connection details and secrets.
+- From `backend/` run migrations: `node run_migrations.js`.
+- Seed the admin and sample data (optional):
+
+```powershell
+$env:SEED_ADMIN_USERNAME='admin'; $env:SEED_ADMIN_PASSWORD='admin123'; node seedAdmin.js
+node seedServers.js
+node seedUsers.js
+```
+
+If you need a fully automated Windows production installer (installing Postgres, configuring TLS and DNS automatically), open an issue or request and we can add an expanded `install-windows.ps1` that bundles or orchestrates those platform-specific installers.
+
+Windows manual guide
+--------------------
+We provide a hands-on Windows installation guide at `WINDOWS_INSTALL.md`. It describes a safe, manual installation flow (recommended for production on Windows), covering prerequisites, PostgreSQL installation, building the frontend, configuring `.env`, running migrations, seeding, TLS options (win-acme/Cloudflare origin certs), and service registration via PM2/NSSM.
+The included `scripts/install-windows.ps1` remains an optional helper for semi-automated runs, but for production we recommend following the manual guide.
+
+### Windows: PostgreSQL automation
+
+The new Windows installer helper supports automating PostgreSQL installation and provisioning. Use the `-InstallPostgres` flag and provide DB credentials when invoking `scripts/install-windows.ps1`.
+
+Example (run as Administrator PowerShell):
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force
+.\scripts\install-windows.ps1 -InstallDir C:\srv\cmp -InstallPostgres -DBName cmp -DBUser cmp -DBPassword changeme -PostgresSuperPassword yourPostgresSuperPassword
+```
+
+What the installer will try to do when `-InstallPostgres` is provided:
+
+- Attempt to install PostgreSQL via `winget` or `choco` (best-effort).
+- Wait for the `psql` client to be available.
+- Use the provided `PostgresSuperPassword` to run `psql` commands as `postgres` superuser to create the desired DB and DB user and grant privileges.
+- Populate `backend/.env` with DB connection settings and run migrations (`node run_migrations.js`).
+
+Notes and caveats:
+
+- Automatic installation uses platform package managers and may vary by Windows version. If the script cannot install PostgreSQL automatically, it prints instructions to install it manually and re-run the provisioning steps.
+- The script expects you to supply the `postgres` superuser password; some installers prompt for it during installation. If you cannot provide it, create the database and user manually and then run migrations.
+- For production deployments on Windows, we still recommend using a managed PostgreSQL service where possible.
+
+#### What the script does to install PostgreSQL
+
+- Attempts to install PostgreSQL using `winget` with several common package IDs (best-effort).
+- If `winget` is not available or fails, attempts to use Chocolatey (`choco install postgresql`).
+- If both package managers are unavailable or the install fails, the script attempts to download the EnterpriseDB installer (default PostgreSQL 15.4; override with `PG_VERSION` env var) and run it in unattended mode using the provided `-PostgresSuperPassword` value.
+
+Caveats:
+
+- The EnterpriseDB installer and silent/unattended arguments differ across versions; the script uses commonly supported `--mode unattended --unattendedmodeui none --superpassword <pw>` flags, but if a particular Windows build or installer version requires different flags the unattended install may fail and you'll have to install PostgreSQL manually.
+- The script waits up to 2 minutes for `psql` to appear in PATH after install; in some environments you may need to add the PostgreSQL bin directory to PATH or re-open PowerShell.
+- If unattended install isn't possible in your environment, install PostgreSQL manually and re-run the script with `-InstallPostgres` omitted; then set `backend/.env` DB_* values and run migrations manually.
 
 ## Manual Install (advanced)
 
@@ -344,3 +424,64 @@ Clients querying `/api/health` will see:
 ## Repository
 
 - Issues and contributions welcome via: https://github.com/koyan-testpilot/customer-management-portal
+
+## Release notes (quick)
+
+- Release: cmp ver 1.0.14 (current)
+  - New: Windows hands-on installation guide (`WINDOWS_INSTALL.md`) with step-by-step manual instructions for installing on Windows and production guidance.
+  - New: Optional Windows helper scripts in `scripts/`: `install-windows.ps1` (semi-automated helper), `WINDOWS_QUICKCHECK.ps1` (post-install verification), and `WINDOWS_FIX_PG_PATH.ps1` (Postgres PATH quick-fix).
+  - Improved: Windows installer attempts (best-effort) for PostgreSQL via `winget`/`choco` and EnterpriseDB fallback; documented caveats in README and `WINDOWS_INSTALL.md`.
+  - Docs: README updated to point to the Windows guide and to describe optional helpers and recommended manual flow for production on Windows.
+
+## Production checklist
+
+Follow this checklist before exposing the application to production traffic. These are minimal hardening steps and operational runbook items:
+
+1. Secrets and credentials
+  - Replace any seeded/default admin passwords immediately. Do not use seeded credentials in production.
+  - Set a strong `JWT_SECRET` (at least 32 random bytes) in `backend/.env`.
+  - Store `backend/.env` and any Cloudflare API tokens securely (vault or OS key store). Do not commit secrets to git.
+
+2. Database
+  - Use a managed PostgreSQL service where possible, or run PostgreSQL on a hardened host with backups.
+  - Ensure automated daily backups and periodic offsite snapshots. Test restore procedures in staging.
+  - Use least-privilege DB user for the app (create a dedicated DB user rather than superuser).
+
+3. TLS and certificates
+  - Use certbot (Linux) or win-acme (Windows) for Let's Encrypt certs, or Cloudflare Origin Certificates behind a proxy.
+  - Configure auto-renewal and a post-renew hook that restarts the backend to pick up new certificates.
+
+4. Services and autorun
+  - On Linux: enable systemd units (`cmp-backend.service`, `cmp-telegram-bot.service`) and confirm they start on boot.
+  - On Windows: prefer PM2+pm2-windows-service or NSSM to run the backend as a service. Confirm services restart after reboot.
+
+5. Observability & health
+  - Enable Prometheus scraping of `/metrics` and add basic alerting for critical conditions (backend down, job failures, cert expiry).
+  - Add liveness/readiness probes for any orchestrator and configure monitoring for service restarts.
+
+6. Logging & rotation
+  - Configure logrotate (Linux) or Windows log rotation for backend logs. Avoid verbose logs in production.
+  - Ensure audit trails and settings_audit are archived as needed.
+
+7. Access control & network
+  - Restrict access to the admin UI by IP or VPN where possible.
+  - Use firewall rules to limit DB access to only the application server or managed DB network.
+
+8. Backups & restore drill
+  - Regularly test DB and config snapshot restores. Ensure backups include `app_settings` and important configuration.
+
+9. CI & installer integrity
+  - Use the provided CI check to validate `scripts/install.sh` integrity (SHA256 baseline) if you rely on the automated installer.
+
+10. First-run & onboarding
+  - Generate and store initial admin credentials securely. Force password change on first login for seeded accounts.
+  - Document runbook steps to rotate secrets, restore backups, and perform emergency access.
+
+Follow-up improvements you may want to adopt later:
+- Integrate structured logging and centralized log shipping (ELK/Graylog/Cloud provider). 
+- Harden the installer with integrity checks and signed release artifacts.
+- Add optional role-based access review and MFA enforcement for admin accounts.
+
+On-call checklist
+-----------------
+We also provide a short on-call checklist for immediate incident triage: `OPERATOR_ONCALL_CHECKLIST.md`. Use it for fast triage and recovery steps (restart service, check DB, restore backup, cert renewals, rollback, contacts).

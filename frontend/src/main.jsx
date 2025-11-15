@@ -12,6 +12,7 @@ import LoginPage from './pages/LoginPage.jsx';
 import AdminPanelPage from './pages/AdminPanelPage.jsx';
 import ServerListPage from './pages/ServerListPage.jsx';
 import FinancialPage from './pages/FinancialPage.jsx';
+import SearchPage from './pages/SearchPage.jsx';
 import AdminOnlyRoute from './components/AdminOnlyRoute.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import './index.css';
@@ -47,6 +48,10 @@ const router = createBrowserRouter([
               {
                 path: 'financial',
                 element: <FinancialPage />,
+              },
+              {
+                path: 'search',
+                element: <SearchPage />,
               },
               {
                 path: 'server-list',

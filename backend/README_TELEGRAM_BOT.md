@@ -4,6 +4,7 @@ Short summary
 - The bot supports polling and is designed to read token/config from `app_settings` (settings_key = 'telegram').
 - For production we recommend running the bot under a process supervisor (PM2 or systemd) and using a Postgres advisory lock so only one instance polls Telegram.
 - A health endpoint is available at `/internal/bot/status` and Prometheus metrics at `/metrics`.
+ - In user details, there is a "Refresh" button to re-fetch the latest info (works for active, soon, and expired users).
 
 Recommended setup (PM2)
 1. Install pm2 globally (on the server):
@@ -38,6 +39,13 @@ Quick local troubleshooting and verification
       ```
       (This prints the `telegram_bot_status` row if present.)
 
+User interactions overview
+- Main menu shows server list and quick access to Soon/Expired users.
+- Server -> User flow: selecting a user opens a detail view with buttons:
+   - "Refresh" to reload the user's status and expiry.
+   - "Change Expire Date" to extend by 1/2/6 months.
+   - "Back to Server" to return to the user list.
+
 Common issues
 - 401 Unauthorized from Telegram (getUpdates / getMe)
    - Cause: the stored token is incorrect, expired, or stored under a different key name. Our verification helper reads `botToken` or `token` in the `app_settings.telegram` JSON; the running bot was previously only checking `token` which can cause a mismatch if the token was stored under `botToken` (this has been fixed). If you still see 401, re-enter the token in Settings and re-run the verify script.
@@ -53,18 +61,6 @@ High-availability notes
 Monitoring
 - Prometheus metrics available at `/metrics`. The custom gauge `cmp_telegram_bot_up` is 1 when the bot has a recent successful poll, 0 otherwise.
 - Add a scrape job to your Prometheus configuration to scrape the backend service.
-
-Network errors, backoff, and log throttling
-- The bot now detects transient network errors (ENOTFOUND, ETIMEDOUT, ECONNRESET, etc.) and applies exponential backoff: 2s → 4s → 8s → … up to 5 minutes.
-- To reduce noisy logs in unstable networks, after 3 consecutive network errors it will log at most one failure every 15 seconds while continuing to retry.
-- Observability:
-   - Prometheus gauge `cmp_telegram_net_error_streak` shows current consecutive network error streak (0 when last poll succeeded).
-   - The status row `app_settings.telegram_bot_status` includes `last_error`, `net_error_streak`, and `next_backoff_ms` so you can see the next planned delay.
-- Special handling for 409 conflicts: if Telegram reports a webhook conflict while polling, the bot will attempt one `deleteWebhook` and then retry with a short delay; if another `getUpdates` is running elsewhere, it backs off longer and logs a hint.
-
-Quick tips for ENOTFOUND/ETIMEDOUT
-- ENOTFOUND api.telegram.org: DNS or outbound network issue. Verify the host can resolve and reach Telegram (check DNS, proxy, or firewall).
-- ETIMEDOUT: outbound connectivity is blocked or saturated. The backoff will avoid spamming logs; consider placing the bot on a host with Internet egress or enabling webhook mode behind HTTPS.
 
 Security
 - Keep the bot token in `app_settings.telegram` or a secrets manager; the UI masks it and audit entries are recorded on change. Use the reveal endpoint only when necessary.

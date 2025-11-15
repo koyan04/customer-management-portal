@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 // using Vitest globals per config
 import SettingsPage from '../pages/SettingsPage.jsx';
@@ -42,8 +42,14 @@ describe('SettingsPage restore uploads', () => {
     render(<SettingsPage />);
     const cfgInput = await screen.findByLabelText(/Restore Config/i);
     setFile(cfgInput, new File([JSON.stringify({ type: 'config-backup-v1' })], 'config.json', { type: 'application/json' }));
-    await waitFor(() => expect(screen.getByRole('status')).toBeTruthy());
-    expect(screen.getByRole('status').textContent).toMatch(/Upload completed|Download started/);
+    // click the first Restore button (config)
+    const restoreButtons = await screen.findAllByRole('button', { name: /Restore/i });
+    fireEvent.click(restoreButtons[0]);
+    // Expect modal status to appear with success message
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    const modalStatus = within(screen.getByRole('dialog')).queryByRole('status');
+    expect(modalStatus).toBeTruthy();
+    expect(modalStatus.textContent).toMatch(/Upload completed|Restore completed|config restored|Upload completed/);
   });
 
   it('shows failure message on restore error', async () => {
@@ -51,8 +57,13 @@ describe('SettingsPage restore uploads', () => {
     render(<SettingsPage />);
     const dbInput = await screen.findByLabelText(/Restore Database/i);
     setFile(dbInput, new File([JSON.stringify({ type: 'db-backup-v1' })], 'database.db', { type: 'application/octet-stream' }));
-    await waitFor(() => expect(screen.getByRole('status')).toBeTruthy());
-    expect(screen.getByRole('status').textContent).toMatch(/Upload failed: Checksum mismatch/);
+    const restoreButtons = await screen.findAllByRole('button', { name: /Restore/i });
+    // click second Restore button (db)
+    fireEvent.click(restoreButtons[1]);
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    const alert = within(screen.getByRole('dialog')).queryByRole('alert');
+    expect(alert).toBeTruthy();
+    expect(alert.textContent).toMatch(/Checksum mismatch/);
   });
 
   it('downloads Telegram snapshot JSON and shows confirmation', async () => {
@@ -86,6 +97,12 @@ describe('SettingsPage restore uploads', () => {
     render(<SettingsPage />);
     const input = await screen.findByLabelText(/Restore Telegram Snapshot \(JSON\)/i);
     setFile(input, new File([JSON.stringify({ created_at: '2025-01-01T00:00:00Z', app_settings: [], servers: [], users: [] })], 'cmp-backup.json', { type: 'application/json' }));
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Snapshot restored \(merge\)/i));
+    const restoreButtons = await screen.findAllByRole('button', { name: /Restore/i });
+    // click third Restore button (snapshot)
+    fireEvent.click(restoreButtons[2]);
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    const modalStatus = within(screen.getByRole('dialog')).queryByRole('status');
+    expect(modalStatus).toBeTruthy();
+    expect(modalStatus.textContent).toMatch(/Snapshot restored \(merge\)/i);
   });
 });

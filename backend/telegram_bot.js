@@ -59,23 +59,11 @@ function getOrCreateHistogram(name, help, buckets) {
     return { observe: () => {} };
   }
 }
-function getOrCreateGauge(name, help) {
-  try {
-    const existing = clientMetrics.register.getSingleMetric(name);
-    if (existing) return existing;
-  } catch (_) {}
-  try {
-    return new clientMetrics.Gauge({ name, help });
-  } catch (e) {
-    return { set: () => {} };
-  }
-}
 const metrics = {
   updates_total: getOrCreateCounter('cmp_telegram_updates_total', 'Total updates received from Telegram'),
   messages_sent_total: getOrCreateCounter('cmp_telegram_messages_sent_total', 'Total messages sent by the bot'),
   bot_errors_total: getOrCreateCounter('cmp_telegram_bot_errors_total', 'Total bot errors'),
   getUpdates_latency_ms: getOrCreateHistogram('cmp_telegram_getupdates_latency_ms', 'getUpdates latency in ms', [50,100,200,500,1000,2000,5000]),
-  net_error_streak: getOrCreateGauge('cmp_telegram_net_error_streak', 'Consecutive network errors streak for Telegram polling'),
 };
 
 // Pagination config
@@ -539,7 +527,44 @@ async function handleCallback(callback) {
   lines.push(`⚙️ Service: ${escapeHtml(user.service_type || 'N/A')}`);
   lines.push(`📡 Server: ${escapeHtml(user.server_name || 'N/A')}`);
   lines.push(`📅 Expires: ${user.expire_date ? new Date(user.expire_date).toISOString().slice(0,10) : 'N/A'}`);
-    const keyboard = { reply_markup: { inline_keyboard: [ [ { text: '🗓️ Change Expire Date', callback_data: `change_expire:${uid}` } ], [ { text: '🔙 Back to Server', callback_data: `server:${sid}` } ] ] } };
+    const keyboard = { reply_markup: { inline_keyboard: [
+      [ { text: '🔄 Refresh', callback_data: `refresh_user:${sid}:${uid}` } ],
+      [ { text: '🗓️ Change Expire Date', callback_data: `change_expire:${uid}` } ],
+      [ { text: '🔙 Back to Server', callback_data: `server:${sid}` } ]
+    ] } };
+    return sendMessage(chatId, lines.join('\n'), keyboard);
+  }
+
+  // refresh_user:<serverId>:<userId>
+  if (data && data.startsWith('refresh_user:')) {
+    await answerCallback(qid, 'Refreshing...');
+    const parts = data.split(':');
+    const sid = parts[1];
+    const uid = parts[2];
+    const user = await fetchUserById(uid);
+    if (!user) return sendMessage(chatId, 'User not found');
+    const lines = [];
+    lines.push(`👤 <b>${escapeHtml(user.account_name)}</b>`);
+    lines.push(`📛 Status: ${formatUserStatus(user.expire_date)}`);
+    lines.push(`⚙️ Service: ${escapeHtml(user.service_type || 'N/A')}`);
+    lines.push(`📡 Server: ${escapeHtml(user.server_name || 'N/A')}`);
+    lines.push(`📅 Expires: ${user.expire_date ? new Date(user.expire_date).toISOString().slice(0,10) : 'N/A'}`);
+    const keyboard = { reply_markup: { inline_keyboard: [
+      [ { text: '🔄 Refresh', callback_data: `refresh_user:${sid}:${uid}` } ],
+      [ { text: '🗓️ Change Expire Date', callback_data: `change_expire:${uid}` } ],
+      [ { text: '🔙 Back to Server', callback_data: `server:${sid}` } ]
+    ] } };
+    // Try to edit the current message in place
+    try {
+      const msgId = callback.message && callback.message.message_id;
+      if (API_BASE && msgId) {
+        await axios.post(`${API_BASE}/editMessageText`, { chat_id: chatId, message_id: msgId, text: lines.join('\n'), parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
+        return;
+      }
+    } catch (e) {
+      // fall through to sending a new message
+      try { console.warn('[BOT] refresh_user editMessageText failed:', e && e.message ? e.message : e); } catch (_) {}
+    }
     return sendMessage(chatId, lines.join('\n'), keyboard);
   }
 
@@ -746,8 +771,7 @@ async function pollLoop() {
   if (res.data && res.data.ok && Array.isArray(res.data.result)) {
         try { metrics.updates_total.inc(res.data.result.length || 0); } catch (_) {}
         // Update bot status in DB to indicate successful poll
-  try { await writeBotStatus({ last_success: new Date().toISOString(), last_error: null, net_error_streak: 0, next_backoff_ms: 0 }); } catch (_) {}
-  try { metrics.net_error_streak.set(0); } catch (_) {}
+        try { await writeBotStatus({ last_success: new Date().toISOString(), last_error: null }); } catch (_) {}
         for (const update of res.data.result) {
           lastUpdateId = Math.max(lastUpdateId, update.update_id || 0);
           if (update.message && update.message.text) {
@@ -824,11 +848,10 @@ async function pollLoop() {
       }
 
       if (shouldLog) {
-        console.warn('getUpdates poll failed:', description, statusCode ? `(HTTP ${statusCode})` : (code ? `(code ${code})` : ''), `(backoff ${backoffMs}ms streak=${_netErrorStreak})`);
+        console.warn('getUpdates poll failed:', description, statusCode ? `(HTTP ${statusCode})` : (code ? `(code ${code})` : ''));
       }
-      try { await writeBotStatus({ last_success: null, last_error: description, code: statusCode || code || null, net_error_streak: _netErrorStreak, next_backoff_ms: backoffMs }); } catch (_) {}
+      try { await writeBotStatus({ last_success: null, last_error: description, code: statusCode || code || null }); } catch (_) {}
       try { metrics.bot_errors_total.inc(); } catch (_) {}
-      try { metrics.net_error_streak.set(_netErrorStreak); } catch (_) {}
 
       // Backoff then retry
       await new Promise(r => setTimeout(r, backoffMs));

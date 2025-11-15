@@ -62,7 +62,7 @@ function Write-Warn([string]$m) { Write-Warning $m }
 function Write-Err([string]$m) { Write-Error $m }
 
 function Get-ExecutablePath([string]$name) {
-    $env:PATH.Split(';') | ForEach-Object { Join-Path $_ $name } | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $env:PATH.Split(';') | ForEach-Object { Join-Path -Path $_ -ChildPath $name } | Where-Object { Test-Path $_ } | Select-Object -First 1
 }
 
 function Install-WithWingetOrChoco([string]$packageName, [string]$wingetId, [string]$chocoId) {
@@ -139,7 +139,7 @@ if ($InstallPostgres) {
         $PG_VERSION = $env:PG_VERSION; if (-not $PG_VERSION) { $PG_VERSION = '15.4' }
             $installerName = "postgresql-$PG_VERSION-windows-x64.exe"
         $downloadUrl = "https://get.enterprisedb.com/postgresql/$installerName"
-        $tmpInstaller = Join-Path $env:TEMP $installerName
+    $tmpInstaller = Join-Path -Path $env:TEMP -ChildPath $installerName
     Write-Info "Downloading $downloadUrl to $tmpInstaller (may take a while)..."
         try {
             Invoke-WebRequest -Uri $downloadUrl -OutFile $tmpInstaller -UseBasicParsing -ErrorAction Stop
@@ -214,7 +214,7 @@ if ($InstallPostgres) {
                 }
 
                 Write-Info "Running migrations..."
-                Push-Location -Path (Join-Path $InstallDir 'backend')
+                Push-Location -Path (Join-Path -Path $InstallDir -ChildPath 'backend')
                 node run_migrations.js
                 Pop-Location
 
@@ -225,7 +225,7 @@ if ($InstallPostgres) {
     }
 }
 
-if (-not (Test-Path (Join-Path $InstallDir '.git'))) {
+if (-not (Test-Path (Join-Path -Path $InstallDir -ChildPath '.git'))) {
     Write-Info "Cloning repository into $InstallDir..."
     git clone $RepoUrl $InstallDir
 } else {
@@ -272,17 +272,17 @@ if (-not $nssmPath) {
 }
 
 Write-Info "Installing backend dependencies..."
-Push-Location -Path (Join-Path $InstallDir 'backend')
+Push-Location -Path (Join-Path -Path $InstallDir -ChildPath 'backend')
 npm install --no-audit
 
 Write-Info "Building frontend..."
-Push-Location -Path (Join-Path $InstallDir 'frontend')
+Push-Location -Path (Join-Path -Path $InstallDir -ChildPath 'frontend')
 npm install --no-audit
 npm run build
 Pop-Location
 
 Write-Info "Starting backend processes via pm2..."
-Push-Location -Path (Join-Path $InstallDir 'backend')
+Push-Location -Path (Join-Path -Path $InstallDir -ChildPath 'backend')
 if (Test-Path pm2.config.js) {
     pm2 start pm2.config.js --env production
 } else {
@@ -297,8 +297,8 @@ if ($nssmPath) {
     $backendDir = (Get-Location).Path
     & $nssmPath install cmp-backend $backendExe 'index.js'
     & $nssmPath set cmp-backend AppDirectory $backendDir
-    & $nssmPath set cmp-backend AppStdout (Join-Path $backendDir 'server_out.log')
-    & $nssmPath set cmp-backend AppStderr (Join-Path $backendDir 'server_err.log')
+    & $nssmPath set cmp-backend AppStdout (Join-Path -Path $backendDir -ChildPath 'server_out.log')
+    & $nssmPath set cmp-backend AppStderr (Join-Path -Path $backendDir -ChildPath 'server_err.log')
     & $nssmPath set cmp-backend Start SERVICE_AUTO_START
     Write-Info "cmp-backend service installed (nssm). Start with: nssm start cmp-backend"
     # Register telegram bot if present in pm2 config
@@ -351,7 +351,7 @@ if ($SeedAdmin) {
     }
 
     # Run the seed script using environment variables (process-scoped only)
-    Push-Location -Path (Join-Path $InstallDir 'backend')
+    Push-Location -Path (Join-Path -Path $InstallDir -ChildPath 'backend')
     $oldSeedUser = $env:SEED_ADMIN_USERNAME
     $oldSeedPass = $env:SEED_ADMIN_PASSWORD
     $env:SEED_ADMIN_USERNAME = $sUser

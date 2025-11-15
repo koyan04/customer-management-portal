@@ -5359,7 +5359,7 @@ body.theme-light .login-theme-toggle .theme-dot.effective:not(.active) { outline
   gap: 0.6rem;
   flex-wrap: wrap;
   margin-left: auto; /* push nav group to the far right */
-  margin-right: 10vw; /* shift nav group left by 10% of viewport width */
+  margin-right: 6vw; /* nudge nav group slightly toward banner edge on wide viewports */
 }
 .nav-link {
   color: #e0eff3;

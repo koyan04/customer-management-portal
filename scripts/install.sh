@@ -400,14 +400,26 @@ User=root
 NoNewPrivileges=true
 ProtectSystem=full
 ProtectHome=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  systemctl daemon-reload
-  systemctl enable $BACKEND_SERVICE
-fi
+    # Prefer checking out the latest semantic-release tag (ignore prerelease tags like -rc, -beta)
+    # Strategy:
+    # 1) look for tags like vMAJOR.MINOR.PATCH sorted by version
+    # 2) fallback to tags like MAJOR.MINOR.PATCH
+    # 3) fallback to the newest tag by version sort excluding obvious prerelease suffixes
+    LATEST_TAG=""
+    LATEST_TAG=$(cd "$APP_DIR" && git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1 || true)
+    if [ -z "$LATEST_TAG" ]; then
+      LATEST_TAG=$(cd "$APP_DIR" && git tag -l '[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1 || true)
+    fi
+    if [ -z "$LATEST_TAG" ]; then
+      # As a last attempt prefer tags that look semver-ish and exclude alpha/beta/rc/dev
+      LATEST_TAG=$(cd "$APP_DIR" && git for-each-ref --sort=-v:refname --format='%(refname:strip=2)' refs/tags | grep -E '^[vV]?[0-9]+(\.[0-9]+){1,2}$' | grep -v -E '-(alpha|beta|rc|dev)' | head -n1 || true)
+    fi
+    if [ -n "$LATEST_TAG" ]; then
+      color "Auto-checkout latest release tag: $LATEST_TAG"
+      (cd "$APP_DIR" && git checkout "$LATEST_TAG") || warn "Failed to checkout $LATEST_TAG; continuing on existing HEAD"
+    else
+      warn "No semver-like tags found; staying on current branch"
+    fi
 
 if [ -f "$BACKEND_DIR/pm2.config.js" ] && [ ! -f "$SYSTEMD_DIR/$BOT_SERVICE" ]; then
 cat > "$SYSTEMD_DIR/$BOT_SERVICE" <<EOF

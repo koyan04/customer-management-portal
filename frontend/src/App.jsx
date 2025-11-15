@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from './context/AuthContext';
 import './App.css';
 import { ToastProvider } from './context/ToastContext.jsx';
-import { FaArrowUp, FaTachometerAlt, FaChartBar, FaListUl, FaTools, FaCog } from 'react-icons/fa';
+import { FaArrowUp, FaTachometerAlt, FaChartBar, FaListUl, FaTools, FaCog, FaSearch } from 'react-icons/fa';
 import AdminEditorForm from './components/AdminEditorForm';
 import { FaUser, FaSignOutAlt, FaLeaf, FaMoon, FaSun, FaDesktop, FaCheck, FaTelegramPlane } from 'react-icons/fa';
 import axios from 'axios';
@@ -583,6 +583,7 @@ function App() {
           <NavLink to="/server-list" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaListUl aria-hidden className="nav-icon" /> <span className="nav-text">Server List</span></NavLink>
           {role === 'ADMIN' && <NavLink to="/admin" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaTools aria-hidden className="nav-icon" /> <span className="nav-text">Admin</span></NavLink>}
           {role === 'ADMIN' && <NavLink to="/settings" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaCog aria-hidden className="nav-icon" /> <span className="nav-text">Settings</span></NavLink>}
+          <NavLink to="/search" aria-label="Search" title="Search" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaSearch aria-hidden className="nav-icon" /></NavLink>
         </nav>
         {/* Logout moved into avatar menu */}
         {/* Avatar on the right side of the banner */}

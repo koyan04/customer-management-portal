@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { server, rest } from '../../__tests__/testServer';
 import SettingsPage from '../SettingsPage.jsx';
@@ -30,8 +30,9 @@ describe('SettingsPage with MSW handlers (snapshot)', () => {
   });
 
   it('uploads snapshot via MSW and shows server message', async () => {
+    // Use MSW to mock the upload endpoint so the test exercises the network path
     server.use(
-      rest.post(`${ORIGIN}/api/admin/restore/snapshot`, async (req, res, ctx) => {
+      rest.post(`${ORIGIN}/api/admin/restore/snapshot`, (req, res, ctx) => {
         return res(ctx.json({ msg: 'Uploaded' }));
       })
     );
@@ -40,7 +41,15 @@ describe('SettingsPage with MSW handlers (snapshot)', () => {
     const input = await screen.findByLabelText(/Restore Telegram Snapshot \(JSON\)/i);
     const file = new File([JSON.stringify({ users: [] })], 'cmp-backup.json', { type: 'application/json' });
     fireEvent.change(input, { target: { files: [file] } });
+    // wait until the filename is shown next to the input (ensures state updated)
+    await screen.findByText(/cmp-backup.json/);
+    const restoreButtons = await screen.findAllByRole('button', { name: /Restore/i });
+    // click third Restore button (snapshot)
+    fireEvent.click(restoreButtons[2]);
 
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Upload completed|Uploaded/i));
+    // Expect modal to appear and show the server message from MSW
+    await waitFor(() => expect(screen.getByRole('dialog')).toBeTruthy());
+    // Assert the dialog shows the server-provided message
+    await waitFor(() => within(screen.getByRole('dialog')).getByText(/Uploaded/));
   });
 });

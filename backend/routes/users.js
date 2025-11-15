@@ -101,7 +101,21 @@ async function handleTemplateXlsx(req, res) {
     XLSX.utils.book_append_sheet(wb, ws, 'Template');
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="server-${req.params.serverId}-template.xlsx"`);
+    const { serverId } = req.params;
+    // Resolve a friendly server name for filename (fallback to id)
+    let serverName = null;
+    try {
+      const s = await pool.query('SELECT server_name FROM servers WHERE id = $1', [serverId]);
+      serverName = s && s.rows && s.rows[0] ? s.rows[0].server_name : null;
+    } catch (_) {}
+    const safeName = (v) => {
+      const base = (v && String(v).trim()) || `server-${serverId}`;
+      return base
+        .replace(/[\\/:*?"<>|]/g, '-')   // Windows-illegal chars
+        .replace(/\s+/g, ' ')              // collapse whitespace visually
+        .slice(0, 80);
+    };
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName(serverName)} - template.xlsx"`);
     try { await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user?.id || null, 'users', 'DOWNLOAD_TEMPLATE_XLSX', null, null]); } catch (_) {}
     return res.send(buf);
   } catch (err) {
@@ -124,24 +138,78 @@ async function handleExportXlsx(req, res) {
     const key = `export:${req.user?.id || 'anon'}`;
     if (!rateLimit(key, 10)) return res.status(429).json({ msg: 'Too many export requests. Please try again later.' });
     const { serverId } = req.params;
-    const { rows } = await pool.query('SELECT * FROM users WHERE server_id = $1 ORDER BY created_at DESC', [serverId]);
+    // Resolve server name for filename
+    let serverName = null;
+    try {
+      const s = await pool.query('SELECT server_name FROM servers WHERE id = $1', [serverId]);
+      serverName = s && s.rows && s.rows[0] ? s.rows[0].server_name : null;
+    } catch (_) {}
+    const safeName = (v) => {
+      const base = (v && String(v).trim()) || `server-${serverId}`;
+      return base
+        .replace(/[\\/:*?"<>|]/g, '-')
+        .replace(/\s+/g, ' ')
+        .slice(0, 80);
+    };
+    // Per request: export strictly ordered by display_pos (NULLS LAST), then created_at DESC for stability.
+    const { rows } = await pool.query(
+      `SELECT *
+       FROM users
+       WHERE server_id = $1
+       ORDER BY (display_pos IS NULL), display_pos ASC, created_at DESC`,
+      [serverId]
+    );
     // Map rows to plain JS objects and normalize date fields to ISO strings
     // Omit id and server_id in export; these are managed by the system
+    // Helper: format a JS Date or date-like value into YYYY-MM-DD without timezone shifts
+    const fmtYMDLocal = (val) => {
+      if (!val) return '';
+      // If the driver already returned a string like 'YYYY-MM-DD', keep it
+      const s = typeof val === 'string' ? val.trim() : null;
+      if (s && /^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      const d = val instanceof Date ? val : new Date(val);
+      if (Number.isNaN(d.getTime())) return '';
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    };
     const data = (rows || []).map(r => ({
       account_name: r.account_name,
       service_type: r.service_type,
       contact: r.contact,
-      expire_date: r.expire_date ? new Date(r.expire_date).toISOString().slice(0, 10) : '',
+      expire_date: fmtYMDLocal(r.expire_date),
       total_devices: r.total_devices,
       data_limit_gb: r.data_limit_gb,
       remark: r.remark || ''
     }));
-    const ws = XLSX.utils.json_to_sheet(data);
+        // Build worksheet using explicit AOA so we can force date cells to be stored as plain strings.
+        const headers = ['account_name','service_type','contact','expire_date','total_devices','data_limit_gb','remark'];
+        const aoa = [headers];
+        for (const row of data) {
+          aoa.push([
+            row.account_name,
+            row.service_type,
+            row.contact,
+            typeof row.expire_date === 'string' ? row.expire_date : '', // keep as literal string YYYY-MM-DD
+            row.total_devices,
+            row.data_limit_gb,
+            row.remark
+          ]);
+        }
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        // Ensure expire_date column cells are explicitly typed as strings so Excel won't reinterpret timezone
+        for (let r = 1; r < aoa.length; r++) { // skip header row
+          const cellRef = XLSX.utils.encode_cell({ c: 3, r }); // 0-based col index 3 = expire_date
+          if (ws[cellRef]) {
+            ws[cellRef].t = 's';
+          }
+        }
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Users');
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename="server-${serverId}-users.xlsx"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName(serverName)} - users.xlsx"`);
     try { await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user?.id || null, 'users', 'EXPORT_XLSX', null, { count: data.length }]); } catch (_) {}
     return res.send(buf);
   } catch (err) {
@@ -200,6 +268,18 @@ async function handleImportXlsx(req, res) {
       if (!val && val !== 0) return null;
       // Excel serial number
       if (typeof val === 'number' && isFinite(val)) {
+        try {
+          // Prefer SheetJS SSF parser to avoid timezone shifts and handle 1900/1904 epochs
+          const wbProps = (wb && wb.Workbook && wb.Workbook.WBProps) || {};
+          const use1904 = !!wbProps.date1904;
+          if (XLSX && XLSX.SSF && typeof XLSX.SSF.parse_date_code === 'function') {
+            const parsed = XLSX.SSF.parse_date_code(val, { date1904: use1904 });
+            if (parsed && parsed.y && parsed.m && parsed.d) {
+              return `${parsed.y}-${pad2(parsed.m)}-${pad2(parsed.d)}`;
+            }
+          }
+        } catch (_) { /* fall through to fallback */ }
+        // Fallback: convert serial to epoch days (assumes 1900-based epoch) and format in local time
         const d = new Date(Math.round((val - 25569) * 86400 * 1000));
         return ymdFromDate(d);
       }
@@ -592,6 +672,115 @@ router.get('/by-status/:status', authenticateToken, async (req, res) => {
     }
   } catch (err) {
     console.error('USERS ROUTE ERROR GET /api/users/by-status/:status :', err && err.stack ? err.stack : err);
+    return res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
+// SEARCH users across accessible servers by partial account_name (case-insensitive)
+// GET /api/users/search?q=term
+// Returns at most 100 matches ordered by account_name ASC
+router.get('/search', authenticateToken, async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || String(q).trim().length < 2) {
+      return res.status(400).json({ msg: 'Query must be at least 2 characters' });
+    }
+    const term = String(q).trim();
+    const user = req.user;
+    if (!user) return res.status(401).json({ msg: 'Unauthorized' });
+    const fuzzy = (() => { const v = String(req.query.fuzzy || '').toLowerCase(); return v === '1' || v === 'true' || v === 'yes'; })();
+    // Determine accessible server IDs for non-admin
+    let serverFilterSql = '';
+    let serverFilterParams = [];
+    if (user.role !== 'ADMIN') {
+      try {
+        const viewer = await pool.query('SELECT server_id FROM viewer_server_permissions WHERE editor_id = $1', [user.id]);
+        const adminPerms = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [user.id]);
+        const set = new Set();
+        for (const r of viewer.rows || []) set.add(r.server_id);
+        for (const r of adminPerms.rows || []) set.add(r.server_id);
+        const ids = Array.from(set);
+        if (!ids.length) return res.json([]);
+        serverFilterSql = ' AND u.server_id = ANY($2::int[])';
+        serverFilterParams.push(ids);
+      } catch (e) {
+        console.error('search permission lookup failed:', e && e.message ? e.message : e);
+        return res.status(500).json({ msg: 'Server Error' });
+      }
+    }
+    // Use ILIKE for case-insensitive match; escape % and _ minimally
+    const likeTerm = '%' + term.replace(/[%_]/g, s => '\\' + s) + '%';
+    const params = user.role === 'ADMIN' ? [likeTerm] : [likeTerm, ...serverFilterParams];
+    // If fuzzy requested, attempt pg_trgm similarity; fallback on basic search when extension not available.
+    const computeStatus = (exp) => {
+      if (!exp) return 'active';
+      try {
+        const dt = new Date(exp);
+        if (Number.isNaN(dt.getTime())) return 'active';
+        const now = new Date();
+        const cutoff = new Date(dt.getFullYear(), dt.getMonth(), dt.getDate() + 1, 0, 0, 0, 0);
+        if (cutoff.getTime() <= now.getTime()) return 'expired';
+        const soonCutoff = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        if (cutoff.getTime() <= soonCutoff.getTime()) return 'soon';
+        return 'active';
+      } catch (_) { return 'active'; }
+    };
+    if (fuzzy) {
+      try {
+        const fuzzyParams = user.role === 'ADMIN' ? [term, likeTerm] : [term, likeTerm, ...serverFilterParams];
+        const fuzzyFilterServer = user.role === 'ADMIN' ? '' : ' AND u.server_id = ANY($3::int[])';
+        const fuzzySql = `
+          SELECT u.id, u.account_name, u.service_type, u.contact, u.expire_date, u.total_devices, u.data_limit_gb, u.server_id, u.remark, u.display_pos, s.server_name,
+            similarity(u.account_name, $1) AS sim
+          FROM users u
+          JOIN servers s ON s.id = u.server_id
+          WHERE (u.account_name ILIKE $2 OR similarity(u.account_name, $1) > 0.2)${fuzzyFilterServer}
+          ORDER BY sim DESC, u.account_name ASC
+          LIMIT 100
+        `;
+        const fuzzyRes = await pool.query(fuzzySql, fuzzyParams);
+        return res.json((fuzzyRes.rows || []).map(r => ({ ...r, status: computeStatus(r.expire_date) })));
+      } catch (e) {
+        console.warn('Fuzzy search failed (falling back to basic):', e && e.message ? e.message : e);
+        // Fallback fuzzy approach: broaden pattern by inserting wildcards between characters (j%o%h%n for "john")
+        const broadenPattern = '%' + term.split('').map(ch => ch.replace(/[%_]/, '')).join('%') + '%';
+        // Additional heuristic: prefix pattern (first 3 chars) to catch names like "johanna" when searching "john"
+        const prefixPattern = term.slice(0, 3) + '%';
+        // Build params dynamically so we can reference positions easily
+        const broadenParams = user.role === 'ADMIN'
+          ? [broadenPattern, likeTerm, prefixPattern]
+          : [broadenPattern, likeTerm, prefixPattern, ...serverFilterParams];
+        // server filter index depends on role; if not admin it will be the last param
+        const broadenFilterServer = user.role === 'ADMIN' ? '' : ` AND u.server_id = ANY($${broadenParams.length}::int[])`;
+        try {
+          const broadenSql = `
+            SELECT u.id, u.account_name, u.service_type, u.contact, u.expire_date, u.total_devices, u.data_limit_gb, u.server_id, u.remark, u.display_pos, s.server_name
+            FROM users u
+            JOIN servers s ON s.id = u.server_id
+            WHERE (u.account_name ILIKE $1 OR u.account_name ILIKE $2 OR u.account_name ILIKE $3)${broadenFilterServer}
+            ORDER BY u.account_name ASC
+            LIMIT 100
+          `;
+          const brRes = await pool.query(broadenSql, broadenParams);
+          try { console.log('Fuzzy broaden debug', { term, broadenPattern, prefixPattern, names: (brRes.rows||[]).map(r=>r.account_name) }); } catch(_) {}
+          return res.json((brRes.rows || []).map(r => ({ ...r, status: computeStatus(r.expire_date) })));
+        } catch (e2) {
+          console.warn('Broaden fuzzy fallback also failed, continuing to basic search:', e2 && e2.message ? e2.message : e2);
+        }
+      }
+    }
+    const sqlBasic = `
+      SELECT u.id, u.account_name, u.service_type, u.contact, u.expire_date, u.total_devices, u.data_limit_gb, u.server_id, u.remark, u.display_pos, s.server_name
+      FROM users u
+      JOIN servers s ON s.id = u.server_id
+      WHERE LOWER(u.account_name) ILIKE LOWER($1)${serverFilterSql}
+      ORDER BY u.account_name ASC
+      LIMIT 100
+    `;
+    const { rows } = await pool.query(sqlBasic, params);
+    return res.json((rows || []).map(r => ({ ...r, status: computeStatus(r.expire_date) })));
+  } catch (err) {
+    console.error('USERS ROUTE ERROR GET /api/users/search :', err && err.stack ? err.stack : err);
     return res.status(500).json({ msg: 'Server Error' });
   }
 });
