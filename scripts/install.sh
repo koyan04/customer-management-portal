@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Customer Management Portal Installer
 # Features:
-#   - Clones & optionally checks out latest tag or a specified ref (CMP_CHECKOUT_REF)
+#   - Downloads latest release tarball instead of cloning
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
 #   - Builds frontend, runs migrations, seeds admin + sample data
 #   - Issues Let's Encrypt certificate (DNS-01 via Cloudflare) for one or more domains
@@ -22,15 +22,25 @@ set -euo pipefail
 #   CMP_SKIP_CERT=1                         Do not issue certificates
 #   CMP_ENABLE_NGINX=1                      Install & configure Nginx reverse proxy for HTTPS (default: prompt)
 #   CF_AUTH_MODE=token|key                  Pre-select Cloudflare auth mode
+# Environment Flags (summary):
+#   CMP_CHECKOUT_REF=ref|tag|commit         Force download of specific release version
+#   CMP_SKIP_NODE_AUTO_INSTALL=1            Require preinstalled Node
+#   CMP_INSTALL_EXPECTED_SHA256=<sha>       Verify installer integrity
+#   CMP_CERT_DOMAINS="example.com www.example.com"  Additional domains (primary still prompted)
+#   CMP_CERT_HTTP_FALLBACK=1                Attempt standalone HTTP-01 on DNS failure
+#   CMP_SKIP_CERT=1                         Do not issue certificates
+#   CMP_ENABLE_NGINX=1                      Install & configure Nginx reverse proxy for HTTPS (default: prompt)
+#   CF_AUTH_MODE=token|key                  Pre-select Cloudflare auth mode
 #   CMP_HEALTH_PROBE_RETRIES=10             Health probe attempts (default 6)
 #   CMP_HEALTH_PROBE_INTERVAL=2             Seconds between health probes
 #   CMP_DNS_PROPAGATION_SECONDS=10          Seconds to wait for DNS TXT propagation (Cloudflare plugin)
 #
-# Requirements: bash, sudo/root, git, curl, openssl, systemd, certbot, python3, (python3-certbot-dns-cloudflare for DNS-01)
+# Requirements: bash, sudo/root, curl, tar, openssl, systemd, certbot, python3, (python3-certbot-dns-cloudflare for DNS-01)
 # Idempotency: safe to re-run; will skip existing assets & reuse prior configuration.
 
 APP_NAME="customer-management-portal"
-REPO_URL="${REPO_URL_OVERRIDE:-https://github.com/koyan04/customer-management-portal.git}"
+OWNER="koyan04"
+REPO="customer-management-portal"
 APP_DIR="/srv/cmp"
 BACKEND_DIR="$APP_DIR/backend"
 FRONTEND_DIR="$APP_DIR/frontend"
@@ -65,7 +75,7 @@ auto_install_node() {
 
 check_deps() {
   local missing=()
-  for c in git curl openssl certbot python3; do
+  for c in curl tar openssl certbot python3; do
     require_cmd "$c" || missing+=("$c")
   done
   if [ ${#missing[@]} -gt 0 ]; then
@@ -187,36 +197,39 @@ if [ -n "${CMP_INSTALL_EXPECTED_SHA256:-}" ]; then
   fi
 fi
 
-if [ ! -d "$APP_DIR/.git" ]; then
-  color "Cloning repository..."
-  git clone "$REPO_URL" "$APP_DIR"
-else
-  color "Repo exists - fetching updates..."
-  (cd "$APP_DIR" && git fetch --all --tags)
-fi
-
-# Optional checkout of a specific ref (tag/branch) to ensure updated migrations are present.
-# Behavior:
-#   - If CMP_CHECKOUT_REF is set, checkout that ref (branch, tag, or commit).
-#   - Else if CMP_SKIP_AUTO_CHECKOUT=1, leave current working copy as-is.
-#   - Else attempt to checkout the latest tag (annotated or lightweight) for deterministic installs.
-if [ -d "$APP_DIR/.git" ]; then
-  if [ -n "${CMP_CHECKOUT_REF:-}" ]; then
-    color "Checking out ref: $CMP_CHECKOUT_REF"
-    (cd "$APP_DIR" && git checkout "$CMP_CHECKOUT_REF") || die "Failed to checkout $CMP_CHECKOUT_REF"
-  elif [ "${CMP_SKIP_AUTO_CHECKOUT:-}" != "1" ]; then
-    # Determine latest tag (by commit date) and checkout it; fallback to current HEAD if none.
-    LATEST_TAG=$(cd "$APP_DIR" && git tag --sort=-creatordate | head -n1 || true)
-    if [ -n "$LATEST_TAG" ]; then
-      color "Auto-checkout latest tag: $LATEST_TAG"
-      (cd "$APP_DIR" && git checkout "$LATEST_TAG") || warn "Failed to checkout $LATEST_TAG; continuing on existing HEAD"
-    else
-      warn "No tags found; staying on current branch"
-    fi
-  else
-    warn "Skipping auto checkout per CMP_SKIP_AUTO_CHECKOUT=1"
+# Download and extract the release tarball
+FALLBACK_TAG="v1.0.15"
+fetch_latest_tag() {
+  local latest=""
+  latest=$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" \
+    | grep -m1 '"tag_name"' \
+    | sed -E 's/.*"tag_name" *: *"([^"]+)".*/\1/' || true)
+  if [ -n "$latest" ]; then
+    echo "$latest"
+    return 0
   fi
-fi
+  latest=$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/tags?per_page=1" \
+    | grep -m1 '"name"' \
+    | sed -E 's/.*"name" *: *"([^"]+)".*/\1/' || true)
+  if [ -n "$latest" ]; then
+    echo "$latest"
+    return 0
+  fi
+  echo "$FALLBACK_TAG"
+}
+
+TAG="${CMP_CHECKOUT_REF:-$(fetch_latest_tag)}"
+TARBALL_URL="https://github.com/${OWNER}/${REPO}/archive/refs/tags/${TAG}.tar.gz"
+
+color "Downloading release ${TAG}..."
+# Use a temporary directory for download and extraction
+TMP_DIR=$(mktemp -d)
+curl -fsSL "$TARBALL_URL" | tar -xz -C "$TMP_DIR" --strip-components=1 || die "Failed to download or extract release tarball."
+
+color "Moving application files to ${APP_DIR}..."
+# Use rsync to move files, which handles existing directories gracefully
+rsync -a "$TMP_DIR/" "$APP_DIR/" || die "Failed to move files to ${APP_DIR}"
+rm -rf "$TMP_DIR"
 
 # Install/refresh Cloudflare credentials for certbot (always rewrite to match chosen mode)
 if [ -f "$CF_CREDS_FILE" ]; then

@@ -40,7 +40,8 @@ fi
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y git curl openssl python3 python3-pip postgresql postgresql-contrib certbot python3-certbot-dns-cloudflare ca-certificates
+# git is no longer needed for the bootstrap/install process itself
+apt-get install -y curl openssl python3 python3-pip postgresql postgresql-contrib certbot python3-certbot-dns-cloudflare ca-certificates
 
 # Ensure curl is present for installer
 command -v curl >/dev/null 2>&1 || { echo "curl missing after install" >&2; exit 1; }
