@@ -2,7 +2,7 @@
 
 A full-stack portal for managing servers and their user accounts, with roles (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and performance features like a materialized view for user status.
 
-Current Version: `cmp ver 1.0.14`
+Current Version: `cmp ver 1.0.15`
 
 Repository: https://github.com/koyan04/customer-management-portal.git
 
@@ -42,7 +42,7 @@ Run the installer (as root):
 
 ```bash
 # Debian/Ubuntu bootstrap: installs prerequisites, then runs the installer
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.14/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.15/scripts/bootstrap.sh | bash"
 ```
 
 What the script does:
@@ -248,7 +248,7 @@ Example:
 
 ```bash
 # Download and verify
-curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/feature/admins-audit-redact/scripts/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.15/scripts/install.sh
 sha256sum install.sh
 export CMP_INSTALL_EXPECTED_SHA256=<paste-the-sha256>
 sudo bash install.sh
@@ -266,7 +266,7 @@ Note: For security, prefer downloading to a file, verifying, then executing inst
 Note: On non-Debian systems, install prerequisites (git, curl, openssl, python3, postgresql, certbot, python3-certbot-dns-cloudflare) and then run the installer directly:
 
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.14/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.15/scripts/install.sh | bash"
 ```
 
 ## Security considerations
@@ -427,7 +427,14 @@ Clients querying `/api/health` will see:
 
 ## Release notes (quick)
 
-- Release: cmp ver 1.0.14 (current)
+- Release: cmp ver 1.0.15 (current)
+  - Fix: Resolved a 500 Internal Server Error on the `GET /api/servers` endpoint caused by missing database columns.
+  - Feat: Enhanced the migration runner to automatically apply all individual SQL migration files.
+  - Feat: Added a script to seed safe, non-sensitive default application settings on new installations.
+  - Security: Removed committed secrets and user-uploaded files from the repository history.
+  - Security: Hardened `.gitignore` to prevent future commits of sensitive data.
+
+- Release: cmp ver 1.0.14
   - New: Windows hands-on installation guide (`WINDOWS_INSTALL.md`) with step-by-step manual instructions for installing on Windows and production guidance.
   - New: Optional Windows helper scripts in `scripts/`: `install-windows.ps1` (semi-automated helper), `WINDOWS_QUICKCHECK.ps1` (post-install verification), and `WINDOWS_FIX_PG_PATH.ps1` (Postgres PATH quick-fix).
   - Improved: Windows installer attempts (best-effort) for PostgreSQL via `winget`/`choco` and EnterpriseDB fallback; documented caveats in README and `WINDOWS_INSTALL.md`.
