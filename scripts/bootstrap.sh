@@ -9,28 +9,8 @@ set -euo pipefail
 
 OWNER="koyan04"
 REPO="customer-management-portal"
-FALLBACK_TAG="v1.0.14"
+TAG="v1.0.17"
 
-fetch_latest_tag() {
-  local latest=""
-  latest=$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" \
-    | grep -m1 '"tag_name"' \
-    | sed -E 's/.*"tag_name" *: *"([^"]+)".*/\1/' || true)
-  if [ -n "$latest" ]; then
-    echo "$latest"
-    return 0
-  fi
-  latest=$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/tags?per_page=1" \
-    | grep -m1 '"name"' \
-    | sed -E 's/.*"name" *: *"([^"]+)".*/\1/' || true)
-  if [ -n "$latest" ]; then
-    echo "$latest"
-    return 0
-  fi
-  echo "$FALLBACK_TAG"
-}
-
-TAG="${CMP_BOOTSTRAP_TAG_OVERRIDE:-$(fetch_latest_tag)}"
 INSTALLER_URL="https://raw.githubusercontent.com/${OWNER}/${REPO}/${TAG}/scripts/install.sh"
 
 if [ "${EUID}" -ne 0 ]; then
