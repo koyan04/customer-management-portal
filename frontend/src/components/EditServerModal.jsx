@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 function EditServerModal({ server, onClose, onSave }) {
   const { token: authToken } = useAuth();
@@ -39,7 +40,7 @@ function EditServerModal({ server, onClose, onSave }) {
     try {
       setSaving(true);
       setError('');
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const token = authToken || localStorage.getItem('token');
       await axios.put(`${backendOrigin}/api/servers/${server.id}`, formData, { headers: { Authorization: `Bearer ${token}` } });
       onSave && onSave(); // trigger refresh in parent

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import axios from 'axios';
 import GlassSelect from './GlassSelect.jsx';
 import { FaUserPlus } from 'react-icons/fa';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 function AddUserForm({ serverId, onUserAdded, onClose }) {
   const initialFormState = {
@@ -41,7 +42,7 @@ function AddUserForm({ serverId, onUserAdded, onClose }) {
         server_id: serverId,
         data_limit_gb: formData.service_type === 'Unlimited' ? null : formData.data_limit_gb,
       };
-  const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+  const backendOrigin = getBackendOrigin();
   const token = localStorage.getItem('token');
   await axios.post(backendOrigin + '/api/users', dataToSubmit, { headers: { Authorization: `Bearer ${token}` } });
       onUserAdded();

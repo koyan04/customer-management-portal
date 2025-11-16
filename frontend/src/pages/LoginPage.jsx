@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { FaLock, FaMoon, FaSun, FaDesktop } from 'react-icons/fa';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 function LoginPage() {
   const [username, setUsername] = useState('');
@@ -102,7 +103,7 @@ function LoginPage() {
     let mounted = true;
     (async () => {
       try {
-        const origin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? `${window.location.protocol}//${window.location.hostname}:3001` : '';
+        const origin = getBackendOrigin();
         const res = await fetch(origin + '/api/admin/public/settings/general');
         if (!res || !res.ok) return;
         const data = await res.json();
@@ -127,7 +128,8 @@ function LoginPage() {
     e.preventDefault();
     setError('');
     try {
-      const response = await axios.post('http://localhost:3001/api/auth/login', {
+      const origin = getBackendOrigin();
+      const response = await axios.post(origin + '/api/auth/login', {
         username,
         password,
       });

@@ -7,6 +7,7 @@ import MatviewStatus from '../components/MatviewStatus.jsx';
 import Modal from '../components/Modal.jsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import formatWithAppTZ, { isSameDayInAppTZ } from '../lib/timezone';
+import { getBackendOrigin } from '../lib/backendOrigin';
 import TopProgressBar from '../components/TopProgressBar.jsx';
 
 function AdminPanelPage() {
@@ -33,7 +34,7 @@ function AdminPanelPage() {
 
       // normalize servers response to always be an array
       try {
-        const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+        const backendOrigin = getBackendOrigin();
         const rs = await axios.get(backendOrigin + '/api/servers', { headers: { Authorization: `Bearer ${token}` } });
         const d2 = rs.data;
         const normalized2 = Array.isArray(d2) ? d2 : (d2 && Array.isArray(d2.data) ? d2.data : (d2 && Array.isArray(d2.servers) ? d2.servers : []));
@@ -95,7 +96,7 @@ function AdminPanelPage() {
       try {
         const idsToFetch = filteredAndPaged.filter(a => a && a.id).map(a => a.id).filter(id => typeof serverAdminCounts[id] === 'undefined');
         if (!idsToFetch.length) return;
-        const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+        const backendOrigin = getBackendOrigin();
         // fetch per-admin server-admin list in parallel
         const promises = idsToFetch.map(id => axios.get(backendOrigin + `/api/admin/server-admins/${id}`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => ({ data: { server_ids: [] } })) );
         const results = await Promise.all(promises);
@@ -119,7 +120,7 @@ function AdminPanelPage() {
       try {
         const ids = filteredAndPaged.filter(a => a && a.id).map(a => a.id).filter(id => typeof lastSeenMap[id] === 'undefined');
         if (!ids.length) return;
-        const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+        const backendOrigin = getBackendOrigin();
         const reqs = ids.map(id => axios.get(backendOrigin + `/api/admin/accounts/${id}/login-audit`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => ({ data: [] })));
         const res = await Promise.all(reqs);
         const updates = {};
@@ -176,7 +177,7 @@ function AdminPanelPage() {
     setAuditErr(null);
     setAuditRows([]);
     try {
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const r = await axios.get(backendOrigin + `/api/admin/accounts/${acct.id}/login-audit`, { headers: { Authorization: `Bearer ${token}` } });
       const rows = Array.isArray(r.data) ? r.data : (Array.isArray(r.data?.rows) ? r.data.rows : []);
       setAuditRows(rows);
@@ -280,7 +281,7 @@ function AdminPanelPage() {
               <div className="account-avatar" aria-hidden style={{ backgroundColor: bgColor }}>
                 {a.avatar_url ? (
                   (function(){
-                    const base = a.avatar_url.startsWith('http') ? a.avatar_url : `${window.location.protocol}//${window.location.hostname}:${3001}${a.avatar_url}`;
+                    const base = a.avatar_url.startsWith('http') ? a.avatar_url : `${getBackendOrigin()}${a.avatar_url}`;
                     const sep = base.includes('?') ? '&' : '?';
                     return <img src={`${base}${sep}v=${refreshTick}`} alt="avatar" />;
                   })()

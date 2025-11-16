@@ -10,6 +10,7 @@ import ImportModeModal from '../components/ImportModeModal.jsx';
 import EditUserModal from '../components/EditUserModal.jsx';
 import UserTable from '../components/UserTable.jsx';
 import { motion } from 'framer-motion';
+import { getBackendOrigin } from '../lib/backendOrigin';
 import { useToast } from '../context/ToastContext.jsx';
 
 function ServerDetailPage() {
@@ -45,7 +46,7 @@ function ServerDetailPage() {
   const fetchPageData = useCallback(async () => {
     try {
       setLoading(true);
-  const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+  const backendOrigin = getBackendOrigin();
   const token = authToken || localStorage.getItem('token');
       const [serverResponse, usersResponse] = await Promise.all([
         axios.get(`${backendOrigin}/api/servers/${id}`, { headers: { Authorization: `Bearer ${token}` } }),
@@ -125,7 +126,7 @@ function ServerDetailPage() {
   // Import/Export handlers
   const doExport = async () => {
     try {
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const token = authToken || localStorage.getItem('token');
       const res = await axios.get(`${backendOrigin}/api/users/server/${id}/export.xlsx`, { headers: { Authorization: `Bearer ${token}` }, responseType: 'blob' });
       const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -144,7 +145,7 @@ function ServerDetailPage() {
 
   const doTemplate = async () => {
     try {
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const token = authToken || localStorage.getItem('token');
       const res = await axios.get(`${backendOrigin}/api/users/server/${id}/template.xlsx`, { headers: { Authorization: `Bearer ${token}` }, responseType: 'blob' });
       const blob = new Blob([res.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -174,7 +175,7 @@ function ServerDetailPage() {
   const runImportWithMode = async (mode) => {
     try {
       if (!pendingImportFile) return;
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const token = authToken || localStorage.getItem('token');
       const form = new FormData();
       form.append('file', pendingImportFile);
@@ -210,7 +211,7 @@ function ServerDetailPage() {
   
   const handleDelete = async () => {
     try {
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const token = localStorage.getItem('token');
       await axios.delete(`${backendOrigin}/api/users/${userToDelete.id}`, { headers: { Authorization: `Bearer ${token}` } });
       setUserToDelete(null);
@@ -233,7 +234,7 @@ function ServerDetailPage() {
   // Quick renew: add months to user's expire_date
   const handleQuickRenew = async (user, months) => {
     try {
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const token = authToken || localStorage.getItem('token');
       // compute new expire_date on client without timezone drift: if expired, start from today; else from current date-only
       const pad2 = (n) => (n < 10 ? '0' + n : '' + n);

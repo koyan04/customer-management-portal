@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { FaPlus, FaServer } from 'react-icons/fa';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 export default function ServerListPage() {
   const [servers, setServers] = useState([]);
@@ -15,7 +16,7 @@ export default function ServerListPage() {
   const fetchServers = useCallback(async () => {
     if (!token) return;
     try {
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const response = await axios.get(backendOrigin + '/api/servers', { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true });
       if (response.status === 401 || response.status === 403) {
         return; // token invalid/expired; AuthProvider will redirect

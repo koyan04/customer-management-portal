@@ -15,7 +15,9 @@ if ! grep -Fq "$EXPECTED_REPO_URL" README.md; then
   add_failure "README.md is missing repository URL $EXPECTED_REPO_URL"
 fi
 
-if git grep -n "koyan-testpilot" -- . >/dev/null 2>&1; then
+# Exclude this check file from the grep to avoid self-matching
+if git grep -n "koyan-testpilot" -- . \
+  | grep -v "scripts/ci/check_release_requirements.sh" >/dev/null 2>&1; then
   add_failure "Found legacy 'koyan-testpilot' references. Remove them."
 fi
 

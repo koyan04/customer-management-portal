@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import axios from 'axios';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 // The component now accepts an 'onCancel' prop
 function AddServerForm({ onServerAdded, onCancel }) {
@@ -22,7 +23,7 @@ function AddServerForm({ onServerAdded, onCancel }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     try {
-  const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+  const backendOrigin = getBackendOrigin();
   const token = localStorage.getItem('token');
   await axios.post(backendOrigin + '/api/servers', formData, { headers: { Authorization: `Bearer ${token}` } });
       onServerAdded(); // This now calls handleServerAdded in App.jsx

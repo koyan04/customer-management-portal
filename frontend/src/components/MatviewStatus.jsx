@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext.jsx';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 function formatTs(iso) {
   if (!iso) return '—';
@@ -25,7 +26,7 @@ export default function MatviewStatus() {
     setLoading(true);
     setError(null);
     try {
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const r = await axios.get(backendOrigin + '/api/admin/matviews', { headers });
       setData(r.data);
     } catch (e) {
@@ -52,7 +53,7 @@ export default function MatviewStatus() {
   const trigger = async (mode = 'enqueue') => {
     setError(null);
     try {
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       await axios.post(backendOrigin + `/api/admin/matviews/user_status_matview/refresh?mode=${mode}`, {}, { headers });
       // optimistic: set refreshing state and poll
       setRefreshing(true);

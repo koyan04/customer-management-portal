@@ -3,6 +3,7 @@ import axios from 'axios';
 import GlassSelect from './GlassSelect.jsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 function EditUserModal({ user, onClose, onSave }) {
   const { token: authToken } = useAuth();
@@ -78,7 +79,7 @@ function EditUserModal({ user, onClose, onSave }) {
       setSaving(true);
       setError('');
   const dataToSubmit = { ...formData, data_limit_gb: formData.service_type === 'Unlimited' ? null : formData.data_limit_gb };
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+        const backendOrigin = getBackendOrigin();
       const token = authToken || localStorage.getItem('token');
   const res = await axios.put(`${backendOrigin}/api/users/${user.id}`, dataToSubmit, { headers: { Authorization: `Bearer ${token}` } });
   const updated = res && res.data ? res.data : null;

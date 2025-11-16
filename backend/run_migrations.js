@@ -54,13 +54,13 @@ function splitSqlStatements(sql) {
 }
 
 async function run() {
-  const file = path.join(__dirname, 'migrations.sql');
-  if (!fs.existsSync(file)) {
-    console.error('migrations.sql not found at', file);
+  const bootstrapFile = path.join(__dirname, 'migrations.sql');
+  if (!fs.existsSync(bootstrapFile)) {
+    console.error('migrations.sql not found at', bootstrapFile);
     process.exit(1);
   }
 
-  const sql = fs.readFileSync(file, 'utf8');
+  const sql = fs.readFileSync(bootstrapFile, 'utf8');
   try {
     // Bootstrap critical tables defensively to avoid "relation users does not exist" when indexes run early
     console.log('Running migrations...');
@@ -102,7 +102,7 @@ async function run() {
 
     // execute the whole file contents; pg supports multi-statement queries
     await pool.query(sql);
-    console.log('Migrations applied successfully');
+    console.log('Base migrations.sql applied successfully');
   } catch (err) {
     console.error('Error applying migrations (batch mode):', err.message || err);
     // Fallback: run sequentially and ignore specific undefined-table errors to recover mixed-state installs
@@ -125,11 +125,47 @@ async function run() {
           throw e;
         }
       }
-      console.log('Migrations applied successfully (sequential fallback)');
+      console.log('Base migrations.sql applied successfully (sequential fallback)');
     } catch (e2) {
       console.error('Error applying migrations (sequential mode):', e2 && e2.message ? e2.message : e2);
       process.exitCode = 2;
     }
+  }
+
+  // After base file, also apply any additional .sql files in ./migrations (sorted)
+  try {
+    const dir = path.join(__dirname, 'migrations');
+    if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
+      const files = fs.readdirSync(dir)
+        .filter(f => f.toLowerCase().endsWith('.sql'))
+        .sort((a, b) => a.localeCompare(b));
+      for (const f of files) {
+        const full = path.join(dir, f);
+        const content = fs.readFileSync(full, 'utf8');
+        const parts = splitSqlStatements(content);
+        console.log(`[migrate] applying ${f} (${parts.length} statements)`);
+        for (let i = 0; i < parts.length; i++) {
+          const stmt = parts[i];
+          try {
+            await pool.query(stmt);
+          } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            const code = e && e.code ? e.code : null;
+            // tolerate undefined table/column to allow idempotent re-runs on partially initialized DBs
+            if (code === '42P01' || /does not exist/i.test(msg)) {
+              console.warn(`[migrate] (${f}) ignoring error at stmt ${i + 1}:`, msg.split('\n')[0]);
+              continue;
+            }
+            console.error(`[migrate] (${f}) statement ${i + 1} failed:`, msg);
+            throw e;
+          }
+        }
+        console.log(`[migrate] applied ${f}`);
+      }
+    }
+  } catch (err) {
+    console.error('[migrate] error applying per-file migrations:', err && err.message ? err.message : err);
+    process.exitCode = 2;
   } finally {
     await pool.end();
   }

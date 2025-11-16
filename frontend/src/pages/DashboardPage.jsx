@@ -5,6 +5,7 @@ import { FaServer, FaUsers, FaCheckCircle, FaExclamationTriangle, FaTimesCircle,
 import { Link } from 'react-router-dom';
 import Modal from '../components/Modal.jsx';
 import formatWithAppTZ from '../lib/timezone';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 function DashboardPage() {
   const [servers, setServers] = useState([]);
@@ -23,7 +24,7 @@ function DashboardPage() {
   const [health, setHealth] = useState({ features: null, matview: { refreshing: null } }); // referenced for future feature flags
   const [showRefreshing, setShowRefreshing] = useState(false);
 
-  const backendOrigin = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) ? 'http://localhost:3001' : '';
+  const backendOrigin = useMemo(() => getBackendOrigin(), []);
 
   const fetchAll = useCallback(async () => {
     if (!token) return;

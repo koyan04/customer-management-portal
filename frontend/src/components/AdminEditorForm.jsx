@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import Modal from './Modal';
 import { FaKey, FaServer } from 'react-icons/fa';
 import './AdminEditorForm.mobile.css';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 export default function AdminEditorForm({ isOpen, onClose, onSaved, account, servers = [] }) {
   const { token, user: authUser } = useAuth();
@@ -29,8 +30,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
     if (!url) return url;
     try {
       if (url.startsWith('http://') || url.startsWith('https://')) return url;
-      // assume server running on :3001 in dev
-      const origin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? `${window.location.protocol}//${window.location.hostname}:3001` : '';
+      const origin = getBackendOrigin();
       return origin + url;
     } catch (e) { return url; }
   };
@@ -208,7 +208,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
         try {
           // use XMLHttpRequest to get upload progress events
           const headers = { 'Authorization': `Bearer ${token}` };
-          const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+          const backendOrigin = getBackendOrigin();
           const url = backendOrigin + (isEdit ? `/api/admin/accounts/${editorId}` : '/api/admin/accounts');
           setUploadProgress(0);
           const method = isEdit ? 'PUT' : 'POST';
@@ -245,7 +245,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
       }
 
       // update viewer/server permissions (use backend origin so requests go to Express server, not vite dev proxy)
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
 
       // If the account is a global ADMIN, we want to clear any server/viewer scoped permissions
       // so that admins don't retain server-scoped restrictions. Send empty arrays and also

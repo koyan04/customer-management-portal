@@ -7,6 +7,7 @@ import { FaArrowUp, FaTachometerAlt, FaChartBar, FaListUl, FaTools, FaCog, FaSea
 import AdminEditorForm from './components/AdminEditorForm';
 import { FaUser, FaSignOutAlt, FaLeaf, FaMoon, FaSun, FaDesktop, FaCheck, FaTelegramPlane } from 'react-icons/fa';
 import axios from 'axios';
+import { getBackendOrigin } from './lib/backendOrigin';
 // import ConfirmModal from './components/ConfirmModal.jsx';
 import IdleToast from './components/IdleToast.jsx';
 import AboutModal from './components/AboutModal.jsx';
@@ -91,7 +92,7 @@ function App() {
 
   // Fetch General settings (public)
   useEffect(() => {
-    const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? `${window.location.protocol}//${window.location.hostname}:3001` : '';
+    const backendOrigin = getBackendOrigin();
     // Also fetch health to surface app version in footer
     const fetchHealth = async () => {
       try {
@@ -160,7 +161,7 @@ function App() {
             el.setAttribute('data-logo-url', general && general.logo_url ? general.logo_url : '');
             const img = el.querySelector('.main-logo-img');
             if (img) {
-              const origin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? `${window.location.protocol}//${window.location.hostname}:3001` : '';
+              const origin = backendOrigin;
               const url1x = general && general.logo_url ? (origin + general.logo_url) : '';
               const url2x = general && general.logo_url_2x ? (origin + general.logo_url_2x) : '';
               if (url1x) {
@@ -353,7 +354,7 @@ function App() {
       try {
         if (p.avatar_url.startsWith('http://') || p.avatar_url.startsWith('https://')) return p.avatar_url;
         // when developing locally, backend runs on :3001
-        const origin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? `${window.location.protocol}//${window.location.hostname}:3001` : '';
+        const origin = getBackendOrigin();
         const base = origin + p.avatar_url;
         try {
           const v = localStorage.getItem('avatar_refresh');
@@ -373,7 +374,7 @@ function App() {
       // determine id from profile or localStorage
       const id = profile?.id || (profile && profile.user && profile.user.id) || (() => { try { const s = localStorage.getItem('user'); return s ? JSON.parse(s).id : null; } catch(e){ return null; } })();
       if (!id) return;
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const res = await fetch(backendOrigin + `/api/admin/accounts/me`, { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
         const data = await res.json();
@@ -479,7 +480,7 @@ function App() {
     (async () => {
       try {
         if (!token) return;
-        const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+        const backendOrigin = getBackendOrigin();
   const rs = await axios.get(backendOrigin + '/api/servers', { headers: { Authorization: `Bearer ${token}` }, validateStatus: () => true });
   if (rs.status === 401 || rs.status === 403) return;
         if (cancelled) return;
@@ -711,7 +712,7 @@ function App() {
         version={appVersion}
         gitSha={appGitSha}
         buildTimestamp={appBuildTs}
-        backendOrigin={(typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) ? `${window.location.protocol}//${window.location.hostname}:3001` : ''}
+        backendOrigin={getBackendOrigin()}
       />
       <BackToTop />
       <IdleToast isOpen={idleWarning.show} remainingMs={idleWarning.remainingMs} onExtend={extendSession} onClose={() => setIdleWarning({ show: false, remainingMs: 0 })} />

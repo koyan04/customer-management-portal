@@ -5,6 +5,7 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext.jsx';
 import { FaSave, FaFlask, FaSyncAlt, FaDatabase, FaRobot, FaServer, FaCloudDownloadAlt, FaEye, FaEyeSlash, FaPowerOff, FaClock, FaCalendarAlt, FaCheckCircle, FaExclamationTriangle, FaHistory, FaShieldAlt } from 'react-icons/fa';
 import { MdTune } from 'react-icons/md';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 export default function SettingsPage() {
   const TOKEN_MASK = '********';
@@ -21,7 +22,7 @@ export default function SettingsPage() {
 
   // auth and API base
   const { token } = useAuth();
-  const backendOrigin = useMemo(() => (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '', []);
+  const backendOrigin = useMemo(() => getBackendOrigin(), []);
   const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   // form states

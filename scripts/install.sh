@@ -39,6 +39,7 @@ CF_CREDS_FILE="/root/.cloudflare.ini"
 SYSTEMD_DIR="/etc/systemd/system"
 BACKEND_SERVICE="cmp-backend.service"
 BOT_SERVICE="cmp-telegram-bot.service"
+ROOT_ENV="$APP_DIR/.env"
 
 color() { echo -e "\033[1;32m$1\033[0m"; }
 warn() { echo -e "\033[1;33m$1\033[0m"; }
@@ -304,6 +305,31 @@ else
   fi
 fi
 
+# Also ensure a top-level .env exists with DB_* so scripts run from $APP_DIR work
+DB_HOST_ROOT=$(grep '^DB_HOST=' "$ENV_FILE" | cut -d= -f2-)
+DB_PORT_ROOT=$(grep '^DB_PORT=' "$ENV_FILE" | cut -d= -f2-)
+DB_DATABASE_ROOT=$(grep '^DB_DATABASE=' "$ENV_FILE" | cut -d= -f2-)
+DB_USER_ROOT=$(grep '^DB_USER=' "$ENV_FILE" | cut -d= -f2-)
+DB_PASSWORD_ROOT=$(grep '^DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
+if [ ! -f "$ROOT_ENV" ]; then
+  cat > "$ROOT_ENV" <<EOF
+DB_HOST=$DB_HOST_ROOT
+DB_PORT=$DB_PORT_ROOT
+DB_DATABASE=$DB_DATABASE_ROOT
+DB_USER=$DB_USER_ROOT
+DB_PASSWORD=$DB_PASSWORD_ROOT
+EOF
+  chmod 600 "$ROOT_ENV"
+  color ".env created at $ROOT_ENV (DB settings)"
+else
+  for k in DB_HOST DB_PORT DB_DATABASE DB_USER DB_PASSWORD; do
+    if ! grep -q "^${k}=" "$ROOT_ENV"; then
+      v=$(grep "^${k}=" "$ENV_FILE" | cut -d= -f2-)
+      echo "${k}=${v}" >> "$ROOT_ENV"
+    fi
+  done
+fi
+
 # Database preparation (PostgreSQL local assumed)
 color "Preparing database..."
 # Create role & DB if not exist (best-effort)
@@ -326,11 +352,18 @@ if [ -f "$BACKEND_DIR/seedUsers.js" ]; then
   (cd "$BACKEND_DIR" && node seedUsers.js)
 fi
 
+# Seed default app settings (general/database/panel) without secrets
+if [ -f "$BACKEND_DIR/scripts/seed_default_settings.js" ]; then
+  color "Seeding default app settings (non-sensitive)"
+  (cd "$BACKEND_DIR" && node scripts/seed_default_settings.js || warn "Default settings seed failed; continuing")
+fi
+
 # Certificate issuance (DNS-01 via Cloudflare, optional HTTP fallback)
 CERT_PRIMARY_PATH="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
 ALL_DOMAINS=("$DOMAIN" "${EXTRA_DOMAINS[@]}")
 build_domain_args() { for host in "${ALL_DOMAINS[@]}"; do printf -- " -d %s" "$host"; done; }
 
+CERT_OK=0
 if [ "${CMP_SKIP_CERT:-}" = "1" ]; then
   warn "Skipping certificate issuance per CMP_SKIP_CERT=1"
 else
@@ -364,18 +397,21 @@ else
         FB_EXIT=$?
         set -e
         if [ $FB_EXIT -ne 0 ]; then
-          die "HTTP-01 fallback also failed (exit $FB_EXIT)"
+          warn "HTTP-01 fallback also failed (exit $FB_EXIT). Proceeding without TLS."
         else
           color "HTTP-01 fallback succeeded"
+          CERT_OK=1
         fi
       else
-        die "Certificate issuance failed (DNS-01) and fallback disabled (set CMP_CERT_HTTP_FALLBACK=1 to enable)"
+        warn "Certificate issuance failed (DNS-01) and fallback disabled. Proceeding without TLS."
       fi
     else
       color "Certificate issuance succeeded"
+      CERT_OK=1
     fi
   else
     warn "Certificate already present for $DOMAIN; skipping issuance"
+    CERT_OK=1
   fi
 fi
 
@@ -463,7 +499,8 @@ if [ "$CMP_ENABLE_NGINX" = "1" ]; then
     color "Configuring nginx for $DOMAIN..."
     mkdir -p /var/www/letsencrypt
     NCONF="/etc/nginx/sites-available/cmp-$DOMAIN.conf"
-  cat > "$NCONF" <<EOF
+    if [ "$CERT_OK" -eq 1 ]; then
+      cat > "$NCONF" <<EOF
 upstream cmp_backend {
     server 127.0.0.1:$BACKEND_PORT;
     keepalive 32;
@@ -478,8 +515,8 @@ server {
         root /var/www/letsencrypt;
     }
 
-  location / {
-    return 301 https://\$host\$request_uri;
+    location / {
+        return 301 https://\$host\$request_uri;
     }
 }
 
@@ -493,27 +530,51 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_prefer_server_ciphers on;
 
-  location /uploads/ {
-    proxy_pass http://cmp_backend;
-    proxy_http_version 1.1;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-    expires 1h;
-    add_header Cache-Control "public";
-  }
+    location /uploads/ {
+        proxy_pass http://cmp_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        expires 1h;
+        add_header Cache-Control "public";
+    }
 
-  location / {
-    proxy_pass http://cmp_backend;
-    proxy_http_version 1.1;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto \$scheme;
-  }
+    location / {
+        proxy_pass http://cmp_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
 }
 EOF
+    else
+      cat > "$NCONF" <<EOF
+upstream cmp_backend {
+    server 127.0.0.1:$BACKEND_PORT;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $DOMAIN;
+
+    location / {
+        proxy_pass http://cmp_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+      warn "TLS not configured; serving HTTP only. Re-run installer with valid Cloudflare credentials or obtain certs later."
+    fi
     ln -sf "$NCONF" "/etc/nginx/sites-enabled/cmp-$DOMAIN.conf"
     if nginx -t; then
       systemctl restart nginx

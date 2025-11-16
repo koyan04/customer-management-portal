@@ -5,6 +5,7 @@ import { FaCopy, FaPaste, FaKey, FaSearch, FaPlus, FaTimes, FaTrash, FaUser } fr
 import { useToast } from '../context/ToastContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import ConfirmModal from '../components/ConfirmModal.jsx';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 function KeyManagementInner() {
   const { id } = useParams(); // server id
@@ -27,7 +28,7 @@ function KeyManagementInner() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [keyToDelete, setKeyToDelete] = useState(null);
 
-  const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+  const backendOrigin = getBackendOrigin();
 
   const fetchKeys = useCallback(async () => {
     try {

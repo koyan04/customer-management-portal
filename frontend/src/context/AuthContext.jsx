@@ -1,4 +1,5 @@
 import { createContext, useState, useContext, useMemo, useEffect, useRef } from 'react';
+import { getBackendOrigin } from '../lib/backendOrigin';
 import { useNavigate } from 'react-router-dom';
 
 // lightweight JWT payload decoder (no external dependency)
@@ -55,7 +56,7 @@ export const AuthProvider = ({ children }) => {
   // call refresh endpoint (cookie-based) to rotate refresh token and return new access token
   const refreshWithCookie = async () => {
     try {
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const res = await fetch(backendOrigin + '/api/auth/refresh', { method: 'POST', credentials: 'include' });
       if (!res || !res.ok) return null;
       const data = await res.json();
@@ -74,7 +75,7 @@ export const AuthProvider = ({ children }) => {
     return () => {
       (async () => {
         try {
-          const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+          const backendOrigin = getBackendOrigin();
           // Call logout endpoint which clears the refresh cookie and server-side row
           await fetch(backendOrigin + '/api/auth/logout', { method: 'POST', credentials: 'include', headers: {} }).catch(() => {});
         } catch (e) {}

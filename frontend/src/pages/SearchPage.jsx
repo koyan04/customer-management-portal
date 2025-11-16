@@ -5,6 +5,7 @@ import axios from 'axios';
 import { FaSearch, FaExternalLinkAlt, FaClock, FaMagic } from 'react-icons/fa';
 import formatWithAppTZ from '../lib/timezone';
 import { useNavigate } from 'react-router-dom';
+import { getBackendOrigin } from '../lib/backendOrigin';
 
 // Simple utility to add months (preserving day when possible) and return YYYY-MM-DD
 function addMonths(dateStr, months) {
@@ -40,7 +41,7 @@ function SearchPage() {
   const { token, user } = useAuth();
   const role = user?.user?.role || user?.role || null;
   const navigate = useNavigate();
-  const backendOrigin = (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) ? 'http://localhost:3001' : '';
+  const backendOrigin = getBackendOrigin();
   const [query, setQuery] = useState('');
   const [pendingQuery, setPendingQuery] = useState('');
   const [results, setResults] = useState([]);

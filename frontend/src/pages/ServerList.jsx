@@ -3,6 +3,7 @@ import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { FaCog, FaTrashAlt, FaUser, FaCogs, FaNetworkWired, FaGlobe, FaRegCopy, FaCheck, FaArrowsAlt, FaGripVertical, FaSave, FaTimes } from 'react-icons/fa';
+import { getBackendOrigin } from '../lib/backendOrigin';
 // Corrected import paths below
 import ConfirmModal from '../components/ConfirmModal.jsx';
 import EditServerModal from '../components/EditServerModal.jsx';
@@ -27,7 +28,7 @@ function ServerList({ servers, fetchServers }) {
 
   const fetchMyServerAdmins = useCallback(async () => {
     try {
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const token = localStorage.getItem('token');
       const res = await axios.get(`${backendOrigin}/api/my-server-admins`, { headers: { Authorization: `Bearer ${token}` } });
       const list = res && res.data && Array.isArray(res.data.server_admin_for) ? res.data.server_admin_for : (res && res.data && res.data.server_admin_for ? res.data.server_admin_for : []);
@@ -52,7 +53,7 @@ function ServerList({ servers, fetchServers }) {
   const handleDelete = async (id) => {
     try {
       const token = localStorage.getItem('token');
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       await axios.delete(`${backendOrigin}/api/servers/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -114,7 +115,7 @@ function ServerList({ servers, fetchServers }) {
   const saveOrder = async () => {
     try {
       const token = localStorage.getItem('token');
-      const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'http://localhost:3001' : '';
+      const backendOrigin = getBackendOrigin();
       const ids = (localOrder || []).map(s => s.id);
       await axios.put(`${backendOrigin}/api/servers/order`, { ids }, { headers: { Authorization: `Bearer ${token}` } });
       setReorderMode(false);
