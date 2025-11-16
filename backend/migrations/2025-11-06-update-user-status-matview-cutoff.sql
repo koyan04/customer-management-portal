@@ -1,6 +1,5 @@
--- Update user_status_matview to use end-of-day cutoff semantics
--- cutoff = (expire_date::date + interval '1 day') at 00:00 local time
--- expired: cutoff <= now(); soon: now() < cutoff <= now() + interval '1 day'; active: cutoff > now() + interval '1 day'
+-- Update user_status_matview cutoff: compute at next-day midnight (local)
+-- Status groups: expired | soon | active
 
 DROP MATERIALIZED VIEW IF EXISTS user_status_matview;
 

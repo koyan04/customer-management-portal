@@ -7,10 +7,41 @@ function splitSqlStatements(sql) {
   const stmts = [];
   let buf = '';
   let inSingle = false, inDouble = false, inDollar = false;
+  let inLineComment = false, inBlockComment = false;
   let dollarTag = null;
   for (let i = 0; i < sql.length; i++) {
     const ch = sql[i];
     const next2 = sql.slice(i, i + 2);
+
+    // Handle exiting comments
+    if (inLineComment) {
+      if (ch === '\n') {
+        inLineComment = false;
+        buf += ch; // preserve newline boundaries
+      }
+      continue;
+    }
+    if (inBlockComment) {
+      if (next2 === '*/') {
+        inBlockComment = false;
+        i++; // skip '*'
+      }
+      continue;
+    }
+
+    // Handle start of comments when not in quotes/dollar
+    if (!inSingle && !inDouble && !inDollar) {
+      if (next2 === '--') {
+        inLineComment = true;
+        i++; // skip second '-'
+        continue;
+      }
+      if (next2 === '/*') {
+        inBlockComment = true;
+        i++; // skip '*'
+        continue;
+      }
+    }
 
     // Handle start/end of dollar-quoted block: $$ or $tag$ ... $tag$
     if (!inSingle && !inDouble) {
