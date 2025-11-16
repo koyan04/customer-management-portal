@@ -428,7 +428,12 @@ Clients querying `/api/health` will see:
 
 ## Release notes (quick)
 
-- Release: cmp ver 1.1.0 (latest)
+- Release: cmp ver 1.1.1 (latest)
+  - Fix: Pricing defaults migration (`2025-10-23-add-pricing-defaults.sql`) failed with `invalid input syntax for type integer: "system_migration"` due to writing a textual value into the `updated_by` integer column guarded by a trigger. Migration updated to temporarily drop the enforcement trigger, insert/update pricing keys without `updated_by`, then recreate the trigger. Safe for fresh installs and upgrades.
+  - Chore: VERSION bumped to 1.1.1.
+  - Upgrade: If you already installed 1.1.0 and saw the migration error, pull main and re-run `node run_migrations.js` (or apply the one-off SQL in the release notes). Otherwise a fresh 1.1.1 install needs no manual intervention.
+
+- Release: cmp ver 1.1.0
   - Stable installer and migration fixes. Bootstrap and installer scripts now lock to tagged releases and remove dynamic fetching that caused mismatches. Includes the general settings migration fix (`updated_by`).
 
 - Release: cmp ver 1.0.20
