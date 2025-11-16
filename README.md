@@ -2,7 +2,7 @@
 
 A full-stack portal for managing servers and their user accounts, with roles (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and performance features like a materialized view for user status.
 
-Current Version: `cmp ver 1.0.20`
+Current Version: `cmp ver 1.1.0`
 
 Repository: https://github.com/koyan04/customer-management-portal.git
 
@@ -42,7 +42,7 @@ Run the installer (as root):
 
 ```bash
 # Debian/Ubuntu bootstrap: installs prerequisites, then runs the installer
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.20/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.1.0/scripts/bootstrap.sh | bash"
 ```
 
 What the script does:
@@ -249,7 +249,7 @@ Example:
 
 ```bash
 # Download and verify
-curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.20/scripts/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.1.0/scripts/install.sh
 sha256sum install.sh
 export CMP_INSTALL_EXPECTED_SHA256=<paste-the-sha256>
 sudo bash install.sh
@@ -267,7 +267,7 @@ Note: For security, prefer downloading to a file, verifying, then executing inst
 Note: On non-Debian systems, install prerequisites (curl, tar, openssl, python3, postgresql, certbot, python3-certbot-dns-cloudflare) and then run the installer directly:
 
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.20/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.1.0/scripts/install.sh | bash"
 ```
 
 ## Security considerations
@@ -288,7 +288,7 @@ Keep production secure by default:
 You can pin and verify the installer script:
 
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.20/scripts/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.1.0/scripts/install.sh
 sha256sum install.sh
 # Optionally export expected hash then run
 export CMP_INSTALL_EXPECTED_SHA256=<paste-output-sha>
@@ -428,10 +428,10 @@ Clients querying `/api/health` will see:
 
 ## Release notes (quick)
 
-- Release: cmp ver 1.0.20 (latest)
-  - Fix: The installer was still attempting to download an old release due to an incorrect version tag in the `install.sh` script. All scripts are now correctly locked to `v1.0.20`. This is the definitive fix for the installation loop.
+- Release: cmp ver 1.1.0 (latest)
+  - Stable installer and migration fixes. Bootstrap and installer scripts now lock to tagged releases and remove dynamic fetching that caused mismatches. Includes the general settings migration fix (`updated_by`).
 
-- Release: cmp ver 1.0.19
+- Release: cmp ver 1.0.20
   - Fix: A database migration script was failing due to a missing `updated_by` value required by a trigger. The migration has been corrected.
   - Chore: All installer scripts are now locked to this stable version to prevent any future versioning conflicts.
 
