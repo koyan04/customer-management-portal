@@ -198,7 +198,7 @@ if [ -n "${CMP_INSTALL_EXPECTED_SHA256:-}" ]; then
 fi
 
 # Download and extract the release tarball
-TAG="${CMP_CHECKOUT_REF:-v1.0.19}"
+TAG="${CMP_CHECKOUT_REF:-v1.0.20}"
 TARBALL_URL="https://github.com/${OWNER}/${REPO}/archive/refs/tags/${TAG}.tar.gz"
 
 color "Downloading release ${TAG}..."
