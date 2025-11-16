@@ -12,7 +12,7 @@ BEGIN
 			'price_unlimited', 0,
 			'currency', 'USD'
 		);
-		INSERT INTO app_settings (settings_key, data, updated_by, updated_at) VALUES ('general', next, NULL, now()) ON CONFLICT (settings_key) DO NOTHING;
+		INSERT INTO app_settings (settings_key, data, updated_by, updated_at) VALUES ('general', next, 'system_migration', now()) ON CONFLICT (settings_key) DO NOTHING;
 	ELSE
 		next := existing || jsonb_build_object(
 			'price_mini', COALESCE(existing->>'price_mini', '0')::numeric,
@@ -20,7 +20,7 @@ BEGIN
 			'price_unlimited', COALESCE(existing->>'price_unlimited', '0')::numeric,
 			'currency', COALESCE(existing->>'currency', 'USD')
 		);
-		UPDATE app_settings SET data = next, updated_at = now() WHERE settings_key = 'general';
+		UPDATE app_settings SET data = next, updated_at = now(), updated_by = 'system_migration' WHERE settings_key = 'general';
 	END IF;
 END$$;
 
