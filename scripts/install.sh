@@ -198,27 +198,7 @@ if [ -n "${CMP_INSTALL_EXPECTED_SHA256:-}" ]; then
 fi
 
 # Download and extract the release tarball
-FALLBACK_TAG="v1.0.15"
-fetch_latest_tag() {
-  local latest=""
-  latest=$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" \
-    | grep -m1 '"tag_name"' \
-    | sed -E 's/.*"tag_name" *: *"([^"]+)".*/\1/' || true)
-  if [ -n "$latest" ]; then
-    echo "$latest"
-    return 0
-  fi
-  latest=$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/tags?per_page=1" \
-    | grep -m1 '"name"' \
-    | sed -E 's/.*"name" *: *"([^"]+)".*/\1/' || true)
-  if [ -n "$latest" ]; then
-    echo "$latest"
-    return 0
-  fi
-  echo "$FALLBACK_TAG"
-}
-
-TAG="${CMP_CHECKOUT_REF:-$(fetch_latest_tag)}"
+TAG="${CMP_CHECKOUT_REF:-v1.0.18}"
 TARBALL_URL="https://github.com/${OWNER}/${REPO}/archive/refs/tags/${TAG}.tar.gz"
 
 color "Downloading release ${TAG}..."
