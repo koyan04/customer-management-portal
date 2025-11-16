@@ -9,7 +9,7 @@ set -euo pipefail
 
 OWNER="koyan04"
 REPO="customer-management-portal"
-TAG="v1.0.17"
+TAG="v1.0.18"
 
 INSTALLER_URL="https://raw.githubusercontent.com/${OWNER}/${REPO}/${TAG}/scripts/install.sh"
 
