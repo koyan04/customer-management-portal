@@ -36,7 +36,7 @@ Repository: https://github.com/koyan04/customer-management-portal.git
 Prerequisites: Ubuntu/Debian-like system with sudo/root, Node 18+, npm, PostgreSQL, certbot, and Cloudflare DNS credentials (API Token with Zone DNS Edit).
 
 - Required packages
-  - git, curl, openssl, nodejs>=18, npm, postgresql, certbot, python3, python3-certbot-dns-cloudflare
+  - curl, tar, openssl, nodejs>=18, npm, postgresql, certbot, python3, python3-certbot-dns-cloudflare
 
 Run the installer (as root):
 
@@ -47,7 +47,7 @@ sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-man
 
 What the script does:
 - Prompts for domain, Cloudflare API token, email, backend port, and an initial admin username/password
-- Clones/updates repo into `/srv/cmp`
+- Downloads and extracts the latest release tarball into `/srv/cmp`
 - Installs backend and frontend dependencies and builds the frontend
 - Writes backend `.env` with your inputs
 - Ensures `JWT_SECRET` exists in `backend/.env` (auto-generates if missing)
@@ -78,14 +78,14 @@ Login:
 
 This repository includes a helper PowerShell script to assist with common Windows installation tasks. The script attempts to:
 
-- Ensure Node.js and git are present (tries `winget` / `choco` if available).
-- Clone or update the repository into an installation directory.
+- Ensure Node.js is present (tries `winget` / `choco` if available).
+- Downloads and extracts the release into an installation directory.
 - Install backend/frontend dependencies and build the frontend.
 - Start backend processes via `pm2` and optionally register Windows services using `nssm` (if present).
 
 Important notes and limitations:
 
-Note about release selection: both installers (the Linux `scripts/install.sh` and the Windows `scripts/install-windows.ps1` helper) prefer to checkout the latest semantic-release tag when available (for example `v1.2.3` or `1.2.3`) and intentionally avoid common prerelease tags like `-rc`, `-beta`, or `-alpha`. To force a specific ref, set `CMP_CHECKOUT_REF` for the Linux installer or pass `-CheckoutRef <ref>` to the PowerShell helper.
+Note about release selection: both installers (the Linux `scripts/install.sh` and the Windows `scripts/install-windows.ps1` helper) prefer to download the latest semantic-release tag when available (for example `v1.2.3` or `1.2.3`) and intentionally avoid common prerelease tags like `-rc`, `-beta`, or `-alpha`. To force a specific ref, set `CMP_CHECKOUT_REF` for the Linux installer or pass `-CheckoutRef <ref>` to the PowerShell helper.
 
 - The Windows helper does not attempt to install PostgreSQL or perform full TLS automation. Installing Postgres on Windows is environment-specific; for production we recommend using a managed database or installing Postgres separately.
 - For TLS on Windows consider using win-acme (https://www.win-acme.com/) to obtain Let's Encrypt certificates, or use Cloudflare Origin Certificates combined with a reverse proxy (IIS, Nginx, Caddy) that terminates TLS.
@@ -156,12 +156,13 @@ Caveats:
 ## Manual Install (advanced)
 
 If you prefer manual steps:
-1. Clone the repo to `/srv/cmp` and install dependencies under `backend/` and `frontend/`
-2. Build the frontend (`npm run build` in `frontend/`)
-3. Create `backend/.env` with DB and secrets (see template below)
-4. Run migrations and seed admin/servers/users
-5. Create a systemd service for the backend (template below)
-6. Issue a certificate with certbot (Cloudflare DNS) and ensure renew hooks restart the backend
+1. Download and extract the latest release tarball to `/srv/cmp`
+2. Install dependencies under `backend/` and `frontend/`
+3. Build the frontend (`npm run build` in `frontend/`)
+4. Create `backend/.env` with DB and secrets (see template below)
+5. Run migrations and seed admin/servers/users
+6. Create a systemd service for the backend (template below)
+7. Issue a certificate with certbot (Cloudflare DNS) and ensure renew hooks restart the backend
 
 ### Sample `backend/.env`
 
@@ -263,7 +264,7 @@ Note: For security, prefer downloading to a file, verifying, then executing inst
 - The backend serves the built frontend in production from `frontend/dist`
  - Tests (frontend): Vitest collects only project `*.test|*.spec` files; library test files are excluded for speed
 
-Note: On non-Debian systems, install prerequisites (git, curl, openssl, python3, postgresql, certbot, python3-certbot-dns-cloudflare) and then run the installer directly:
+Note: On non-Debian systems, install prerequisites (curl, tar, openssl, python3, postgresql, certbot, python3-certbot-dns-cloudflare) and then run the installer directly:
 
 ```bash
 sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.15/scripts/install.sh | bash"
