@@ -2,7 +2,7 @@
 
 A full-stack portal for managing servers and their user accounts, with roles (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and performance features like a materialized view for user status.
 
-Current Version: `cmp ver 1.0.17`
+Current Version: `cmp ver 1.0.18`
 
 Repository: https://github.com/koyan04/customer-management-portal.git
 
@@ -42,7 +42,7 @@ Run the installer (as root):
 
 ```bash
 # Debian/Ubuntu bootstrap: installs prerequisites, then runs the installer
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.0.17/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/bootstrap.sh | bash"
 ```
 
 What the script does:
@@ -428,7 +428,11 @@ Clients querying `/api/health` will see:
 
 ## Release notes (quick)
 
-- Release: cmp ver 1.0.17 (latest)
+- Release: cmp ver 1.0.18 (latest)
+  - Hotfix: The bootstrap installer script (`bootstrap.sh`) was simplified to prevent it from downloading the wrong (older) version of the main installer. This resolves the issue where the installer would incorrectly prompt for GitHub credentials.
+  - Hotfix: Removed all `git` commands from the main installer (`install.sh`) to prevent credential prompts.
+
+- Release: cmp ver 1.0.17
   - Hotfix: The bootstrap installer script (`bootstrap.sh`) was simplified to prevent it from downloading the wrong (older) version of the main installer. This resolves the issue where the installer would incorrectly prompt for GitHub credentials.
 
 - Release: cmp ver 1.0.16
