@@ -1,0 +1,21 @@
+{
+  "name": "backend-public",
+  "version": "1.1.2",
+  "private": false,
+  "description": "Public release backend for customer-management-portal (sanitized)",
+  "main": "index.js",
+  "scripts": {
+    "migrate": "node run_migrations.js",
+    "seed-admin": "node seedAdmin.js"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.16.3",
+    "prom-client": "^14.0.1"
+  }
+}
