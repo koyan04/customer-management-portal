@@ -1,0 +1,8 @@
+# Ignore everything in root
+/*
+
+# Except Public_Release folder
+!Public_Release/
+
+# Don't ignore .gitignore itself
+!.gitignore
