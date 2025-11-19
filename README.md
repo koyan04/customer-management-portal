@@ -42,7 +42,7 @@ Run the installer (as root):
 
 ```bash
 # Debian/Ubuntu bootstrap: installs prerequisites, then runs the installer
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.1.1/scripts/bootstrap.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/bootstrap.sh | bash"
 ```
 
 What the script does:
@@ -85,7 +85,7 @@ This repository includes a helper PowerShell script to assist with common Window
 
 Important notes and limitations:
 
-Note about release selection: both installers (the Linux `scripts/install.sh` and the Windows `scripts/install-windows.ps1` helper) prefer to download the latest semantic-release tag when available (for example `v1.2.3` or `1.2.3`) and intentionally avoid common prerelease tags like `-rc`, `-beta`, or `-alpha`. To force a specific ref, set `CMP_CHECKOUT_REF` for the Linux installer or pass `-CheckoutRef <ref>` to the PowerShell helper.
+Note about release selection: the Linux installer (`scripts/install.sh`) automatically fetches and installs the latest semantic-release tag from GitHub (for example `v1.2.3` or `1.2.3`) and intentionally avoids common prerelease tags like `-rc`, `-beta`, or `-alpha`. To force a specific ref, set `CMP_CHECKOUT_REF` environment variable. The Windows `scripts/install-windows.ps1` helper can be configured with `-CheckoutRef <ref>` to download a specific version.
 
 - The Windows helper does not attempt to install PostgreSQL or perform full TLS automation. Installing Postgres on Windows is environment-specific; for production we recommend using a managed database or installing Postgres separately.
 - For TLS on Windows consider using win-acme (https://www.win-acme.com/) to obtain Let's Encrypt certificates, or use Cloudflare Origin Certificates combined with a reverse proxy (IIS, Nginx, Caddy) that terminates TLS.
@@ -249,7 +249,7 @@ Example:
 
 ```bash
 # Download and verify
-curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.1.1/scripts/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/install.sh
 sha256sum install.sh
 export CMP_INSTALL_EXPECTED_SHA256=<paste-the-sha256>
 sudo bash install.sh
@@ -267,7 +267,7 @@ Note: For security, prefer downloading to a file, verifying, then executing inst
 Note: On non-Debian systems, install prerequisites (curl, tar, openssl, python3, postgresql, certbot, python3-certbot-dns-cloudflare) and then run the installer directly:
 
 ```bash
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.1.1/scripts/install.sh | bash"
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/install.sh | bash"
 ```
 
 ## Security considerations
@@ -288,7 +288,7 @@ Keep production secure by default:
 You can pin and verify the installer script:
 
 ```bash
-curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/v1.1.1/scripts/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/install.sh
 sha256sum install.sh
 # Optionally export expected hash then run
 export CMP_INSTALL_EXPECTED_SHA256=<paste-output-sha>
