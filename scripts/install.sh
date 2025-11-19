@@ -366,8 +366,8 @@ else
   sudo -u postgres bash -lc "cd; psql -c \"CREATE DATABASE $DB_DATABASE OWNER $DB_USER;\"" || die "Failed to create database '$DB_DATABASE'"
 fi
 
-# Configure pg_hba.conf for password authentication if needed
-color "Checking PostgreSQL authentication configuration..."
+# Configure pg_hba.conf for password authentication BEFORE testing
+color "Configuring PostgreSQL authentication..."
 PG_VERSION=$(sudo -u postgres psql -d postgres -tc "SHOW server_version" 2>/dev/null | grep -oE '^[0-9]+' | head -1)
 if [ -z "$PG_VERSION" ]; then
   # Fallback: detect from filesystem
@@ -375,55 +375,42 @@ if [ -z "$PG_VERSION" ]; then
 fi
 PG_HBA_FILE="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
 
-# Verify connection works (with timeout)
-color "Testing database connection..."
-CONNECTION_TEST=0
-export PGPASSWORD="$DB_PASSWORD"
-if timeout 5 psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" >/dev/null 2>&1; then
-  CONNECTION_TEST=1
-fi
-unset PGPASSWORD
-
-if [ "$CONNECTION_TEST" -eq 0 ]; then
-  warn "Database connection failed. Configuring pg_hba.conf for password authentication..."
-  
-  if [ -f "$PG_HBA_FILE" ]; then
+# Ensure pg_hba.conf allows password authentication
+if [ -f "$PG_HBA_FILE" ]; then
+  # Check if md5/scram-sha-256 rule already exists for local connections
+  if ! grep -q "^local.*all.*all.*\(md5\|scram-sha-256\)" "$PG_HBA_FILE"; then
+    color "Updating pg_hba.conf for password authentication..."
     # Backup original
     cp "$PG_HBA_FILE" "${PG_HBA_FILE}.bak.$(date +%s)"
     
-    # Check if md5/scram-sha-256 rule already exists for local connections
-    if ! grep -q "^local.*all.*all.*\(md5\|scram-sha-256\)" "$PG_HBA_FILE"; then
-      # Add md5 authentication for local connections at the top (before peer/trust rules)
-      sed -i "1i# Allow password authentication for local connections (added by CMP installer)" "$PG_HBA_FILE"
-      sed -i "2i\local   all             all                                     md5" "$PG_HBA_FILE"
-      color "Added password authentication rule to pg_hba.conf"
-      
-      # Reload PostgreSQL configuration
-      systemctl reload postgresql || sudo -u postgres psql -c "SELECT pg_reload_conf();" || true
-      sleep 1
-      
-      # Retry connection
-      RETRY_TEST=0
-      export PGPASSWORD="$DB_PASSWORD"
-      if timeout 5 psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" >/dev/null 2>&1; then
-        RETRY_TEST=1
-      fi
-      unset PGPASSWORD
-      
-      if [ "$RETRY_TEST" -eq 1 ]; then
-        color "Database connection verified after pg_hba.conf update"
-      else
-        die "Database connection still failing after pg_hba.conf update. Manual intervention required."
-      fi
-    else
-      die "pg_hba.conf already has password authentication configured but connection failed. Check credentials and PostgreSQL logs."
-    fi
+    # Add md5 authentication for local connections at the top (before peer/trust rules)
+    sed -i "1i# Allow password authentication for local connections (added by CMP installer)" "$PG_HBA_FILE"
+    sed -i "2i\local   all             all                                     md5" "$PG_HBA_FILE"
+    
+    # Reload PostgreSQL configuration
+    systemctl reload postgresql || sudo -u postgres psql -c "SELECT pg_reload_conf();" >/dev/null 2>&1 || true
+    sleep 2
+    color "PostgreSQL authentication configured"
   else
-    die "pg_hba.conf not found at expected location: $PG_HBA_FILE. Manual configuration required."
+    color "PostgreSQL authentication already configured"
   fi
 else
-  color "Database connection verified"
+  warn "pg_hba.conf not found at: $PG_HBA_FILE"
 fi
+
+# Verify connection works
+color "Testing database connection..."
+export PGPASSWORD="$DB_PASSWORD"
+if timeout 10 psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" >/dev/null 2>&1; then
+  color "Database connection verified"
+else
+  unset PGPASSWORD
+  die "Database connection failed. Please check:
+  1. PostgreSQL is running: systemctl status postgresql
+  2. Database credentials in /srv/cmp/.env
+  3. PostgreSQL logs: sudo tail -50 /var/log/postgresql/postgresql-${PG_VERSION}-main.log"
+fi
+unset PGPASSWORD
 
 color "Running migrations..."
 (cd "$BACKEND_DIR" && node run_migrations.js || die "Migrations failed")
