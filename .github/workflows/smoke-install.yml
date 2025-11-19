@@ -43,7 +43,7 @@ jobs:
           CMP_HEALTH_PROBE_INTERVAL: "2"
         run: |
           curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/v1.1.7/Public_Release/scripts/install.sh -o install.sh
-          sudo bash install.sh
+          sudo --preserve-env=DOMAIN,CF_AUTH_MODE,CF_API_TOKEN,LE_EMAIL,BACKEND_PORT,ADMIN_USER,ADMIN_PASS,APP_DB_HOST,APP_DB_PORT,APP_DB_DATABASE,APP_DB_USER,APP_DB_PASSWORD,CMP_DB_ADMIN_MODE,CMP_ENABLE_NGINX,CMP_SKIP_CERT,CMP_HEALTH_PROBE_RETRIES,CMP_HEALTH_PROBE_INTERVAL,CMP_CHECKOUT_REF bash install.sh
 
       - name: Verify health endpoint
         run: |
