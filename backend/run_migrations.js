@@ -85,9 +85,18 @@ function splitSqlStatements(sql) {
 }
 
 async function run() {
-  const bootstrapFile = path.join(__dirname, 'migrations.sql');
-  if (!fs.existsSync(bootstrapFile)) {
-    console.error('migrations.sql not found at', bootstrapFile);
+  // Use consolidated schema file (000_schema.sql) instead of old migrations.sql
+  const schemaFile = path.join(__dirname, 'migrations', '000_schema.sql');
+  const legacyFile = path.join(__dirname, 'migrations.sql');
+  
+  let bootstrapFile;
+  if (fs.existsSync(schemaFile)) {
+    bootstrapFile = schemaFile;
+  } else if (fs.existsSync(legacyFile)) {
+    bootstrapFile = legacyFile;
+    console.warn('[migrate] Using legacy migrations.sql - consider upgrading to 000_schema.sql');
+  } else {
+    console.error('Schema file not found. Expected:', schemaFile, 'or', legacyFile);
     process.exit(1);
   }
 
@@ -133,7 +142,8 @@ async function run() {
 
     // execute the whole file contents; pg supports multi-statement queries
     await pool.query(sql);
-    console.log('Base migrations.sql applied successfully');
+    const fileName = path.basename(bootstrapFile);
+    console.log(`Base ${fileName} applied successfully`);
   } catch (err) {
     console.error('Error applying migrations (batch mode):', err.message || err);
     // Fallback: run sequentially and ignore specific undefined-table errors to recover mixed-state installs
@@ -156,7 +166,8 @@ async function run() {
           throw e;
         }
       }
-      console.log('Base migrations.sql applied successfully (sequential fallback)');
+      const fileName = path.basename(bootstrapFile);
+      console.log(`Base ${fileName} applied successfully (sequential fallback)`);
     } catch (e2) {
       console.error('Error applying migrations (sequential mode):', e2 && e2.message ? e2.message : e2);
       process.exitCode = 2;
@@ -164,11 +175,14 @@ async function run() {
   }
 
   // After base file, also apply any additional .sql files in ./migrations (sorted)
+  // Skip 000_schema.sql (already applied) and per-table schemas (001-017-table-*.sql are redundant with 000_schema.sql)
   try {
     const dir = path.join(__dirname, 'migrations');
     if (fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
       const files = fs.readdirSync(dir)
         .filter(f => f.toLowerCase().endsWith('.sql'))
+        .filter(f => !f.startsWith('000_schema.sql')) // Skip base schema (already applied)
+        .filter(f => !/^\d{3}-table-.*\.sql$/.test(f)) // Skip per-table schemas (redundant with 000_schema.sql)
         .sort((a, b) => a.localeCompare(b));
       for (const f of files) {
         const full = path.join(dir, f);
