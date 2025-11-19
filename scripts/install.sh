@@ -368,41 +368,46 @@ fi
 
 # Configure pg_hba.conf for password authentication BEFORE testing
 color "Configuring PostgreSQL authentication..."
-PG_VERSION=$(sudo -u postgres psql -d postgres -tc "SHOW server_version" 2>/dev/null | grep -oE '^[0-9]+' | head -1)
+set +e
+RAW_SERVER_VERSION=$(sudo -u postgres psql -d postgres -At -c "SHOW server_version" 2>/dev/null)
+set -e
+PG_VERSION=$(echo "$RAW_SERVER_VERSION" | cut -d. -f1)
 if [ -z "$PG_VERSION" ]; then
-  # Fallback: detect from filesystem
-  PG_VERSION=$(ls -1 /etc/postgresql/ 2>/dev/null | grep '^[0-9]' | sort -n | tail -1)
+  for d in /etc/postgresql/*; do
+    if [ -d "$d" ]; then
+      b=$(basename "$d")
+      if echo "$b" | grep -Eq '^[0-9]+'; then PG_VERSION="$b"; fi
+    fi
+  done
 fi
-PG_HBA_FILE="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
-
+set +e
+PG_HBA_FILE=$(sudo -u postgres psql -d postgres -At -c "SHOW hba_file" 2>/dev/null)
+set -e
+if [ -z "$PG_HBA_FILE" ]; then
+  PG_HBA_FILE="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
+fi
+color "pg_hba.conf path: $PG_HBA_FILE"
 if [ ! -f "$PG_HBA_FILE" ]; then
   die "pg_hba.conf not found at: $PG_HBA_FILE"
 fi
 
 # Check if md5/scram-sha-256 rule already exists for local connections
 color "Checking existing authentication rules..."
-HAS_MD5_RULE=0
-if grep -q "^local.*all.*all.*(md5\|scram-sha-256)" "$PG_HBA_FILE" 2>/dev/null; then
-  HAS_MD5_RULE=1
-fi
-
-if [ "$HAS_MD5_RULE" -eq 0 ]; then
+if grep -Eq "^local\s+all\s+all\s+(md5|scram-sha-256)" "$PG_HBA_FILE"; then
+  color "Password authentication already enabled"
+else
   color "Adding password authentication to pg_hba.conf..."
-  # Backup original
   cp "$PG_HBA_FILE" "${PG_HBA_FILE}.bak.$(date +%s)" || die "Failed to backup pg_hba.conf"
-  
-  # Add md5 authentication for local connections at the top (before peer/trust rules)
-  sed -i "1i# Allow password authentication for local connections (added by CMP installer)" "$PG_HBA_FILE" || die "Failed to update pg_hba.conf"
-  sed -i "2i\local   all             all                                     md5" "$PG_HBA_FILE" || die "Failed to add md5 rule"
-  
-  # Reload PostgreSQL configuration
+  { echo "# Allow password authentication for local connections (added by CMP installer)"; echo "local   all             all                                     md5"; cat "$PG_HBA_FILE"; } > "${PG_HBA_FILE}.new" || die "Failed to construct new pg_hba.conf"
+  mv "${PG_HBA_FILE}.new" "$PG_HBA_FILE" || die "Failed to overwrite pg_hba.conf"
   color "Reloading PostgreSQL configuration..."
   systemctl reload postgresql >/dev/null 2>&1 || sudo -u postgres psql -d postgres -c "SELECT pg_reload_conf();" >/dev/null 2>&1 || true
   sleep 2
   color "PostgreSQL authentication configured"
-else
-  color "Password authentication already enabled"
 fi
+
+# Show the first few local lines for diagnostics
+grep -n '^local' "$PG_HBA_FILE" | head -5 || true
 
 # Verify connection works
 color "Testing database connection..."
@@ -415,10 +420,7 @@ if [ $CONNECTION_STATUS -eq 0 ]; then
   color "Database connection verified"
 else
   echo "Connection test output: $CONNECTION_OUTPUT"
-  die "Database connection failed. Please check:
-  1. PostgreSQL is running: systemctl status postgresql
-  2. Database credentials in /srv/cmp/.env
-  3. PostgreSQL logs: sudo tail -50 /var/log/postgresql/postgresql-${PG_VERSION}-main.log"
+  die "Database connection failed. Please check:\n  1. PostgreSQL is running: systemctl status postgresql\n  2. Database credentials in /srv/cmp/.env\n  3. PostgreSQL logs: sudo tail -50 /var/log/postgresql/postgresql-${PG_VERSION}-main.log"
 fi
 
 color "Running migrations..."
