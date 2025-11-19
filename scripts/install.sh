@@ -160,6 +160,63 @@ prompt_if_empty BACKEND_PORT "Backend port" false 3001
 prompt_if_empty ADMIN_USER "Admin username" false admin
 prompt_if_empty ADMIN_PASS "Admin password (will be stored hashed in DB)" true admin123
 
+# Database configuration prompts (application DB creds)
+USE_EXISTING_DB=1
+if [ -f "$ENV_FILE" ]; then
+  if [ -t 0 ] || [ -r "/dev/tty" ]; then
+    if [ -r "/dev/tty" ]; then
+      read -r -p "Use existing DB settings from $ENV_FILE? [Y/n]: " ans < "/dev/tty" || true
+    else
+      read -r -p "Use existing DB settings from $ENV_FILE? [Y/n]: " ans || true
+    fi
+    ans=${ans:-Y}
+    case "$(echo "$ans" | tr '[:upper:]' '[:lower:]')" in
+      y|yes|1|true) USE_EXISTING_DB=1;;
+      *) USE_EXISTING_DB=0;;
+    esac
+  fi
+fi
+
+if [ "$USE_EXISTING_DB" -eq 1 ] && [ -f "$ENV_FILE" ]; then
+  APP_DB_HOST=$(grep '^DB_HOST=' "$ENV_FILE" | cut -d= -f2-)
+  APP_DB_PORT=$(grep '^DB_PORT=' "$ENV_FILE" | cut -d= -f2-)
+  APP_DB_DATABASE=$(grep '^DB_DATABASE=' "$ENV_FILE" | cut -d= -f2-)
+  APP_DB_USER=$(grep '^DB_USER=' "$ENV_FILE" | cut -d= -f2-)
+  APP_DB_PASSWORD=$(grep '^DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
+else
+  prompt_if_empty APP_DB_HOST "Database host" false localhost
+  prompt_if_empty APP_DB_PORT "Database port" false 5432
+  prompt_if_empty APP_DB_DATABASE "Database name" false cmp
+  prompt_if_empty APP_DB_USER "Database username" false cmp
+  prompt_if_empty APP_DB_PASSWORD "Database user password" true
+fi
+
+# Admin access to PostgreSQL to create role/database
+DB_ADMIN_MODE=${CMP_DB_ADMIN_MODE:-}
+if [ -z "$DB_ADMIN_MODE" ]; then
+  if [ -t 0 ] || [ -r "/dev/tty" ]; then
+    if [ -r "/dev/tty" ]; then
+      read -r -p "Use local postgres superuser via sudo? [Y/n]: " modeAns < "/dev/tty" || true
+    else
+      read -r -p "Use local postgres superuser via sudo? [Y/n]: " modeAns || true
+    fi
+    modeAns=${modeAns:-Y}
+    case "$(echo "$modeAns" | tr '[:upper:]' '[:lower:]')" in
+      y|yes|1|true) DB_ADMIN_MODE="sudo";;
+      *) DB_ADMIN_MODE="tcp";;
+    esac
+  else
+    DB_ADMIN_MODE="sudo"
+  fi
+fi
+
+if [ "$DB_ADMIN_MODE" = "tcp" ]; then
+  prompt_if_empty DB_ADMIN_USER "Admin username (PostgreSQL superuser)" false postgres
+  prompt_if_empty DB_ADMIN_PASSWORD "Admin password (PostgreSQL)" true
+  DB_ADMIN_HOST=${DB_ADMIN_HOST:-$APP_DB_HOST}
+  DB_ADMIN_PORT=${DB_ADMIN_PORT:-$APP_DB_PORT}
+fi
+
 # Ask whether to set up Nginx unless overridden via env (robust, works when piped)
 if [ -z "${CMP_ENABLE_NGINX:-}" ]; then
   # Prefer interactive prompt when a TTY is available
@@ -281,11 +338,11 @@ CLOUDFLARE_GLOBAL_KEY=${CF_GLOBAL_KEY:-}
 CLOUDFLARE_ACCOUNT_EMAIL=${CF_ACCOUNT_EMAIL:-}
 START_TELEGRAM_BOT=true
 JWT_SECRET=$(openssl rand -hex 48)
-DB_HOST=localhost
-DB_PORT=5432
-DB_DATABASE=cmp
-DB_USER=cmp
-DB_PASSWORD=$(openssl rand -hex 12)
+DB_HOST=$APP_DB_HOST
+DB_PORT=$APP_DB_PORT
+DB_DATABASE=$APP_DB_DATABASE
+DB_USER=$APP_DB_USER
+DB_PASSWORD=$APP_DB_PASSWORD
 SEED_ADMIN_USERNAME=$ADMIN_USER
 SEED_ADMIN_PASSWORD=$ADMIN_PASS
 EOF
@@ -306,6 +363,20 @@ else
       awk -F'=' 'BEGIN{OFS="="} /^JWT_SECRET=/ {print $1,"'$(openssl rand -hex 48)'"; next} {print}' "$ENV_FILE" > "$tmpenv" && mv "$tmpenv" "$ENV_FILE"
       color "Replaced empty JWT_SECRET with generated value"
     fi
+  fi
+  # If user chose to override DB settings, update them in-place
+  if [ "$USE_EXISTING_DB" -eq 0 ]; then
+    tmpenv="${ENV_FILE}.tmp.$$"
+    awk -F'=' -v OFS='=' \
+      -v h="$APP_DB_HOST" -v p="$APP_DB_PORT" -v d="$APP_DB_DATABASE" -v u="$APP_DB_USER" -v w="$APP_DB_PASSWORD" \
+      'BEGIN{} \
+       /^DB_HOST=/ {print "DB_HOST",h; next} \
+       /^DB_PORT=/ {print "DB_PORT",p; next} \
+       /^DB_DATABASE=/ {print "DB_DATABASE",d; next} \
+       /^DB_USER=/ {print "DB_USER",u; next} \
+       /^DB_PASSWORD=/ {print "DB_PASSWORD",w; next} \
+       {print}' "$ENV_FILE" > "$tmpenv" && mv "$tmpenv" "$ENV_FILE"
+    color "Updated DB settings in $ENV_FILE"
   fi
 fi
 
@@ -338,32 +409,58 @@ fi
 color "Preparing database..."
 # Create role & DB if not exist
 psql_cmd="psql -v ON_ERROR_STOP=1"
+DB_HOST=$(grep '^DB_HOST=' "$ENV_FILE" | cut -d= -f2-)
+DB_PORT=$(grep '^DB_PORT=' "$ENV_FILE" | cut -d= -f2-)
 DB_USER=$(grep '^DB_USER=' "$ENV_FILE" | cut -d= -f2-)
 DB_PASSWORD=$(grep '^DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
 DB_DATABASE=$(grep '^DB_DATABASE=' "$ENV_FILE" | cut -d= -f2-)
 
-# Check PostgreSQL is running
-if ! sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
-  warn "PostgreSQL not responding. Attempting to start..."
-  systemctl start postgresql || die "Failed to start PostgreSQL"
-  sleep 2
+# Check PostgreSQL is running / accessible
+if [ "$DB_ADMIN_MODE" = "sudo" ]; then
+  if ! sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
+    warn "PostgreSQL not responding. Attempting to start..."
+    systemctl start postgresql || die "Failed to start PostgreSQL"
+    sleep 2
+  fi
+else
+  export PGPASSWORD="$DB_ADMIN_PASSWORD"
+  if ! psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+    die "Cannot connect to PostgreSQL with provided admin credentials ($DB_ADMIN_USER@$DB_ADMIN_HOST:$DB_ADMIN_PORT)"
+  fi
+  unset PGPASSWORD
 fi
 
-# Run psql from postgres' home directory to avoid noisy 'could not change directory to /root'
-# Create role if not exists
-if sudo -u postgres bash -lc "cd; psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'\"" | grep -q 1; then
-  color "Database user '$DB_USER' already exists"
-else
-  color "Creating database user '$DB_USER'..."
-  sudo -u postgres bash -lc "cd; psql -c \"CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD';\"" || die "Failed to create database user '$DB_USER'"
-fi
+# Run psql to create role/db (sudo or TCP)
+if [ "$DB_ADMIN_MODE" = "sudo" ]; then
+  # Run psql from postgres' home directory to avoid noisy 'could not change directory to /root'
+  if sudo -u postgres bash -lc "cd; psql -At -c \"SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'\"" | grep -q 1; then
+    color "Database user '$DB_USER' already exists"
+  else
+    color "Creating database user '$DB_USER'..."
+    sudo -u postgres bash -lc "cd; psql -c \"CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD';\"" || die "Failed to create database user '$DB_USER'"
+  fi
 
-# Create database if not exists
-if sudo -u postgres bash -lc "cd; psql -tc \"SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'\"" | grep -q 1; then
-  color "Database '$DB_DATABASE' already exists"
+  if sudo -u postgres bash -lc "cd; psql -At -c \"SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'\"" | grep -q 1; then
+    color "Database '$DB_DATABASE' already exists"
+  else
+    color "Creating database '$DB_DATABASE'..."
+    sudo -u postgres bash -lc "cd; psql -c \"CREATE DATABASE $DB_DATABASE OWNER $DB_USER;\"" || die "Failed to create database '$DB_DATABASE'"
+  fi
 else
-  color "Creating database '$DB_DATABASE'..."
-  sudo -u postgres bash -lc "cd; psql -c \"CREATE DATABASE $DB_DATABASE OWNER $DB_USER;\"" || die "Failed to create database '$DB_DATABASE'"
+  export PGPASSWORD="$DB_ADMIN_PASSWORD"
+  if psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -At -c "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1; then
+    color "Database user '$DB_USER' already exists"
+  else
+    color "Creating database user '$DB_USER'..."
+    psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -c "CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD';" || die "Failed to create database user '$DB_USER'"
+  fi
+  if psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -At -c "SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'" | grep -q 1; then
+    color "Database '$DB_DATABASE' already exists"
+  else
+    color "Creating database '$DB_DATABASE'..."
+    psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -c "CREATE DATABASE $DB_DATABASE OWNER $DB_USER;" || die "Failed to create database '$DB_DATABASE'"
+  fi
+  unset PGPASSWORD
 fi
 
 # Configure pg_hba.conf for password authentication BEFORE testing
@@ -425,7 +522,7 @@ grep -nE '^(local|host).*?(127\.0\.0\.1|::1|all\s+all\s+(md5|scram-sha-256))' "$
 color "Testing database connection..."
 set +e
 export PGPASSWORD="$DB_PASSWORD"
-CONNECTION_OUTPUT=$(timeout 10 psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" 2>&1)
+CONNECTION_OUTPUT=$(timeout 10 psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" 2>&1)
 CONNECTION_STATUS=$?
 unset PGPASSWORD
 set -e
