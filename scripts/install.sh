@@ -368,7 +368,11 @@ fi
 
 # Configure pg_hba.conf for password authentication if needed
 color "Checking PostgreSQL authentication configuration..."
-PG_VERSION=$(sudo -u postgres psql -tc "SHOW server_version" | grep -oE '^[0-9]+' | head -1)
+PG_VERSION=$(sudo -u postgres psql -d postgres -tc "SHOW server_version" 2>/dev/null | grep -oE '^[0-9]+' | head -1)
+if [ -z "$PG_VERSION" ]; then
+  # Fallback: detect from filesystem
+  PG_VERSION=$(ls -1 /etc/postgresql/ 2>/dev/null | grep '^[0-9]' | sort -n | tail -1)
+fi
 PG_HBA_FILE="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
 
 # Verify connection works
