@@ -418,9 +418,29 @@ DB_DATABASE=$(grep '^DB_DATABASE=' "$ENV_FILE" | cut -d= -f2-)
 # Check PostgreSQL is running / accessible
 if [ "$DB_ADMIN_MODE" = "sudo" ]; then
   if ! sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
-    warn "PostgreSQL not responding. Attempting to start..."
+    warn "PostgreSQL not responding (sudo). Attempting to start..."
     systemctl start postgresql || die "Failed to start PostgreSQL"
     sleep 2
+  fi
+  # Re-test; if still failing due to password auth, fallback to TCP admin mode
+  if ! sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
+    warn "Local sudo connection failed (likely password auth enforced for 'postgres'). Switching to TCP admin mode."
+    DB_ADMIN_MODE="tcp"
+    DB_ADMIN_HOST=${DB_ADMIN_HOST:-$APP_DB_HOST}
+    DB_ADMIN_PORT=${DB_ADMIN_PORT:-$APP_DB_PORT}
+    DB_ADMIN_USER=${DB_ADMIN_USER:-postgres}
+    if [ -t 0 ] || [ -r "/dev/tty" ]; then
+      if [ -z "${DB_ADMIN_PASSWORD:-}" ]; then
+        if [ -r "/dev/tty" ]; then
+          read -r -p "Enter PostgreSQL superuser password for $DB_ADMIN_USER@$DB_ADMIN_HOST:$DB_ADMIN_PORT: " DB_ADMIN_PASSWORD < "/dev/tty" || true
+        else
+          read -r -p "Enter PostgreSQL superuser password for $DB_ADMIN_USER@$DB_ADMIN_HOST:$DB_ADMIN_PORT: " DB_ADMIN_PASSWORD || true
+        fi
+      fi
+    fi
+    if [ -z "${DB_ADMIN_PASSWORD:-}" ]; then
+      die "No PostgreSQL superuser password provided. Re-run with CMP_DB_ADMIN_MODE=tcp and set DB_ADMIN_PASSWORD env var or provide interactively."
+    fi
   fi
 else
   export PGPASSWORD="$DB_ADMIN_PASSWORD"
