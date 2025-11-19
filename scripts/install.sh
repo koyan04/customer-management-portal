@@ -336,15 +336,42 @@ fi
 
 # Database preparation (PostgreSQL local assumed)
 color "Preparing database..."
-# Create role & DB if not exist (best-effort)
+# Create role & DB if not exist
 psql_cmd="psql -v ON_ERROR_STOP=1"
 DB_USER=$(grep '^DB_USER=' "$ENV_FILE" | cut -d= -f2-)
 DB_PASSWORD=$(grep '^DB_PASSWORD=' "$ENV_FILE" | cut -d= -f2-)
 DB_DATABASE=$(grep '^DB_DATABASE=' "$ENV_FILE" | cut -d= -f2-)
 
+# Check PostgreSQL is running
+if ! sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
+  warn "PostgreSQL not responding. Attempting to start..."
+  systemctl start postgresql || die "Failed to start PostgreSQL"
+  sleep 2
+fi
+
 # Run psql from postgres' home directory to avoid noisy 'could not change directory to /root'
-sudo -u postgres bash -lc "cd; psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'\" | grep -q 1 || psql -c \"CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD';\"" || true
-sudo -u postgres bash -lc "cd; psql -tc \"SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'\" | grep -q 1 || psql -c \"CREATE DATABASE $DB_DATABASE OWNER $DB_USER;\"" || true
+# Create role if not exists
+if sudo -u postgres bash -lc "cd; psql -tc \"SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'\"" | grep -q 1; then
+  color "Database user '$DB_USER' already exists"
+else
+  color "Creating database user '$DB_USER'..."
+  sudo -u postgres bash -lc "cd; psql -c \"CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD';\"" || die "Failed to create database user '$DB_USER'"
+fi
+
+# Create database if not exists
+if sudo -u postgres bash -lc "cd; psql -tc \"SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'\"" | grep -q 1; then
+  color "Database '$DB_DATABASE' already exists"
+else
+  color "Creating database '$DB_DATABASE'..."
+  sudo -u postgres bash -lc "cd; psql -c \"CREATE DATABASE $DB_DATABASE OWNER $DB_USER;\"" || die "Failed to create database '$DB_DATABASE'"
+fi
+
+# Verify connection works
+color "Verifying database connection..."
+if ! PGPASSWORD="$DB_PASSWORD" psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" >/dev/null 2>&1; then
+  die "Database connection test failed. Check PostgreSQL configuration (pg_hba.conf)"
+fi
+color "Database connection verified"
 
 color "Running migrations..."
 (cd "$BACKEND_DIR" && node run_migrations.js || die "Migrations failed")
