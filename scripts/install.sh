@@ -375,8 +375,9 @@ if [ -z "$PG_VERSION" ]; then
 fi
 PG_HBA_FILE="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
 
-# Verify connection works
-if ! PGPASSWORD="$DB_PASSWORD" psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" >/dev/null 2>&1; then
+# Verify connection works (with timeout)
+color "Testing database connection..."
+if ! timeout 5 bash -c "PGPASSWORD='$DB_PASSWORD' psql -h localhost -U '$DB_USER' -d '$DB_DATABASE' -c 'SELECT 1' >/dev/null 2>&1"; then
   warn "Database connection failed. Configuring pg_hba.conf for password authentication..."
   
   if [ -f "$PG_HBA_FILE" ]; then
@@ -395,7 +396,7 @@ if ! PGPASSWORD="$DB_PASSWORD" psql -h localhost -U "$DB_USER" -d "$DB_DATABASE"
       sleep 1
       
       # Retry connection
-      if PGPASSWORD="$DB_PASSWORD" psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" >/dev/null 2>&1; then
+      if timeout 5 bash -c "PGPASSWORD='$DB_PASSWORD' psql -h localhost -U '$DB_USER' -d '$DB_DATABASE' -c 'SELECT 1' >/dev/null 2>&1"; then
         color "Database connection verified after pg_hba.conf update"
       else
         die "Database connection still failing after pg_hba.conf update. Manual intervention required."
