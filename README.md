@@ -2,7 +2,7 @@
 
 A full-stack portal for managing servers and their user accounts, with roles (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and performance features like a materialized view for user status.
 
-Current Version: `cmp ver 1.1.1`
+Current Version: `cmp ver 1.1.2`
 
 Repository: https://github.com/koyan04/customer-management-portal.git
 
