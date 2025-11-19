@@ -393,28 +393,42 @@ fi
 
 # Check if md5/scram-sha-256 rule already exists for local connections
 color "Checking existing authentication rules..."
-if grep -Eq "^local\s+all\s+all\s+(md5|scram-sha-256)" "$PG_HBA_FILE"; then
-  color "Password authentication already enabled"
+HAS_LOCAL_PW=0; HAS_HOST4_PW=0; HAS_HOST6_PW=0
+grep -Eq "^local\s+all\s+all\s+(md5|scram-sha-256)" "$PG_HBA_FILE" && HAS_LOCAL_PW=1
+grep -Eq "^host\s+all\s+all\s+127\.0\.0\.1/32\s+(md5|scram-sha-256)" "$PG_HBA_FILE" && HAS_HOST4_PW=1
+grep -Eq "^host\s+all\s+all\s+::1/128\s+(md5|scram-sha-256)" "$PG_HBA_FILE" && HAS_HOST6_PW=1
+
+if [ $HAS_LOCAL_PW -eq 1 ] && [ $HAS_HOST4_PW -eq 1 ] && [ $HAS_HOST6_PW -eq 1 ]; then
+  color "Password authentication already enabled (local + localhost)"
 else
-  color "Adding password authentication to pg_hba.conf..."
+  color "Adding password authentication rules to pg_hba.conf..."
   cp "$PG_HBA_FILE" "${PG_HBA_FILE}.bak.$(date +%s)" || die "Failed to backup pg_hba.conf"
-  { echo "# Allow password authentication for local connections (added by CMP installer)"; echo "local   all             all                                     md5"; cat "$PG_HBA_FILE"; } > "${PG_HBA_FILE}.new" || die "Failed to construct new pg_hba.conf"
-  mv "${PG_HBA_FILE}.new" "$PG_HBA_FILE" || die "Failed to overwrite pg_hba.conf"
+  TMP_HBA="${PG_HBA_FILE}.new"
+  {
+    echo "# Added by CMP installer $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    [ $HAS_LOCAL_PW -eq 1 ] || echo "local   all             all                                     md5"
+    [ $HAS_HOST4_PW -eq 1 ] || echo "host    all             all             127.0.0.1/32            md5"
+    [ $HAS_HOST6_PW -eq 1 ] || echo "host    all             all             ::1/128                 md5"
+    cat "$PG_HBA_FILE"
+  } > "$TMP_HBA" || die "Failed to construct new pg_hba.conf"
+  mv "$TMP_HBA" "$PG_HBA_FILE" || die "Failed to overwrite pg_hba.conf"
   color "Reloading PostgreSQL configuration..."
   systemctl reload postgresql >/dev/null 2>&1 || sudo -u postgres psql -d postgres -c "SELECT pg_reload_conf();" >/dev/null 2>&1 || true
   sleep 2
   color "PostgreSQL authentication configured"
 fi
 
-# Show the first few local lines for diagnostics
-grep -n '^local' "$PG_HBA_FILE" | head -5 || true
+# Show the first few relevant lines for diagnostics
+grep -nE '^(local|host).*?(127\.0\.0\.1|::1|all\s+all\s+(md5|scram-sha-256))' "$PG_HBA_FILE" | head -10 || true
 
 # Verify connection works
 color "Testing database connection..."
+set +e
 export PGPASSWORD="$DB_PASSWORD"
 CONNECTION_OUTPUT=$(timeout 10 psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" 2>&1)
 CONNECTION_STATUS=$?
 unset PGPASSWORD
+set -e
 
 if [ $CONNECTION_STATUS -eq 0 ]; then
   color "Database connection verified"
