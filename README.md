@@ -2,7 +2,40 @@
 
 A full-stack portal for managing servers and their user accounts, with roles (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and performance features like a materialized view for user status.
 
-Current Version: `cmp ver 1.1.6`
+Current Version: `cmp ver 1.1.8`
+
+### PostgreSQL Admin Fallback (v1.1.7)
+
+Starting with v1.1.7 the installer contains a resilient PostgreSQL admin access fallback for cases where both:
+1. `sudo -u postgres psql` fails (because local `postgres` requires a password)
+2. Direct TCP login (`postgres@localhost`) with the provided password also fails
+
+Behavior:
+1. Installer first attempts chosen admin mode (`CMP_DB_ADMIN_MODE=sudo|tcp`).
+2. On dual failure it performs a temporary trust escalation by prepending trust rules to `pg_hba.conf` (only `local` + `127.0.0.1`).
+3. It reloads PostgreSQL and retries role/database creation without a password.
+4. After the application role and database are created and a success connection test passes, the installer removes the temporary trust lines and restores md5 authentication.
+
+Security Notes:
+- Trust escalation is strictly local and short-lived; it is removed before installation completes.
+- A backup of the original `pg_hba.conf` is stored alongside with a timestamp (`pg_hba.conf.bak.<epoch>`).
+- If installation aborts mid-way, you should manually remove any `# CMP TEMP TRUST` block and reload PostgreSQL:
+  ```bash
+  sudo sed -i '/CMP TEMP TRUST/,+2d' /etc/postgresql/*/main/pg_hba.conf
+  sudo systemctl reload postgresql
+  ```
+- If you know the real `postgres` password, you can skip the fallback entirely by exporting `CMP_DB_ADMIN_MODE=tcp` and `DB_ADMIN_PASSWORD` before running the installer.
+
+Env Variables Recap:
+- `CMP_DB_ADMIN_MODE` (default: `sudo`): Chooses initial admin access strategy.
+- `DB_ADMIN_PASSWORD`: Required only for `tcp` mode unless trust fallback triggers.
+- `DB_USER`, `DB_PASSWORD`, `DB_DATABASE`: Application database credentials (prompted interactively if unset).
+
+Log Indicators:
+- Success message: `Temporary trust escalation succeeded (will revert after DB setup).`
+- Cleanup message: `Temporary trust removed`
+
+If you do not see the cleanup message, verify `pg_hba.conf` does not still contain the inserted trust lines before going to production.
 
 Repository: https://github.com/koyan04/customer-management-portal.git
 

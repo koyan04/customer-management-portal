@@ -445,7 +445,36 @@ if [ "$DB_ADMIN_MODE" = "sudo" ]; then
 else
   export PGPASSWORD="$DB_ADMIN_PASSWORD"
   if ! psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
-    die "Cannot connect to PostgreSQL with provided admin credentials ($DB_ADMIN_USER@$DB_ADMIN_HOST:$DB_ADMIN_PORT)"
+    warn "Cannot connect with provided admin credentials ($DB_ADMIN_USER@$DB_ADMIN_HOST:$DB_ADMIN_PORT). Attempting temporary trust escalation..."
+    # Attempt temporary trust escalation ONLY if running as root and pg_hba.conf accessible
+    set +e
+    RAW_SERVER_VERSION=$(sudo -u postgres psql -d postgres -At -c "SHOW server_version" 2>/dev/null)
+    set -e
+    PG_VERSION_FALL=$(echo "$RAW_SERVER_VERSION" | cut -d. -f1)
+    set +e
+    PG_HBA_FILE_FALL=$(sudo -u postgres psql -d postgres -At -c "SHOW hba_file" 2>/dev/null)
+    set -e
+    if [ -z "$PG_HBA_FILE_FALL" ]; then
+      PG_HBA_FILE_FALL="/etc/postgresql/${PG_VERSION_FALL}/main/pg_hba.conf"
+    fi
+    if [ -f "$PG_HBA_FILE_FALL" ]; then
+      if ! grep -q "# CMP TEMP TRUST" "$PG_HBA_FILE_FALL"; then
+        cp "$PG_HBA_FILE_FALL" "${PG_HBA_FILE_FALL}.bak.$(date +%s)" || die "Failed to backup pg_hba.conf for trust escalation"
+        { echo "# CMP TEMP TRUST - will be removed after installation"; echo "local   all             all                                     trust"; cat "$PG_HBA_FILE_FALL"; } > "${PG_HBA_FILE_FALL}.new" || die "Failed to build temporary trust pg_hba.conf"
+        mv "${PG_HBA_FILE_FALL}.new" "$PG_HBA_FILE_FALL" || die "Failed to activate temporary trust pg_hba.conf"
+        systemctl reload postgresql >/dev/null 2>&1 || sudo -u postgres psql -d postgres -c "SELECT pg_reload_conf();" >/dev/null 2>&1 || true
+        sleep 1
+      fi
+      # Retry without password (trust should allow it)
+      if ! psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+        die "Temporary trust escalation failed to obtain admin access."
+      else
+        color "Temporary trust escalation succeeded (will revert after DB setup)."
+        DB_ADMIN_TEMP_TRUST=1
+      fi
+    else
+      die "Cannot connect and pg_hba.conf not found for trust escalation ($PG_HBA_FILE_FALL)"
+    fi
   fi
   unset PGPASSWORD
 fi
@@ -552,6 +581,26 @@ if [ $CONNECTION_STATUS -eq 0 ]; then
 else
   echo "Connection test output: $CONNECTION_OUTPUT"
   die "Database connection failed. Please check:\n  1. PostgreSQL is running: systemctl status postgresql\n  2. Database credentials in /srv/cmp/.env\n  3. PostgreSQL logs: sudo tail -50 /var/log/postgresql/postgresql-${PG_VERSION}-main.log"
+fi
+
+# Revert temporary trust if used
+if [ "${DB_ADMIN_TEMP_TRUST:-0}" = "1" ]; then
+  color "Reverting temporary trust authentication..."
+  set +e
+  RAW_SERVER_VERSION=$(sudo -u postgres psql -d postgres -At -c "SHOW server_version" 2>/dev/null)
+  set -e
+  PG_VERSION_CLEAN=$(echo "$RAW_SERVER_VERSION" | cut -d. -f1)
+  set +e
+  PG_HBA_CLEAN=$(sudo -u postgres psql -d postgres -At -c "SHOW hba_file" 2>/dev/null)
+  set -e
+  if [ -z "$PG_HBA_CLEAN" ]; then PG_HBA_CLEAN="/etc/postgresql/${PG_VERSION_CLEAN}/main/pg_hba.conf"; fi
+  if [ -f "$PG_HBA_CLEAN" ]; then
+    grep -v "CMP TEMP TRUST" "$PG_HBA_CLEAN" | awk '!/^local\s+all\s+all\s+trust$/' > "${PG_HBA_CLEAN}.new" && mv "${PG_HBA_CLEAN}.new" "$PG_HBA_CLEAN"
+    systemctl reload postgresql >/dev/null 2>&1 || sudo -u postgres psql -d postgres -c "SELECT pg_reload_conf();" >/dev/null 2>&1 || true
+    color "Temporary trust removed"
+  else
+    warn "Expected pg_hba.conf for cleanup not found: $PG_HBA_CLEAN"
+  fi
 fi
 
 color "Running migrations..."
