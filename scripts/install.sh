@@ -366,12 +366,45 @@ else
   sudo -u postgres bash -lc "cd; psql -c \"CREATE DATABASE $DB_DATABASE OWNER $DB_USER;\"" || die "Failed to create database '$DB_DATABASE'"
 fi
 
+# Configure pg_hba.conf for password authentication if needed
+color "Checking PostgreSQL authentication configuration..."
+PG_VERSION=$(sudo -u postgres psql -tc "SHOW server_version" | grep -oE '^[0-9]+' | head -1)
+PG_HBA_FILE="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
+
 # Verify connection works
-color "Verifying database connection..."
 if ! PGPASSWORD="$DB_PASSWORD" psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" >/dev/null 2>&1; then
-  die "Database connection test failed. Check PostgreSQL configuration (pg_hba.conf)"
+  warn "Database connection failed. Configuring pg_hba.conf for password authentication..."
+  
+  if [ -f "$PG_HBA_FILE" ]; then
+    # Backup original
+    cp "$PG_HBA_FILE" "${PG_HBA_FILE}.bak.$(date +%s)"
+    
+    # Check if md5/scram-sha-256 rule already exists for local connections
+    if ! grep -q "^local.*all.*all.*\(md5\|scram-sha-256\)" "$PG_HBA_FILE"; then
+      # Add md5 authentication for local connections at the top (before peer/trust rules)
+      sed -i "1i# Allow password authentication for local connections (added by CMP installer)" "$PG_HBA_FILE"
+      sed -i "2i\local   all             all                                     md5" "$PG_HBA_FILE"
+      color "Added password authentication rule to pg_hba.conf"
+      
+      # Reload PostgreSQL configuration
+      systemctl reload postgresql || sudo -u postgres psql -c "SELECT pg_reload_conf();" || true
+      sleep 1
+      
+      # Retry connection
+      if PGPASSWORD="$DB_PASSWORD" psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" >/dev/null 2>&1; then
+        color "Database connection verified after pg_hba.conf update"
+      else
+        die "Database connection still failing after pg_hba.conf update. Manual intervention required."
+      fi
+    else
+      die "pg_hba.conf already has password authentication configured but connection failed. Check credentials and PostgreSQL logs."
+    fi
+  else
+    die "pg_hba.conf not found at expected location: $PG_HBA_FILE. Manual configuration required."
+  fi
+else
+  color "Database connection verified"
 fi
-color "Database connection verified"
 
 color "Running migrations..."
 (cd "$BACKEND_DIR" && node run_migrations.js || die "Migrations failed")
