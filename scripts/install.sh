@@ -378,12 +378,11 @@ PG_HBA_FILE="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
 # Verify connection works (with timeout)
 color "Testing database connection..."
 CONNECTION_TEST=0
-if command -v timeout >/dev/null 2>&1; then
-  timeout 5 bash -c "PGPASSWORD='$DB_PASSWORD' psql -h localhost -U '$DB_USER' -d '$DB_DATABASE' -c 'SELECT 1' >/dev/null 2>&1" && CONNECTION_TEST=1
-else
-  # Fallback: use perl-based timeout if timeout command not available
-  perl -e 'alarm 5; exec @ARGV' bash -c "PGPASSWORD='$DB_PASSWORD' psql -h localhost -U '$DB_USER' -d '$DB_DATABASE' -c 'SELECT 1' >/dev/null 2>&1" && CONNECTION_TEST=1
+export PGPASSWORD="$DB_PASSWORD"
+if timeout 5 psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" >/dev/null 2>&1; then
+  CONNECTION_TEST=1
 fi
+unset PGPASSWORD
 
 if [ "$CONNECTION_TEST" -eq 0 ]; then
   warn "Database connection failed. Configuring pg_hba.conf for password authentication..."
@@ -405,11 +404,11 @@ if [ "$CONNECTION_TEST" -eq 0 ]; then
       
       # Retry connection
       RETRY_TEST=0
-      if command -v timeout >/dev/null 2>&1; then
-        timeout 5 bash -c "PGPASSWORD='$DB_PASSWORD' psql -h localhost -U '$DB_USER' -d '$DB_DATABASE' -c 'SELECT 1' >/dev/null 2>&1" && RETRY_TEST=1
-      else
-        perl -e 'alarm 5; exec @ARGV' bash -c "PGPASSWORD='$DB_PASSWORD' psql -h localhost -U '$DB_USER' -d '$DB_DATABASE' -c 'SELECT 1' >/dev/null 2>&1" && RETRY_TEST=1
+      export PGPASSWORD="$DB_PASSWORD"
+      if timeout 5 psql -h localhost -U "$DB_USER" -d "$DB_DATABASE" -c "SELECT 1" >/dev/null 2>&1; then
+        RETRY_TEST=1
       fi
+      unset PGPASSWORD
       
       if [ "$RETRY_TEST" -eq 1 ]; then
         color "Database connection verified after pg_hba.conf update"
