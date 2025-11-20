@@ -1408,10 +1408,10 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       for (const k of data.server_keys) {
         if (!k.server_id) continue;
         await client.query(
-          `INSERT INTO server_keys (id, server_id, public_key, private_key, created_at)
-           VALUES ($1,$2,$3,$4, COALESCE($5, now()))
-           ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, public_key = EXCLUDED.public_key, private_key = EXCLUDED.private_key`,
-          [k.id || null, k.server_id, k.public_key || null, k.private_key || null, k.created_at || null]
+          `INSERT INTO server_keys (id, server_id, username, description, original_key, generated_key, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7, now()))
+           ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, username = EXCLUDED.username, description = EXCLUDED.description, original_key = EXCLUDED.original_key, generated_key = EXCLUDED.generated_key`,
+          [k.id || null, k.server_id, k.username || null, k.description || null, k.original_key || null, k.generated_key || null, k.created_at || null]
         );
       }
     }
