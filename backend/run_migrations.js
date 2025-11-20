@@ -120,8 +120,14 @@ async function run() {
         } catch (e) {
           const msg = e && e.message ? e.message : String(e);
           const code = e && e.code ? e.code : null;
+          // tolerate undefined table/column to allow idempotent re-runs on partially initialized DBs
           if (code === '42P01' || /relation\s+"?users"?\s+does not exist/i.test(msg)) {
             console.warn(`[migrate] ignoring undefined_table at stmt ${i + 1}:`, msg.split('\n')[0]);
+            continue;
+          }
+          // tolerate duplicate objects (functions, constraints, etc.) for idempotent re-runs
+          if (code === '42710' || code === '42P07' || /already exists/i.test(msg)) {
+            console.warn(`[migrate] ignoring duplicate at stmt ${i + 1}:`, msg.split('\n')[0]);
             continue;
           }
           // surface other errors
@@ -164,8 +170,8 @@ async function run() {
               console.warn(`[migrate] (${f}) ignoring error at stmt ${i + 1}:`, msg.split('\n')[0]);
               continue;
             }
-            // tolerate duplicate constraints (already exists) for idempotent re-runs
-            if (code === '42710' || /already exists/i.test(msg)) {
+            // tolerate duplicate objects (functions, constraints, tables, etc.) for idempotent re-runs
+            if (code === '42710' || code === '42P07' || /already exists/i.test(msg)) {
               console.warn(`[migrate] (${f}) ignoring duplicate at stmt ${i + 1}:`, msg.split('\n')[0]);
               continue;
             }
