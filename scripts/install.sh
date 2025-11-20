@@ -506,6 +506,8 @@ else
       # Switch to trust-based connection (no password needed now)
       unset PGPASSWORD
       DB_ADMIN_PASSWORD=""
+      # Force Unix socket connection by unsetting host
+      DB_ADMIN_HOST=""
     else
       die "Cannot connect and pg_hba.conf not found for trust escalation ($PG_HBA_FILE_FALL)"
     fi
@@ -535,17 +537,23 @@ else
     export PGPASSWORD="$DB_ADMIN_PASSWORD"
   fi
   
-  if psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -At -c "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" 2>/dev/null | grep -q 1; then
+  # Build psql connection args based on whether we're using Unix socket (trust) or TCP
+  PSQL_CONNECT_ARGS="-U $DB_ADMIN_USER"
+  if [ -n "$DB_ADMIN_HOST" ]; then
+    PSQL_CONNECT_ARGS="$PSQL_CONNECT_ARGS -h $DB_ADMIN_HOST -p $DB_ADMIN_PORT"
+  fi
+  
+  if psql $PSQL_CONNECT_ARGS -d postgres -At -c "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" 2>/dev/null | grep -q 1; then
     color "Database user '$DB_USER' already exists"
   else
     color "Creating database user '$DB_USER'..."
-    psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -c "CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD';" || die "Failed to create database user '$DB_USER'"
+    psql $PSQL_CONNECT_ARGS -d postgres -c "CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD';" || die "Failed to create database user '$DB_USER'"
   fi
-  if psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -At -c "SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'" 2>/dev/null | grep -q 1; then
+  if psql $PSQL_CONNECT_ARGS -d postgres -At -c "SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'" 2>/dev/null | grep -q 1; then
     color "Database '$DB_DATABASE' already exists"
   else
     color "Creating database '$DB_DATABASE'..."
-    psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -c "CREATE DATABASE $DB_DATABASE OWNER $DB_USER;" || die "Failed to create database '$DB_DATABASE'"
+    psql $PSQL_CONNECT_ARGS -d postgres -c "CREATE DATABASE $DB_DATABASE OWNER $DB_USER;" || die "Failed to create database '$DB_DATABASE'"
   fi
   unset PGPASSWORD
 fi
