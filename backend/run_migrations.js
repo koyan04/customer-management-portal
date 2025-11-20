@@ -164,6 +164,11 @@ async function run() {
               console.warn(`[migrate] (${f}) ignoring error at stmt ${i + 1}:`, msg.split('\n')[0]);
               continue;
             }
+            // tolerate duplicate constraints (already exists) for idempotent re-runs
+            if (code === '42710' || /already exists/i.test(msg)) {
+              console.warn(`[migrate] (${f}) ignoring duplicate at stmt ${i + 1}:`, msg.split('\n')[0]);
+              continue;
+            }
             console.error(`[migrate] (${f}) statement ${i + 1} failed:`, msg);
             throw e;
           }
