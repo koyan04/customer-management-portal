@@ -473,18 +473,36 @@ else
     if [ -f "$PG_HBA_FILE_FALL" ]; then
       if ! grep -q "# CMP TEMP TRUST" "$PG_HBA_FILE_FALL"; then
         cp "$PG_HBA_FILE_FALL" "${PG_HBA_FILE_FALL}.bak.$(date +%s)" || die "Failed to backup pg_hba.conf for trust escalation"
-        { echo "# CMP TEMP TRUST - will be removed after installation"; echo "local   all             all                                     trust"; cat "$PG_HBA_FILE_FALL"; } > "${PG_HBA_FILE_FALL}.new" || die "Failed to build temporary trust pg_hba.conf"
+        # Add trust for both local socket and IPv4/IPv6 localhost
+        { 
+          echo "# CMP TEMP TRUST - will be removed after installation"
+          echo "local   all             all                                     trust"
+          echo "host    all             all             127.0.0.1/32            trust"
+          echo "host    all             all             ::1/128                 trust"
+          cat "$PG_HBA_FILE_FALL"
+        } > "${PG_HBA_FILE_FALL}.new" || die "Failed to build temporary trust pg_hba.conf"
         mv "${PG_HBA_FILE_FALL}.new" "$PG_HBA_FILE_FALL" || die "Failed to activate temporary trust pg_hba.conf"
-        systemctl reload postgresql >/dev/null 2>&1 || sudo -u postgres psql -d postgres -c "SELECT pg_reload_conf();" >/dev/null 2>&1 || true
-        sleep 1
+        
+        # Force restart instead of reload to ensure new auth rules take effect immediately
+        if systemctl restart postgresql; then
+           sleep 2
+        else
+           warn "Failed to restart PostgreSQL via systemctl, trying reload..."
+           sudo -u postgres psql -d postgres -c "SELECT pg_reload_conf();" >/dev/null 2>&1 || true
+           sleep 1
+        fi
       fi
+      
       # Retry without password (trust should allow it)
-      if ! psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
-        die "Temporary trust escalation failed to obtain admin access."
-      else
-        color "Temporary trust escalation succeeded (will revert after DB setup)."
-        DB_ADMIN_TEMP_TRUST=1
+      # Try connecting via socket first (no -h) then localhost
+      if ! psql -U "$DB_ADMIN_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+         if ! psql -h 127.0.0.1 -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+            die "Temporary trust escalation failed to obtain admin access."
+         fi
       fi
+      
+      color "Temporary trust escalation succeeded (will revert after DB setup)."
+      DB_ADMIN_TEMP_TRUST=1
     else
       die "Cannot connect and pg_hba.conf not found for trust escalation ($PG_HBA_FILE_FALL)"
     fi
