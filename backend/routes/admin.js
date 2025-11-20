@@ -1365,7 +1365,7 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       return res.status(400).json({ msg: 'Invalid JSON' });
     }
 
-    if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.users))) {
+    if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.server_keys) && !Array.isArray(data.users))) {
       return res.status(400).json({ msg: 'Invalid snapshot format' });
     }
     const client = await pool.connect();
@@ -1403,15 +1403,27 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
         );
       }
     }
-    // users: upsert by id (safe subset of fields)
+    // server_keys: upsert by id
+    if (Array.isArray(data.server_keys)) {
+      for (const k of data.server_keys) {
+        if (!k.server_id) continue;
+        await client.query(
+          `INSERT INTO server_keys (id, server_id, public_key, private_key, created_at)
+           VALUES ($1,$2,$3,$4, COALESCE($5, now()))
+           ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, public_key = EXCLUDED.public_key, private_key = EXCLUDED.private_key`,
+          [k.id || null, k.server_id, k.public_key || null, k.private_key || null, k.created_at || null]
+        );
+      }
+    }
+    // users: upsert by id (all fields)
     if (Array.isArray(data.users)) {
       for (const u of data.users) {
         if (!u.id) continue;
         await client.query(
-          `INSERT INTO users (id, server_id, account_name, service_type, expire_date)
-           VALUES ($1,$2,$3,$4,$5)
-           ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, account_name = EXCLUDED.account_name, service_type = EXCLUDED.service_type, expire_date = EXCLUDED.expire_date`,
-          [u.id, u.server_id || null, u.account_name || null, u.service_type || null, u.expire_date || null]
+          `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE($11, now()))
+           ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, account_name = EXCLUDED.account_name, service_type = EXCLUDED.service_type, contact = EXCLUDED.contact, expire_date = EXCLUDED.expire_date, total_devices = EXCLUDED.total_devices, data_limit_gb = EXCLUDED.data_limit_gb, remark = EXCLUDED.remark, display_pos = EXCLUDED.display_pos`,
+          [u.id, u.server_id || null, u.account_name || null, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, u.created_at || null]
         );
       }
     }
@@ -1421,6 +1433,7 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
     return res.json({ msg: 'Snapshot restored (merge)', counts: {
       settings: Array.isArray(data.app_settings) ? data.app_settings.length : 0,
       servers: Array.isArray(data.servers) ? data.servers.length : 0,
+      server_keys: Array.isArray(data.server_keys) ? data.server_keys.length : 0,
       users: Array.isArray(data.users) ? data.users.length : 0,
     }});
     } catch (err) {
