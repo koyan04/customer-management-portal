@@ -826,6 +826,21 @@ if [ "$CMP_ENABLE_NGINX" = "1" ]; then
   if ! command -v nginx >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then
       color "Installing nginx..."
+      
+      # Wait for dpkg locks to be released (max 300 seconds)
+      local waited=0
+      while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
+        if [ $waited -eq 0 ]; then
+          warn "Waiting for other package managers to finish..."
+        fi
+        sleep 5
+        waited=$((waited + 5))
+        if [ $waited -ge 300 ]; then
+          warn "Timeout waiting for package manager locks after 5 minutes"
+          break
+        fi
+      done
+      
       apt-get update -y || true
       apt-get install -y nginx || warn "Failed to install nginx"
     else
