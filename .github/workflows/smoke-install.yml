@@ -21,12 +21,9 @@ jobs:
           sudo systemctl start postgresql
           sudo systemctl status postgresql --no-pager || true
 
-      - name: Run installer (latest main, no TLS, no nginx)
+      - name: Install directly from checkout (latest main)
         env:
-          CMP_CHECKOUT_REF: main
           DOMAIN: example.com
-          CF_AUTH_MODE: token
-          CF_API_TOKEN: dummy-token
           LE_EMAIL: admin@example.com
           BACKEND_PORT: "3001"
           ADMIN_USER: admin
@@ -36,14 +33,77 @@ jobs:
           APP_DB_DATABASE: cmp
           APP_DB_USER: cmp
           APP_DB_PASSWORD: S3cret!pass
-          CMP_DB_ADMIN_MODE: sudo
-          CMP_ENABLE_NGINX: "0"
-          CMP_SKIP_CERT: "1"
-          CMP_HEALTH_PROBE_RETRIES: "12"
-          CMP_HEALTH_PROBE_INTERVAL: "2"
         run: |
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.sh -o install.sh
-          sudo --preserve-env=DOMAIN,CF_AUTH_MODE,CF_API_TOKEN,LE_EMAIL,BACKEND_PORT,ADMIN_USER,ADMIN_PASS,APP_DB_HOST,APP_DB_PORT,APP_DB_DATABASE,APP_DB_USER,APP_DB_PASSWORD,CMP_DB_ADMIN_MODE,CMP_ENABLE_NGINX,CMP_SKIP_CERT,CMP_HEALTH_PROBE_RETRIES,CMP_HEALTH_PROBE_INTERVAL,CMP_CHECKOUT_REF bash install.sh
+          # Install from checked-out code instead of downloading release
+          sudo mkdir -p /srv/cmp
+          sudo rsync -a . /srv/cmp/ --exclude=.git
+          
+          # Setup database
+          sudo -u postgres psql -c "CREATE ROLE cmp LOGIN PASSWORD 'S3cret!pass';" || true
+          sudo -u postgres psql -c "CREATE DATABASE cmp OWNER cmp;" || true
+          
+          # Configure PostgreSQL for password auth
+          PG_HBA=$(sudo -u postgres psql -d postgres -At -c "SHOW hba_file" 2>/dev/null || echo "/etc/postgresql/16/main/pg_hba.conf")
+          if [ -f "$PG_HBA" ]; then
+            sudo cp "$PG_HBA" "${PG_HBA}.bak"
+            echo "host all all 127.0.0.1/32 scram-sha-256" | sudo tee -a "$PG_HBA"
+            echo "host all all ::1/128 scram-sha-256" | sudo tee -a "$PG_HBA"
+            sudo systemctl reload postgresql
+          fi
+          
+          # Install dependencies and build
+          cd /srv/cmp/backend
+          sudo npm install --no-audit --no-fund
+          cd /srv/cmp/frontend
+          sudo npm install --no-audit --no-fund
+          sudo npm run build
+          
+          # Create .env
+          cd /srv/cmp/backend
+          sudo tee .env > /dev/null <<EOF
+          PORT=3001
+          DOMAIN_NAME=example.com
+          LETSENCRYPT_EMAIL=admin@example.com
+          START_TELEGRAM_BOT=false
+          JWT_SECRET=$(openssl rand -hex 48)
+          DB_HOST=localhost
+          DB_PORT=5432
+          DB_DATABASE=cmp
+          DB_USER=cmp
+          DB_PASSWORD=S3cret!pass
+          SEED_ADMIN_USERNAME=admin
+          SEED_ADMIN_PASSWORD=admin123456
+          EOF
+          
+          # Run migrations
+          export $(cat .env | xargs)
+          node run_migrations.js
+          node seedAdmin.js
+          
+          # Create systemd service
+          sudo tee /etc/systemd/system/cmp-backend.service > /dev/null <<'EOFSVC'
+          [Unit]
+          Description=CMP Backend Service
+          After=network.target postgresql.service
+          
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/srv/cmp/backend
+          ExecStart=/usr/bin/env node index.js
+          Restart=on-failure
+          RestartSec=5s
+          StandardOutput=journal
+          StandardError=journal
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOFSVC
+          
+          sudo systemctl daemon-reload
+          sudo systemctl enable cmp-backend
+          sudo systemctl start cmp-backend
+          sleep 3
 
       - name: Verify health endpoint
         run: |
