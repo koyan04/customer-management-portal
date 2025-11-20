@@ -451,12 +451,25 @@ else
     RAW_SERVER_VERSION=$(sudo -u postgres psql -d postgres -At -c "SHOW server_version" 2>/dev/null)
     set -e
     PG_VERSION_FALL=$(echo "$RAW_SERVER_VERSION" | cut -d. -f1)
+    
+    # Fallback: try to detect version from /etc/postgresql directory if psql failed
+    if [ -z "$PG_VERSION_FALL" ] && [ -d "/etc/postgresql" ]; then
+      PG_VERSION_FALL=$(ls /etc/postgresql/ | grep -E '^[0-9]+' | sort -V | tail -n 1)
+    fi
+
     set +e
     PG_HBA_FILE_FALL=$(sudo -u postgres psql -d postgres -At -c "SHOW hba_file" 2>/dev/null)
     set -e
+    
     if [ -z "$PG_HBA_FILE_FALL" ]; then
-      PG_HBA_FILE_FALL="/etc/postgresql/${PG_VERSION_FALL}/main/pg_hba.conf"
+      if [ -n "$PG_VERSION_FALL" ] && [ -f "/etc/postgresql/${PG_VERSION_FALL}/main/pg_hba.conf" ]; then
+        PG_HBA_FILE_FALL="/etc/postgresql/${PG_VERSION_FALL}/main/pg_hba.conf"
+      else
+        # Last resort: find it
+        PG_HBA_FILE_FALL=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | head -n 1)
+      fi
     fi
+
     if [ -f "$PG_HBA_FILE_FALL" ]; then
       if ! grep -q "# CMP TEMP TRUST" "$PG_HBA_FILE_FALL"; then
         cp "$PG_HBA_FILE_FALL" "${PG_HBA_FILE_FALL}.bak.$(date +%s)" || die "Failed to backup pg_hba.conf for trust escalation"
