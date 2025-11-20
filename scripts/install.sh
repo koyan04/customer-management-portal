@@ -503,6 +503,9 @@ else
       
       color "Temporary trust escalation succeeded (will revert after DB setup)."
       DB_ADMIN_TEMP_TRUST=1
+      # Switch to trust-based connection (no password needed now)
+      unset PGPASSWORD
+      DB_ADMIN_PASSWORD=""
     else
       die "Cannot connect and pg_hba.conf not found for trust escalation ($PG_HBA_FILE_FALL)"
     fi
@@ -510,7 +513,7 @@ else
   unset PGPASSWORD
 fi
 
-# Run psql to create role/db (sudo or TCP)
+# Run psql to create role/db (sudo, TCP with password, or TCP with trust)
 if [ "$DB_ADMIN_MODE" = "sudo" ]; then
   # Run psql from postgres' home directory to avoid noisy 'could not change directory to /root'
   if sudo -u postgres bash -lc "cd; psql -At -c \"SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'\"" | grep -q 1; then
@@ -527,14 +530,18 @@ if [ "$DB_ADMIN_MODE" = "sudo" ]; then
     sudo -u postgres bash -lc "cd; psql -c \"CREATE DATABASE $DB_DATABASE OWNER $DB_USER;\"" || die "Failed to create database '$DB_DATABASE'"
   fi
 else
-  export PGPASSWORD="$DB_ADMIN_PASSWORD"
-  if psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -At -c "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" | grep -q 1; then
+  # Use password only if trust escalation wasn't used
+  if [ "${DB_ADMIN_TEMP_TRUST:-0}" -eq 0 ]; then
+    export PGPASSWORD="$DB_ADMIN_PASSWORD"
+  fi
+  
+  if psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -At -c "SELECT 1 FROM pg_roles WHERE rolname='$DB_USER'" 2>/dev/null | grep -q 1; then
     color "Database user '$DB_USER' already exists"
   else
     color "Creating database user '$DB_USER'..."
     psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -c "CREATE ROLE $DB_USER LOGIN PASSWORD '$DB_PASSWORD';" || die "Failed to create database user '$DB_USER'"
   fi
-  if psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -At -c "SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'" | grep -q 1; then
+  if psql -h "$DB_ADMIN_HOST" -p "$DB_ADMIN_PORT" -U "$DB_ADMIN_USER" -d postgres -At -c "SELECT 1 FROM pg_database WHERE datname='$DB_DATABASE'" 2>/dev/null | grep -q 1; then
     color "Database '$DB_DATABASE' already exists"
   else
     color "Creating database '$DB_DATABASE'..."
