@@ -422,24 +422,51 @@ if [ "$DB_ADMIN_MODE" = "sudo" ]; then
     systemctl start postgresql || die "Failed to start PostgreSQL"
     sleep 2
   fi
-  # Re-test; if still failing due to password auth, fallback to TCP admin mode
+  # Re-test; if still failing due to password auth, attempt automatic trust escalation
   if ! sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
-    warn "Local sudo connection failed (likely password auth enforced for 'postgres'). Switching to TCP admin mode."
-    DB_ADMIN_MODE="tcp"
-    DB_ADMIN_HOST=${DB_ADMIN_HOST:-$APP_DB_HOST}
-    DB_ADMIN_PORT=${DB_ADMIN_PORT:-$APP_DB_PORT}
-    DB_ADMIN_USER=${DB_ADMIN_USER:-postgres}
-    if [ -t 0 ] || [ -r "/dev/tty" ]; then
-      if [ -z "${DB_ADMIN_PASSWORD:-}" ]; then
-        if [ -r "/dev/tty" ]; then
-          read -r -p "Enter PostgreSQL superuser password for $DB_ADMIN_USER@$DB_ADMIN_HOST:$DB_ADMIN_PORT: " DB_ADMIN_PASSWORD < "/dev/tty" || true
-        else
-          read -r -p "Enter PostgreSQL superuser password for $DB_ADMIN_USER@$DB_ADMIN_HOST:$DB_ADMIN_PORT: " DB_ADMIN_PASSWORD || true
-        fi
-      fi
+    warn "Local sudo connection failed (likely password auth enforced for 'postgres'). Attempting automatic trust escalation..."
+    # Attempt trust escalation automatically when running as root
+    set +e
+    RAW_SERVER_VERSION=$(sudo -u postgres psql -d postgres -At -c "SHOW server_version" 2>/dev/null)
+    if [ -z "$RAW_SERVER_VERSION" ]; then
+      RAW_SERVER_VERSION=$(ls /etc/postgresql/ 2>/dev/null | grep -E '^[0-9]+' | sort -V | tail -n 1)
     fi
-    if [ -z "${DB_ADMIN_PASSWORD:-}" ]; then
-      die "No PostgreSQL superuser password provided. Re-run with CMP_DB_ADMIN_MODE=tcp and set DB_ADMIN_PASSWORD env var or provide interactively."
+    set -e
+    PG_VERSION=$(echo "$RAW_SERVER_VERSION" | cut -d. -f1)
+    
+    set +e
+    PG_HBA_FILE=$(sudo -u postgres psql -d postgres -At -c "SHOW hba_file" 2>/dev/null)
+    if [ -z "$PG_HBA_FILE" ] && [ -n "$PG_VERSION" ]; then
+      PG_HBA_FILE=$(find /etc/postgresql -name pg_hba.conf 2>/dev/null | grep "/${PG_VERSION}/" | head -n 1)
+    fi
+    if [ -z "$PG_HBA_FILE" ]; then
+      PG_HBA_FILE="/etc/postgresql/${PG_VERSION}/main/pg_hba.conf"
+    fi
+    set -e
+    
+    if [ -f "$PG_HBA_FILE" ] && [ -w "$PG_HBA_FILE" ]; then
+      # Add temporary trust rules at the top
+      cp "$PG_HBA_FILE" "${PG_HBA_FILE}.cmp-backup.$(date +%s)"
+      {
+        echo "# CMP TEMP TRUST - will be removed after setup"
+        echo "local   all             all                                     trust"
+        cat "$PG_HBA_FILE"
+      } > "${PG_HBA_FILE}.new"
+      mv "${PG_HBA_FILE}.new" "$PG_HBA_FILE"
+      
+      systemctl restart postgresql || die "Failed to restart PostgreSQL"
+      sleep 2
+      
+      if sudo -u postgres psql -c "SELECT 1" >/dev/null 2>&1; then
+        color "Temporary trust escalation succeeded (will revert after DB setup)."
+        DB_ADMIN_TEMP_TRUST=1
+      else
+        warn "Trust escalation applied but connection still fails"
+        mv "${PG_HBA_FILE}.cmp-backup."* "$PG_HBA_FILE" 2>/dev/null || true
+        die "Cannot connect to PostgreSQL even after trust escalation"
+      fi
+    else
+      die "Cannot access pg_hba.conf at $PG_HBA_FILE for trust escalation. Ensure running as root."
     fi
   fi
 else
