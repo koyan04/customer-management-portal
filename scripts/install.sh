@@ -689,7 +689,7 @@ Type=simple
 WorkingDirectory=$BACKEND_DIR
 Environment=NODE_ENV=production
 EnvironmentFile=$ENV_FILE
-ExecStart=/usr/bin/node index.js
+ExecStart=/usr/bin/env node index.js
 Restart=on-failure
 RestartSec=5s
 User=root
@@ -717,7 +717,7 @@ Type=simple
 WorkingDirectory=$BACKEND_DIR
 Environment=NODE_ENV=production
 EnvironmentFile=$ENV_FILE
-ExecStart=/usr/bin/node telegram_bot.js
+ExecStart=/usr/bin/env node telegram_bot.js
 Restart=on-failure
 RestartSec=5s
 User=root

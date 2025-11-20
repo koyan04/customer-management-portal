@@ -1,0 +1,21 @@
+[Unit]
+Description=CMP Background Worker
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/srv/cmp/backend
+Environment=NODE_ENV=production
+EnvironmentFile=/srv/cmp/backend/.env
+ExecStart=/usr/bin/node scripts/worker.js
+Restart=on-failure
+RestartSec=5s
+User=root
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
