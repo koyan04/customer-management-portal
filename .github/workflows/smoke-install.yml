@@ -42,7 +42,7 @@ jobs:
           CMP_HEALTH_PROBE_RETRIES: "12"
           CMP_HEALTH_PROBE_INTERVAL: "2"
         run: |
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/v1.1.8/Public_Release/scripts/install.sh -o install.sh
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/v1.1.8/scripts/install.sh -o install.sh
           sudo --preserve-env=DOMAIN,CF_AUTH_MODE,CF_API_TOKEN,LE_EMAIL,BACKEND_PORT,ADMIN_USER,ADMIN_PASS,APP_DB_HOST,APP_DB_PORT,APP_DB_DATABASE,APP_DB_USER,APP_DB_PASSWORD,CMP_DB_ADMIN_MODE,CMP_ENABLE_NGINX,CMP_SKIP_CERT,CMP_HEALTH_PROBE_RETRIES,CMP_HEALTH_PROBE_INTERVAL,CMP_CHECKOUT_REF bash install.sh
 
       - name: Verify health endpoint
@@ -50,8 +50,23 @@ jobs:
           curl -fsS http://127.0.0.1:3001/api/health | tee health.json
           test -s health.json
 
+      - name: Test login with admin credentials
+        run: |
+          curl -v -X POST http://127.0.0.1:3001/api/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"username":"admin","password":"admin123456"}' \
+            | tee login_response.json
+          # Check if we got a token back (should contain "token" field)
+          grep -q '"token"' login_response.json || (echo "Login failed - no token returned" && exit 1)
+
+      - name: Verify password hash in database
+        run: |
+          sudo -u postgres psql -d cmp -c "SELECT id, username, role, length(password_hash) as hash_length, substring(password_hash, 1, 10) as hash_prefix FROM admins WHERE username = 'admin';"
+
       - name: Print service logs on failure
         if: failure()
         run: |
           sudo journalctl -u cmp-backend.service --no-pager -n 200 || true
           sudo tail -n 200 /var/log/postgresql/* || true
+          echo "=== Database admin records ==="
+          sudo -u postgres psql -d cmp -c "SELECT id, username, role FROM admins;" || true

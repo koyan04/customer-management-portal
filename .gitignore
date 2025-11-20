@@ -1,8 +1,70 @@
-# Ignore everything in root
+# Exclude everything that's not from Public_Release
 /*
+!/.github/
+!/.gitignore
+!/backend/
+!/frontend/
+!/scripts/
+!/CONTRIBUTING.md
+!/LICENSE
+!/README.md
+!/VERSION
+!/WINDOWS_INSTALL.md
 
-# Except Public_Release folder
-!Public_Release/
+# But exclude Public_Release folder itself
+/Public_Release/
 
-# Don't ignore .gitignore itself
-!.gitignore
+# Exclude all other root-level files and folders
+/deploy/
+/test-extract/
+/CHANGELOG.md
+/DEPLOYMENT_PLAN.md
+/files-to-remove.txt
+/OPERATOR_ONCALL_CHECKLIST.md
+/OPERATOR_RUNBOOK.md
+/PR_DESC_*.md
+/RELEASE_NOTES_*.md
+/release_notes_*.md
+/SECURITY.md
+
+# Backend specific ignores
+backend/node_modules/
+backend/.env
+backend/public/uploads/*
+!backend/public/uploads/.gitkeep
+!backend/public/uploads/README.md
+backend/*.log
+backend/*.err
+backend/*.json.backup
+backend/temp_*.js
+backend/tmp_*.js
+backend/test_*.js
+backend/backup_*.js
+backend/check_*.js
+backend/smoke_*.js
+backend/seed*.js
+backend/show_*.js
+backend/print_*.js
+backend/pm2.*.js
+backend/*.http
+backend/temp_*.txt
+backend/last_financial_response.json
+backend/app_settings_general_backup.json
+backend/PR_BODY_FOR_GH.md
+backend/README_TELEGRAM_BOT.md
+backend/SEARCH_API.md
+
+# Frontend specific ignores
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/package-lock.json
+
+# OS and Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
