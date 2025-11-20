@@ -629,6 +629,24 @@ else
   die "Database connection failed. Please check:\n  1. PostgreSQL is running: systemctl status postgresql\n  2. Database credentials in /srv/cmp/.env\n  3. PostgreSQL logs: sudo tail -50 /var/log/postgresql/postgresql-${PG_VERSION}-main.log"
 fi
 
+# Run migrations BEFORE removing trust (so postgres can modify all objects)
+color "Running migrations..."
+(cd "$BACKEND_DIR" && node run_migrations.js || die "Migrations failed")
+
+# Transfer ownership of all database objects to the app user
+if [ "${DB_ADMIN_TEMP_TRUST:-0}" = "1" ] || [ "$DB_ADMIN_MODE" = "sudo" ]; then
+  color "Transferring database ownership to $DB_USER..."
+  if [ "$DB_ADMIN_MODE" = "sudo" ]; then
+    sudo -u postgres psql -d "$DB_DATABASE" -c "REASSIGN OWNED BY postgres TO $DB_USER;" 2>/dev/null || warn "Could not reassign ownership (may be normal)"
+  else
+    PSQL_CONNECT_ARGS="-U $DB_ADMIN_USER"
+    if [ -n "$DB_ADMIN_HOST" ]; then
+      PSQL_CONNECT_ARGS="$PSQL_CONNECT_ARGS -h $DB_ADMIN_HOST -p $DB_ADMIN_PORT"
+    fi
+    psql $PSQL_CONNECT_ARGS -d "$DB_DATABASE" -c "REASSIGN OWNED BY $DB_ADMIN_USER TO $DB_USER;" 2>/dev/null || warn "Could not reassign ownership (may be normal)"
+  fi
+fi
+
 # Revert temporary trust if used
 if [ "${DB_ADMIN_TEMP_TRUST:-0}" = "1" ]; then
   color "Reverting temporary trust authentication..."
@@ -648,9 +666,6 @@ if [ "${DB_ADMIN_TEMP_TRUST:-0}" = "1" ]; then
     warn "Expected pg_hba.conf for cleanup not found: $PG_HBA_CLEAN"
   fi
 fi
-
-color "Running migrations..."
-(cd "$BACKEND_DIR" && node run_migrations.js || die "Migrations failed")
 
 color "Seeding admin & servers..."
 (cd "$BACKEND_DIR" && node seedAdmin.js)
