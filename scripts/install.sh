@@ -276,7 +276,8 @@ curl -fsSL "$TARBALL_URL" | tar -xz -C "$TMP_DIR" --strip-components=1 || die "F
 
 color "Moving application files to ${APP_DIR}..."
 # Use rsync to move files, which handles existing directories gracefully
-rsync -a "$TMP_DIR/" "$APP_DIR/" || die "Failed to move files to ${APP_DIR}"
+# Exclude Public_Release (local staging folder only, not for deployment)
+rsync -a "$TMP_DIR/" "$APP_DIR/" --exclude='Public_Release' || die "Failed to move files to ${APP_DIR}"
 rm -rf "$TMP_DIR"
 
 # Install/refresh Cloudflare credentials for certbot (always rewrite to match chosen mode)
