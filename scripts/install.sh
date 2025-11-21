@@ -280,6 +280,14 @@ color "Moving application files to ${APP_DIR}..."
 rsync -a "$TMP_DIR/" "$APP_DIR/" --exclude='Public_Release' || die "Failed to move files to ${APP_DIR}"
 rm -rf "$TMP_DIR"
 
+# If a bundled frontend build is included in the release, skip building frontend on the target
+if [ -d "$APP_DIR/frontend/dist" ]; then
+  color "Bundled frontend/dist found in release; skipping frontend install/build steps."
+  SKIP_FRONTEND_BUILD=1
+else
+  SKIP_FRONTEND_BUILD=0
+fi
+
 # Install/refresh Cloudflare credentials for certbot (always rewrite to match chosen mode)
 if [ -f "$CF_CREDS_FILE" ]; then
   cp -f "$CF_CREDS_FILE" "${CF_CREDS_FILE}.bak.$(date +%s)" || true
@@ -320,12 +328,16 @@ fi
 # Install Node dependencies
 color "Installing backend dependencies..."
 (cd "$BACKEND_DIR" && npm install --no-audit --no-fund)
-color "Installing frontend dependencies..."
-(cd "$FRONTEND_DIR" && npm install --no-audit --no-fund)
+if [ "$SKIP_FRONTEND_BUILD" -eq 1 ]; then
+  color "Using bundled frontend/dist; skipping frontend npm install and build."
+else
+  color "Installing frontend dependencies..."
+  (cd "$FRONTEND_DIR" && npm install --no-audit --no-fund)
 
-# Build frontend
-color "Building frontend..."
-(cd "$FRONTEND_DIR" && npm run build)
+  # Build frontend
+  color "Building frontend..."
+  (cd "$FRONTEND_DIR" && npm run build)
+fi
 
 # Generate .env if missing
 if [ ! -f "$ENV_FILE" ]; then
