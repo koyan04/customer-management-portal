@@ -1,0 +1,6 @@
+.env
+server*.log
+server.err
+*.log
+public/uploads/
+*.db

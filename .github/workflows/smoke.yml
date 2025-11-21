@@ -1,0 +1,41 @@
+name: Smoke Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d testdb"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      - name: Install backend deps
+        working-directory: backend
+        run: npm ci
+      - name: Run smoke
+        env:
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_USER: postgres
+          DB_DATABASE: testdb
+          DB_PASSWORD: postgres
+        working-directory: backend
+        run: npm run smoke
