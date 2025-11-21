@@ -57,7 +57,7 @@ body {
 body.theme-light {
   --accent: #00bfa5;
   --accent-foreground: #083d36;
-  --glass-bg: linear-gradient(180deg, rgba(255,255,255,0.86), rgba(255,255,255,0.72));
+  --glass-bg: linear-gradient(180deg, rgba(241,255,250,0.86), rgba(241,255,250,0.72));
   --glass-border: rgba(11,124,117,0.12);
   --glass-elev: 0 8px 24px rgba(6,51,45,0.07);
   --icon-color: #063b33;
@@ -258,7 +258,11 @@ body.theme-light .settings-tabs .tab-btn { color: #064e3b; background: #f9fffd; 
 body.theme-light .settings-tabs .tab-btn.active { background: linear-gradient(135deg, rgba(0,191,165,0.20), rgba(0,191,165,0.08)); color: #065f46; border-color: rgba(0,191,165,0.45); }
 body.theme-light .form-grid input,
 body.theme-light .form-grid textarea,
-body.theme-light .form-grid select { background: #ffffff; color: #0d1a26; border-color: #cbd5e1; }
+body.theme-light .form-grid select {
+  background: #e2f7e652;
+  color: #0d1a26;
+  border-color: #cbd5e1;
+}
 body.theme-light .btn { background: #f7fffc; color: #0d1a26; border-color: #cfe9e2; }
 body.theme-light .btn.primary { background: #0b7285; color: #fff; border-color: #0b7285; }
 body.theme-light .settings-status { background: rgba(0,191,165,0.12); color: #065f46; border-color: rgba(0,191,165,0.30); }
@@ -705,6 +709,13 @@ body.theme-light .app-footer .footer-link:focus-visible { box-shadow: 0 0 0 3px 
   .app-footer { flex-wrap: nowrap; justify-content: center; text-align: center; gap: 0.5rem; padding: 0.5rem 0.75rem; font-size: 0.75rem; }
 }
 
+/* Light theme: ensure version text in footer is visible against light glass background */
+body.theme-light .app-footer .footer-version {
+  color: #064e3b !important;
+  opacity: 0.95 !important;
+  font-weight: 600;
+}
+
 
 /* Financial layout grid: chart + table side-by-side at larger viewports */
 .financial-grid { display: grid; /* equal halves for chart + table */
@@ -825,6 +836,10 @@ body.theme-light .monthly-table-section h3 {
   text-overflow: ellipsis;
 }
 
+/* Desktop default: show full header labels, hide abbreviations */
+.monthly-table thead th .abbr { display: none !important; }
+.monthly-table thead th .full { display: inline !important; }
+
 @media (max-width: 720px) {
   /* Mobile: make the table fit the viewport by using fixed layout, smaller type and
      percentage-based column widths so horizontal scrolling is avoided. Numeric
@@ -832,14 +847,22 @@ body.theme-light .monthly-table-section h3 {
   .monthly-table { table-layout: fixed; width: 100%; min-width: 0; --monthly-table-font-size: 0.82rem; }
   .monthly-table thead th, .monthly-table tbody td, .monthly-table tfoot td { font-size: var(--monthly-table-font-size); padding: 6px 8px; }
   /* column widths (Year, Month, Mini, Basic, Unlimited, Revenue) */
-  .monthly-table thead th:nth-child(1), .monthly-table tbody td:nth-child(1), .monthly-table tfoot td:nth-child(1) { width: 14%; }
+  .monthly-table thead th:nth-child(1), .monthly-table tbody td:nth-child(1), .monthly-table tfoot td:nth-child(1) { width: 12%; }
   .monthly-table thead th:nth-child(2), .monthly-table tbody td:nth-child(2), .monthly-table tfoot td:nth-child(2) { width: 13%; }
-  .monthly-table thead th:nth-child(3), .monthly-table tbody td:nth-child(3), .monthly-table tfoot td:nth-child(3) { width: 10%; }
-  .monthly-table thead th:nth-child(4), .monthly-table tbody td:nth-child(4), .monthly-table tfoot td:nth-child(4) { width: 10%; }
-  .monthly-table thead th:nth-child(5), .monthly-table tbody td:nth-child(5), .monthly-table tfoot td:nth-child(5) { width: 12%; }
-  .monthly-table thead th:nth-child(6), .monthly-table tbody td:nth-child(6), .monthly-table tfoot td:nth-child(6) { width: 12%; }
+  .monthly-table thead th:nth-child(3), .monthly-table tbody td:nth-child(3), .monthly-table tfoot td:nth-child(3) { width: 5%; }
+  .monthly-table thead th:nth-child(4), .monthly-table tbody td:nth-child(4), .monthly-table tfoot td:nth-child(4) { width: 5%; }
+  .monthly-table thead th:nth-child(5), .monthly-table tbody td:nth-child(5), .monthly-table tfoot td:nth-child(5) { width: 5%; }
+  .monthly-table thead th:nth-child(6), .monthly-table tbody td:nth-child(6), .monthly-table tfoot td:nth-child(6) { width: 31%; }
   /* allow month to ellipsize if space becomes tight */
   .monthly-table tbody td:nth-child(2) { overflow: hidden; text-overflow: ellipsis; }
+
+  
+}
+
+/* Ensure mobile shows abbreviations and hides full labels (match the mobile breakpoint above) */
+@media (max-width: 720px) {
+  .monthly-table thead th .abbr { display: inline !important; }
+  .monthly-table thead th .full { display: none !important; }
 }
 
 /* --- Header & Main Action Button --- */
@@ -1082,7 +1105,7 @@ body.theme-light .add-server-form button[type="submit"]:hover {
 /* Light theme variant for the group */
 body.theme-light .general-group {
   border-color: rgba(11,124,117,0.12);
-  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(255,255,255,0.92));
+  background: linear-gradient(180deg, rgba(241,255,250,0.96), rgba(241,255,250,0.92));
 }
 
 /* Time zone group: visually separate the timezone selector with a subtle bordered background
@@ -1107,7 +1130,7 @@ body.theme-light .general-group {
 /* Light theme variant for timezone group: softer glass background and mint-tinted border */
 body.theme-light .timezone-group {
   border-color: rgba(11,124,117,0.12);
-  background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,255,255,0.94));
+  background: linear-gradient(180deg, rgba(241,255,250,0.98), rgba(241,255,250,0.94));
   box-shadow: 0 6px 18px rgba(6,51,45,0.06), inset 0 1px rgba(255,255,255,0.72);
 }
 body.theme-light .timezone-group .timezone-label { color: #083d36; }
@@ -1132,7 +1155,7 @@ body.theme-light .timezone-group .timezone-label { color: #083d36; }
 /* Light theme variant for the financial group */
 body.theme-light .financial-group {
   border-color: rgba(11,124,117,0.12);
-  background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(255,255,255,0.92));
+  background: linear-gradient(180deg, rgba(241,255,250,0.96), rgba(241,255,250,0.92));
 }
 
 /* Auto group (session & idle) styling */
@@ -1157,7 +1180,7 @@ body.theme-light .financial-group {
 }
 
 /* Light theme variant */
-body.theme-light .auto-group { border-color: rgba(11,124,117,0.12); background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,255,255,0.95)); }
+body.theme-light .auto-group { border-color: rgba(11,124,117,0.12); background: linear-gradient(180deg, rgba(241,255,250,0.98), rgba(241,255,250,0.95)); }
 body.theme-light .auto-group-header strong { color: #083d36; }
 body.theme-light .auto-group-header .auto-group-sub { color: #2b6f64; }
 
@@ -2559,6 +2582,13 @@ body.theme-light .key-box { background: linear-gradient(180deg, rgba(255,255,255
   display: flex;
   justify-content: flex-end;
   gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
   margin-top: 1.5rem;
 }
 
@@ -4264,6 +4294,47 @@ body.theme-light .last-seen-pill {
 /* compact table inside status modal */
 .user-table.compact { font-size: 0.9rem; }
 .user-table.compact th, .user-table.compact td { padding: 0.4rem 0.5rem; }
+
+/* Mobile: allow result rows to wrap inside status (Soon/Expired) modal */
+@media (max-width: 640px) {
+  .modal-content.status-users-modal .user-table.compact,
+  .modal-content.status-users-modal .user-table.compact tbody,
+  .modal-content.status-users-modal .user-table.compact tr {
+    display: table;
+    table-layout: fixed; /* ensure columns follow explicit widths */
+    width: 100%;
+    min-width: 0;
+  }
+
+  .modal-content.status-users-modal .user-table.compact th,
+  .modal-content.status-users-modal .user-table.compact td {
+    white-space: normal !important;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  /* Wrap account/status inline elements for better stacking on narrow screens */
+  .modal-content.status-users-modal .account-with-status,
+  .modal-content.status-users-modal .status-badge,
+  .modal-content.status-users-modal .row-status-icon {
+    white-space: normal;
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    align-items: center;
+  }
+
+  /* Explicit column distribution for status modal (Account, Service, Server, Expire)
+     Enforce 30% / 10% / 30% / 30% widths so tbody aligns with thead on narrow screens */
+  .modal-content.status-users-modal .user-table.compact th:nth-child(1),
+  .modal-content.status-users-modal .user-table.compact td:nth-child(1) { width: 30%; }
+  .modal-content.status-users-modal .user-table.compact th:nth-child(2),
+  .modal-content.status-users-modal .user-table.compact td:nth-child(2) { width: 10%; }
+  .modal-content.status-users-modal .user-table.compact th:nth-child(3),
+  .modal-content.status-users-modal .user-table.compact td:nth-child(3) { width: 30%; }
+  .modal-content.status-users-modal .user-table.compact th:nth-child(4),
+  .modal-content.status-users-modal .user-table.compact td:nth-child(4) { width: 30%; }
+}
 
 /* --- Dashboard Grid & Cards --- */
 .dashboard-grid {
@@ -6115,6 +6186,397 @@ body.theme-light .error-toast { background: linear-gradient(90deg, rgba(231,76,6
   .matview-actions { flex-direction: column; }
   .mv-btn { width: 100%; justify-content: center; }
   .matview-collapsed { font-size: 0.78rem; padding: 0.5rem 0.65rem; }
+}
+
+/* --- User Transfer Modal Styles --- */
+.transfer-modal {
+  width: 90% !important;
+  max-width: 1400px !important;
+  /* Override general modal constraints so the transfer modal can expand naturally */
+  max-height: none !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+.transfer-modal .modal-body {
+  padding: 1.5rem;
+}
+
+.transfer-modal .modal-header h3 {
+  font-size: 1.15rem;
+  color: var(--accent);
+}
+
+/* Mobile responsive: smaller fonts and tighter spacing */
+@media (max-width: 768px) {
+  .transfer-modal .modal-body {
+    padding: 1rem;
+  }
+  
+  .transfer-modal .modal-header h3 {
+    font-size: 1rem;
+  }
+  
+  .transfer-modal label {
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  
+  .transfer-modal select {
+    font-size: 0.85rem;
+    padding: 0.5rem 0.6rem;
+  }
+  
+  .transfer-modal select option {
+    font-size: 0.85rem;
+    padding: 0.5rem 0.6rem;
+  }
+}
+
+.transfer-modal select {
+  background: rgba(20,35,50,0.5);
+  border: 1px solid rgba(0,191,165,0.25);
+  color: #f0f0f0;
+  padding: 0.65rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.transfer-modal select:hover {
+  border-color: rgba(0,191,165,0.4);
+  box-shadow: 0 2px 12px rgba(0,191,165,0.15);
+}
+
+.transfer-modal select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0,191,165,0.2), 0 2px 12px rgba(0,191,165,0.15);
+}
+
+.transfer-modal select option {
+  background-color: rgba(20,35,50,0.5) !important;
+  background: rgba(20,35,50,0.5) !important;
+  color: #ffffff !important;
+  padding: 0.65rem 0.75rem;
+  font-weight: 500;
+}
+
+.transfer-modal select option:hover {
+  background-color: #c8fff2 !important;
+  background: #c8fff2 !important;
+  color: #064e3b !important;
+  font-weight: 600;
+}
+
+.transfer-modal select option:focus {
+  background-color: #c8fff2 !important;
+  background: #c8fff2 !important;
+  color: #064e3b !important;
+  font-weight: 600;
+}
+
+.transfer-modal select option:checked {
+  background-color: rgba(0,191,165,0.3) !important;
+  background: rgba(0,191,165,0.3) !important;
+  color: #00ffcc !important;
+  font-weight: 600;
+}
+
+/* Stronger overrides to make sure transfer modal expands beyond generic modal limits */
+.modal-content.transfer-modal,
+body.theme-light .modal-content.transfer-modal,
+body:not(.theme-light) .modal-content.transfer-modal {
+  width: 100% !important;
+  max-width: 1400px !important;
+  max-height: none !important;
+  height: auto !important;
+  overflow: visible !important;
+  /* Match server card glass background: dark mode uses a semi-transparent dark panel at ~50% alpha */
+  background: rgba(15,31,46,0.5) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: var(--glass-elev) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(120%) !important;
+  backdrop-filter: blur(8px) saturate(120%) !important;
+}
+
+/* Light theme: use the light theme glass gradient for the transfer modal */
+body.theme-light .modal-content.transfer-modal {
+  background: var(--glass-bg) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: var(--glass-elev) !important;
+}
+
+/* Light theme overrides for transfer modal */
+body.theme-light .transfer-modal select {
+  background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(255,255,255,0.92));
+  border: 1px solid #bff4ea;
+  color: #082a24;
+  box-shadow: inset 0 1px rgba(255,255,255,0.80), 0 3px 12px rgba(6,51,45,0.08);
+}
+
+body.theme-light .transfer-modal select:hover {
+  border-color: #79f1dd;
+  box-shadow: inset 0 1px rgba(255,255,255,0.80), 0 3px 15px rgba(6,51,45,0.12);
+}
+
+body.theme-light .transfer-modal select:focus {
+  border-color: #00bfa5;
+  box-shadow: 0 0 0 3px rgba(0,191,165,0.25), inset 0 1px rgba(255,255,255,0.85);
+}
+
+body.theme-light .transfer-modal select option {
+  background-color: #ffffff !important;
+  background: #ffffff !important;
+  color: #082a24 !important;
+}
+
+body.theme-light .transfer-modal select option:hover {
+  background-color: #00bfa5 !important;
+  background: #00bfa5 !important;
+  color: #001a16 !important;
+}
+
+body.theme-light .transfer-modal select option:focus {
+  background-color: #00bfa5 !important;
+  background: #00bfa5 !important;
+  color: #001a16 !important;
+}
+
+body.theme-light .transfer-modal select option:checked {
+  background-color: #c8fff2 !important;
+  background: #c8fff2 !important;
+  color: #064e3b !important;
+}
+
+body.theme-light .transfer-modal .user-search {
+  background: linear-gradient(180deg, rgba(255,255,255,0.70), rgba(255,255,255,0.55));
+  border: 1px solid #bff4ea;
+}
+
+body.theme-light .transfer-modal .user-search-input {
+  color: #082a24;
+}
+
+body.theme-light .transfer-modal .modal-header h3 {
+  color: #064e3b;
+}
+
+/* Final override: highly-specific selectors to prevent other modal rules from overriding the transfer modal background */
+.modal-backdrop .modal-overlay .modal-content.transfer-modal,
+.modal-overlay .modal-content.transfer-modal,
+body.theme-light .modal-backdrop .modal-overlay .modal-content.transfer-modal,
+body.theme-light .modal-overlay .modal-content.transfer-modal,
+body.theme-light .modal-backdrop .modal-content.transfer-modal,
+body.theme-light .modal-content.transfer-modal.transfer-modal {
+  background: var(--glass-bg) !important;
+  background-image: var(--glass-bg) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: var(--glass-elev) !important;
+  color: inherit !important;
+  -webkit-backdrop-filter: blur(10px) saturate(120%) !important;
+  backdrop-filter: blur(10px) saturate(120%) !important;
+}
+
+/* Also ensure the header/footer contrast remains correct in light theme */
+body.theme-light .modal-content.transfer-modal .modal-header h3,
+body.theme-light .modal-content.transfer-modal .modal-footer {
+  color: #082a24 !important;
+}
+
+/* ID-based overrides for transfer modal to ensure final precedence */
+#transfer-modal {
+  background: rgba(15,31,46,0.5) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: var(--glass-elev) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(120%) !important;
+  backdrop-filter: blur(8px) saturate(120%) !important;
+}
+
+body.theme-light #transfer-modal {
+  background: var(--glass-bg) !important;
+  background-image: var(--glass-bg) !important;
+  border: 1px solid var(--glass-border) !important;
+  box-shadow: var(--glass-elev) !important;
+  color: inherit !important;
+}
+
+/* Mobile tweak: keep server-list toolbar actions horizontal and style buttons as glass in light mode */
+@media (max-width: 640px) {
+  .list-toolbar .actions {
+    display: inline-flex !important;
+    flex-direction: row !important;
+    gap: 0.5rem !important;
+    align-items: center !important;
+  }
+
+  /* Keep page buttons compact on mobile */
+  .list-toolbar .actions .page-btn {
+    padding: 0.45rem 0.75rem !important;
+    font-size: 0.95rem !important;
+  }
+
+  /* Light-mode glass styling for toolbar buttons */
+  body.theme-light .list-toolbar .actions .page-btn {
+    background: var(--glass-bg) !important;
+    border: 1px solid var(--glass-border) !important;
+    box-shadow: var(--glass-elev) !important;
+    color: #082a24 !important;
+  }
+
+  body.theme-light .list-toolbar .actions .page-btn:hover {
+    filter: brightness(0.98) !important;
+  }
+}
+
+
+
+/* Final override: force exact column distribution for status-users-modal on mobile
+   Placed at file end to ensure it wins over earlier rules. */
+@media (max-width: 640px) {
+  .modal-content.status-users-modal .status-users-list table.user-table.compact {
+    table-layout: fixed !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  .modal-content.status-users-modal .status-users-list table.user-table.compact thead {
+    display: table-header-group !important;
+  }
+  .modal-content.status-users-modal .status-users-list table.user-table.compact tbody {
+    display: table-row-group !important;
+  }
+
+  /* Enforce 30% / 15% / 30% / 25% */
+  .modal-content.status-users-modal .status-users-list table.user-table.compact th:nth-child(1),
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td:nth-child(1) { width: 30% !important; }
+  .modal-content.status-users-modal .status-users-list table.user-table.compact th:nth-child(2),
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td:nth-child(2) { width: 15% !important; }
+  .modal-content.status-users-modal .status-users-list table.user-table.compact th:nth-child(3),
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td:nth-child(3) { width: 30% !important; }
+  .modal-content.status-users-modal .status-users-list table.user-table.compact th:nth-child(4),
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td:nth-child(4) { width: 25% !important; }
+
+  /* Allow wrapping inside cells only (prevent cells from expanding into other columns) */
+  .modal-content.status-users-modal .status-users-list table.user-table.compact th,
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td {
+    white-space: normal !important;
+    word-break: break-word !important;
+    overflow-wrap: anywhere !important;
+    /* Reduce horizontal padding to tighten left/right gaps between columns */
+    padding-left: 0.18rem !important;
+    padding-right: 0.18rem !important;
+  }
+
+  /* Fix: ensure TDs behave as table-cells (some global rules set them to inline-flex).
+     Keep the inner svg/icon + text layout but don't change the td's display type. */
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td {
+    display: table-cell !important;
+    vertical-align: middle !important;
+    padding-top: 0.28rem !important;
+    padding-bottom: 0.28rem !important;
+  }
+
+  /* Layout the internal icon + text inside the cell without changing td display */
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td > svg.row-status-icon {
+    display: inline-block !important;
+    vertical-align: middle !important;
+    margin-right: 0.18rem !important; /* tighter icon/text gap */
+    flex: 0 0 auto !important;
+  }
+
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td > span {
+    display: inline-block !important;
+    vertical-align: middle !important;
+    max-width: 100% !important;
+  }
+}
+
+/* Desktop: ensure modal's compact user table fits inside the modal viewport
+   Use a targeted override (no global effect) so header and rows align and
+   the table does not force a horizontal scroll. */
+@media (min-width: 641px) {
+  .modal-content.status-users-modal .status-users-list table.user-table.compact {
+    table-layout: fixed !important;
+    width: 100% !important;
+    min-width: 0 !important; /* override global min-width: 600px */
+    border-collapse: collapse !important;
+  }
+
+  .modal-content.status-users-modal .status-users-list table.user-table.compact thead {
+    display: table-header-group !important;
+  }
+
+  /* Enforce requested desktop column distribution: 30 / 15 / 30 / 25 */
+  .modal-content.status-users-modal .status-users-list table.user-table.compact th:nth-child(1),
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td:nth-child(1) { width: 30% !important; }
+  .modal-content.status-users-modal .status-users-list table.user-table.compact th:nth-child(2),
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td:nth-child(2) { width: 15% !important; }
+  .modal-content.status-users-modal .status-users-list table.user-table.compact th:nth-child(3),
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td:nth-child(3) { width: 30% !important; }
+  .modal-content.status-users-modal .status-users-list table.user-table.compact th:nth-child(4),
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td:nth-child(4) { width: 25% !important; }
+
+  /* Slightly tighten horizontal padding to help fit wide headings */
+  .modal-content.status-users-modal .status-users-list table.user-table.compact th,
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td {
+    padding-left: 0.4rem !important;
+    padding-right: 0.4rem !important;
+    white-space: normal !important; /* allow wrapping inside cells */
+    overflow-wrap: anywhere !important;
+  }
+
+  /* Make icon + text layout inline so they don't break column metrics */
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td > svg.row-status-icon {
+    display: inline-block !important;
+    margin-right: 0.25rem !important;
+    vertical-align: middle !important;
+  }
+}
+
+/* Desktop: light-mode glass style for server-list toolbar buttons */
+@media (min-width: 641px) {
+  body.theme-light .list-toolbar .actions .page-btn {
+    background: var(--glass-bg) !important;
+    background-image: var(--glass-bg) !important;
+    border: 1px solid var(--glass-border) !important;
+    box-shadow: var(--glass-elev) !important;
+    color: #082a24 !important;
+  }
+
+  body.theme-light .list-toolbar .actions .page-btn:hover {
+    filter: brightness(0.98) !important;
+  }
+}
+
+
+/* Desktop fix: ensure the Account cell uses table-cell layout so it can expand
+   to the assigned column width instead of shrink-wrapping as inline-flex. */
+@media (min-width: 641px) {
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td.account-with-status,
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td.account-with-status > .account-with-status {
+    display: table-cell !important;
+    vertical-align: middle !important;
+    padding-left: 0.45rem !important;
+    padding-right: 0.45rem !important;
+  }
+
+  /* Keep inner svg and text inline so they don't force cell to shrink */
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td.account-with-status > svg.row-status-icon {
+    display: inline-block !important;
+    vertical-align: middle !important;
+    margin-right: 0.3rem !important;
+  }
+
+  .modal-content.status-users-modal .status-users-list table.user-table.compact td.account-with-status > span {
+    display: inline-block !important;
+    vertical-align: middle !important;
+    max-width: calc(100% - 36px) !important; /* leave room for icon */
+    white-space: normal !important;
+    overflow-wrap: anywhere !important;
+  }
 }
 
 

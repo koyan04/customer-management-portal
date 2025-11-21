@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic CMP Matview Refresh Trigger
+
+[Timer]
+# Every 30 minutes
+OnCalendar=*:0/30:00
+Persistent=true
+Unit=cmp-matview-refresh.service
+
+[Install]
+WantedBy=timers.target

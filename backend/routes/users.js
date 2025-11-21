@@ -785,8 +785,6 @@ router.get('/search', authenticateToken, async (req, res) => {
   }
 });
 
-module.exports = router;
-
 // Admin endpoint to trigger a manual matview refresh (non-blocking enqueue)
 // Note: this is intentionally admin-only.
 router.post('/admin/refresh-user-status', authenticateToken, isAdmin, async (req, res) => {
@@ -798,3 +796,86 @@ router.post('/admin/refresh-user-status', authenticateToken, isAdmin, async (req
     return res.status(500).json({ msg: 'Failed to enqueue refresh' });
   }
 });
+
+// Transfer users between servers (ADMIN only)
+router.post('/transfer', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { userIds, targetServerId } = req.body;
+    
+    // Validate inputs
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ msg: 'userIds must be a non-empty array' });
+    }
+    if (!targetServerId || Number.isNaN(Number(targetServerId))) {
+      return res.status(400).json({ msg: 'Invalid target server ID' });
+    }
+
+    // Verify target server exists
+    const serverCheck = await pool.query('SELECT id FROM servers WHERE id = $1', [targetServerId]);
+    if (!serverCheck.rows || serverCheck.rows.length === 0) {
+      return res.status(404).json({ msg: 'Target server not found' });
+    }
+
+    // Get current max display_pos for target server
+    const posRes = await pool.query('SELECT COALESCE(MAX(display_pos), 0) AS max_pos FROM users WHERE server_id = $1', [targetServerId]);
+    let nextPos = posRes && posRes.rows && posRes.rows[0] ? (posRes.rows[0].max_pos || 0) + 1 : 1;
+
+    // Transfer users in a transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      const transferredUsers = [];
+      for (const userId of userIds) {
+        // Fetch user before transfer for audit
+        const beforeResult = await client.query('SELECT * FROM users WHERE id = $1', [userId]);
+        if (!beforeResult.rows || beforeResult.rows.length === 0) {
+          console.warn(`User ${userId} not found, skipping`);
+          continue;
+        }
+        const beforeRow = beforeResult.rows[0];
+
+        // Update user's server_id and assign new display_pos
+        const updateResult = await client.query(
+          'UPDATE users SET server_id = $1, display_pos = $2 WHERE id = $3 RETURNING *',
+          [targetServerId, nextPos, userId]
+        );
+        
+        if (updateResult.rows && updateResult.rows.length > 0) {
+          const afterRow = updateResult.rows[0];
+          transferredUsers.push(afterRow);
+          
+          // Write audit entry
+          try {
+            await client.query(
+              'INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1, $2, $3, $4, $5)',
+              [req.user?.id || null, 'users', 'TRANSFER', JSON.stringify(beforeRow), JSON.stringify(afterRow)]
+            );
+          } catch (ae) {
+            console.warn('Failed to record audit for user transfer', ae && ae.message ? ae.message : ae);
+          }
+          
+          nextPos++;
+        }
+      }
+
+      await client.query('COMMIT');
+      
+      return res.json({ 
+        msg: `Successfully transferred ${transferredUsers.length} user(s)`,
+        transferred: transferredUsers.length,
+        users: transferredUsers
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('User transfer error:', err.message);
+    return res.status(500).json({ msg: 'Server Error during transfer' });
+  }
+});
+
+module.exports = router;
