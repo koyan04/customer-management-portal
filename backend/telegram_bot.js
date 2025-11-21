@@ -96,6 +96,19 @@ async function loadTelegramSettings() {
   try {
     const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'telegram'");
     const cfg = (r.rows && r.rows[0] && r.rows[0].data) ? r.rows[0].data : {};
+  
+    // Fetch general settings for timezone fallback
+    let generalTimezone = null;
+    try {
+      const gr = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'general'");
+      const generalCfg = (gr.rows && gr.rows[0] && gr.rows[0].data) ? gr.rows[0].data : {};
+      if (generalCfg.timezone && generalCfg.timezone !== 'auto') {
+        generalTimezone = String(generalCfg.timezone).trim();
+      }
+    } catch (e) {
+      console.warn('[BOT] Failed to fetch general settings timezone:', e && e.message ? e.message : e);
+    }
+  
   // token in DB takes precedence over env var when present; accept either 'botToken' or 'token'
   TELEGRAM_TOKEN = (cfg && (cfg.botToken || cfg.token)) ? String(cfg.botToken || cfg.token).trim() : (process.env.TELEGRAM_BOT_TOKEN || null);
     BOT_USERNAME = (cfg && cfg.bot_username) ? String(cfg.bot_username).trim() : (process.env.TELEGRAM_BOT_USERNAME || BOT_USERNAME);
@@ -155,6 +168,11 @@ async function loadTelegramSettings() {
         const tzcand = cfg && (cfg.timezone || cfg.tz || cfg.time_zone || cfg.tz_name || cfg.notification_timezone || null);
         if (tzcand) NOTIFICATION_TZ = String(tzcand).trim();
       }
+      // Fallback to general settings timezone if not set in telegram settings
+      if (!NOTIFICATION_TZ && generalTimezone) {
+        NOTIFICATION_TZ = generalTimezone;
+        console.log('[BOT] Using timezone from general settings: %s', NOTIFICATION_TZ);
+      }
     } catch (e) {
       NOTIFICATION_CRON = null;
       NOTIFICATION_TZ = null;
@@ -201,6 +219,33 @@ async function fetchTitle() {
     // ignore
   }
   return null;
+}
+
+// Helper function to format date/time using the configured timezone
+function formatDateTimeWithTZ(date = new Date(), includeSeconds = true) {
+  try {
+    const tz = NOTIFICATION_TZ || undefined;
+    const dateOpts = { 
+      weekday: 'short',
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric',
+      timeZone: tz
+    };
+    const timeOpts = {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: includeSeconds ? '2-digit' : undefined,
+      hour12: false,
+      timeZone: tz
+    };
+    const datePart = date.toLocaleDateString('en-US', dateOpts);
+    const timePart = date.toLocaleTimeString('en-US', timeOpts);
+    return `${datePart}, ${timePart}`;
+  } catch (e) {
+    // Fallback to ISO string if timezone formatting fails
+    return date.toISOString().replace('T', ' ').substring(0, 19);
+  }
 }
 
 async function fetchDashboard() {
@@ -1035,15 +1080,16 @@ async function performPeriodicReportAndBackup() {
       try { await pool.query('INSERT INTO telegram_login_notify_audit (chat_id, admin_id, role, username, ip, user_agent, status, payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [null, null, null, 'system', null, null, 'backup_skipped_no_target', { reason: 'no_target' }]); } catch (_) {}
       return;
     }
-    // Send a short summary
+    // Send a short summary with current time in configured timezone
     const dash = await fetchDashboard();
-    const text = dash ? `<b>🔁 Periodic Report</b>\n📡 Servers: ${dash.totalServers} | 👥 Users: ${dash.totalUsers}\n⚙️ Status: Active ${dash.status.active}, Soon ${dash.status.soon}, Expired ${dash.status.expired}` : '<b>🔁 Periodic Report</b>\n(Stats unavailable)';
+    const currentTime = formatDateTimeWithTZ();
+    const text = dash ? `<b>🔁 Periodic Report</b>\n🕐 Time: ${currentTime}\n📡 Servers: ${dash.totalServers} | 👥 Users: ${dash.totalUsers}\n⚙️ Status: Active ${dash.status.active}, Soon ${dash.status.soon}, Expired ${dash.status.expired}` : `<b>🔁 Periodic Report</b>\n🕐 Time: ${currentTime}\n(Stats unavailable)`;
     await sendMessage(target, text);
     // Create and send backup file
     const filePath = await createBackupSnapshot();
     if (filePath) {
       try {
-        await sendDocument(target, filePath, `DB+config backup ${new Date().toISOString()}`);
+        await sendDocument(target, filePath, `DB+config backup ${currentTime}`);
         // record success audit with file metadata
         try {
           let stats = null;
