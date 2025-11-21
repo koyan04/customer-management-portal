@@ -422,12 +422,40 @@ export default function FinancialPage() {
           <table className="monthly-table" role="table" aria-label="Monthly revenue table">
             <thead>
               <tr>
-                <th>Year</th>
-                <th>Month</th>
-                <th style={{textAlign:'right'}}><span className="full">Mini</span><span className="abbr">M</span></th>
-                <th style={{textAlign:'right'}}><span className="full">Basic</span><span className="abbr">B</span></th>
-                <th style={{textAlign:'right'}}><span className="full">Unlimited</span><span className="abbr">UL</span></th>
-                <th style={{textAlign:'right'}}>Revenue</th>
+                <th><span className="thead-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" strokeWidth="1.5" stroke="currentColor" fill="none" />
+                      <line x1="8" y1="2" x2="8" y2="6" strokeWidth="1.5" stroke="currentColor" />
+                      <line x1="16" y1="2" x2="16" y2="6" strokeWidth="1.5" stroke="currentColor" />
+                    </svg>
+                  </span>Year</th>
+                <th><span className="thead-icon" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" strokeWidth="1.5" stroke="currentColor" fill="none" />
+                      <line x1="3" y1="10" x2="21" y2="10" strokeWidth="1.5" stroke="currentColor" />
+                    </svg>
+                  </span>Month</th>
+                <th style={{textAlign:'right'}}><span className="thead-icon" aria-hidden="true">
+                    <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <circle cx="6" cy="8" r="3" strokeWidth="1.2" stroke="currentColor" fill="none" />
+                    </svg>
+                  </span>Mini</th>
+                <th style={{textAlign:'right'}}><span className="thead-icon" aria-hidden="true">
+                    <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <rect x="3" y="3" width="10" height="10" strokeWidth="1.2" stroke="currentColor" fill="none" />
+                    </svg>
+                  </span>Basic</th>
+                <th style={{textAlign:'right'}}><span className="thead-icon" aria-hidden="true">
+                    <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <path d="M8 2 L9.5 6.5 L14 7.2 L10.5 10.2 L11.5 14.5 L8 12.4 L4.5 14.5 L5.5 10.2 L2 7.2 L6.5 6.5 Z" strokeWidth="0.9" stroke="currentColor" fill="none" />
+                    </svg>
+                  </span>Unlimited</th>
+                <th style={{textAlign:'right'}}><span className="thead-icon" aria-hidden="true">
+                    <svg viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                      <circle cx="10" cy="10" r="7" strokeWidth="1.2" stroke="currentColor" fill="none" />
+                      <text x="10" y="13" textAnchor="middle" fontSize="8" fill="currentColor">$</text>
+                    </svg>
+                  </span>Revenue</th>
               </tr>
             </thead>
             <tbody>
