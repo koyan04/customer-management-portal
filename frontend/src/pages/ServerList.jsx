@@ -2,12 +2,11 @@ import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { FaCog, FaTrashAlt, FaUser, FaCogs, FaNetworkWired, FaGlobe, FaRegCopy, FaCheck, FaArrowsAlt, FaGripVertical, FaSave, FaTimes, FaExchangeAlt } from 'react-icons/fa';
+import { FaCog, FaTrashAlt, FaUser, FaCogs, FaNetworkWired, FaGlobe, FaRegCopy, FaCheck, FaArrowsAlt, FaGripVertical, FaSave, FaTimes } from 'react-icons/fa';
 import { getBackendOrigin } from '../lib/backendOrigin';
 // Corrected import paths below
 import ConfirmModal from '../components/ConfirmModal.jsx';
 import EditServerModal from '../components/EditServerModal.jsx';
-import UserTransferModal from '../components/UserTransferModal.jsx';
 
 function ServerList({ servers, fetchServers }) {
   const [serverToDelete, setServerToDelete] = useState(null);
@@ -15,18 +14,6 @@ function ServerList({ servers, fetchServers }) {
   const [page, setPage] = useState(1);
   const [reorderMode, setReorderMode] = useState(false);
   const [localOrder, setLocalOrder] = useState([]);
-  const [showTransferModal, setShowTransferModal] = useState(false);
-
-  const handleOpenTransferModal = () => {
-    setShowTransferModal(true);
-    // Smooth scroll to transfer section after a short delay to allow modal to render
-    setTimeout(() => {
-      const transferSection = document.querySelector('.transfer-modal');
-      if (transferSection) {
-        transferSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    }, 100);
-  };
   const pageSize = reorderMode ? 1000 : 10; // show all while reordering
   const totalPages = Math.max(1, Math.ceil((servers?.length || 0) / pageSize));
   const firstIndex = (page - 1) * pageSize;
@@ -166,19 +153,9 @@ function ServerList({ servers, fetchServers }) {
         <div className="flex-spacer" />
         <div className="actions">
           {((role === 'ADMIN') || (currentRole === 'ADMIN')) && (
-            <>
-              <button 
-                className="page-btn" 
-                onClick={handleOpenTransferModal}
-                disabled={reorderMode}
-                title="Transfer users between servers"
-              >
-                <FaExchangeAlt /> Transfer Users
-              </button>
-              <button className={`page-btn${reorderMode ? ' active' : ''}`} onClick={() => setReorderMode(m => !m)}>
-                {reorderMode ? (<><FaTimes /> Exit Reorder</>) : (<><FaArrowsAlt /> Reorder</>)}
-              </button>
-            </>
+            <button className={`page-btn${reorderMode ? ' active' : ''}`} onClick={() => setReorderMode(m => !m)}>
+              {reorderMode ? (<><FaTimes /> Exit Reorder</>) : (<><FaArrowsAlt /> Reorder</>)}
+            </button>
           )}
           {reorderMode && (
             <>
@@ -274,13 +251,6 @@ function ServerList({ servers, fetchServers }) {
         server={serverToEdit}
         onClose={() => setServerToEdit(null)}
         onSave={handleSave}
-      />
-
-      <UserTransferModal
-        isOpen={showTransferModal}
-        onClose={() => setShowTransferModal(false)}
-        servers={servers}
-        onTransferComplete={fetchServers}
       />
     </div>
   );

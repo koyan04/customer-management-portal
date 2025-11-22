@@ -185,35 +185,9 @@ async function run() {
   } catch (err) {
     console.error('[migrate] error applying per-file migrations:', err && err.message ? err.message : err);
     process.exitCode = 2;
+  } finally {
+    await pool.end();
   }
-
-  // Reset all sequences to match existing data (prevents duplicate key errors after data imports)
-  try {
-    console.log('[migrate] Resetting sequences to match existing data...');
-    const sequences = [
-      { seq: 'users_id_seq', table: 'users' },
-      { seq: 'servers_id_seq', table: 'servers' },
-      { seq: 'admins_id_seq', table: 'admins' },
-      { seq: 'login_audit_id_seq', table: 'login_audit' },
-      { seq: 'settings_audit_id_seq', table: 'settings_audit' },
-      { seq: 'server_admin_permissions_id_seq', table: 'server_admin_permissions' },
-      { seq: 'viewer_server_permissions_id_seq', table: 'viewer_server_permissions' },
-      { seq: 'editor_server_permissions_id_seq', table: 'editor_server_permissions' }
-    ];
-    for (const { seq, table } of sequences) {
-      try {
-        await pool.query(`SELECT setval('${seq}', COALESCE((SELECT MAX(id) FROM ${table}), 1))`);
-        console.log(`[migrate] Reset ${seq}`);
-      } catch (e) {
-        // Ignore if sequence or table doesn't exist
-        console.warn(`[migrate] Could not reset ${seq}:`, e.message);
-      }
-    }
-  } catch (err) {
-    console.warn('[migrate] Error resetting sequences (non-fatal):', err.message);
-  }
-
-  await pool.end();
 }
 
 if (require.main === module) run();
