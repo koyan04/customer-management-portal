@@ -280,14 +280,6 @@ color "Moving application files to ${APP_DIR}..."
 rsync -a "$TMP_DIR/" "$APP_DIR/" --exclude='Public_Release' || die "Failed to move files to ${APP_DIR}"
 rm -rf "$TMP_DIR"
 
-# If a bundled frontend build is included in the release, skip building frontend on the target
-if [ -d "$APP_DIR/frontend/dist" ]; then
-  color "Bundled frontend/dist found in release; skipping frontend install/build steps."
-  SKIP_FRONTEND_BUILD=1
-else
-  SKIP_FRONTEND_BUILD=0
-fi
-
 # Install/refresh Cloudflare credentials for certbot (always rewrite to match chosen mode)
 if [ -f "$CF_CREDS_FILE" ]; then
   cp -f "$CF_CREDS_FILE" "${CF_CREDS_FILE}.bak.$(date +%s)" || true
@@ -328,16 +320,12 @@ fi
 # Install Node dependencies
 color "Installing backend dependencies..."
 (cd "$BACKEND_DIR" && npm install --no-audit --no-fund)
-if [ "$SKIP_FRONTEND_BUILD" -eq 1 ]; then
-  color "Using bundled frontend/dist; skipping frontend npm install and build."
-else
-  color "Installing frontend dependencies..."
-  (cd "$FRONTEND_DIR" && npm install --no-audit --no-fund)
+color "Installing frontend dependencies..."
+(cd "$FRONTEND_DIR" && npm install --no-audit --no-fund)
 
-  # Build frontend
-  color "Building frontend..."
-  (cd "$FRONTEND_DIR" && npm run build)
-fi
+# Build frontend
+color "Building frontend..."
+(cd "$FRONTEND_DIR" && npm run build)
 
 # Generate .env if missing
 if [ ! -f "$ENV_FILE" ]; then
@@ -995,3 +983,36 @@ echo "Primary domain: https://$DOMAIN"
 echo "All domains: ${ALL_DOMAINS[*]}"
 echo "Backend service: $BACKEND_SERVICE (port $BACKEND_PORT)"
 echo "Admin credentials: $ADMIN_USER / $ADMIN_PASS"
+
+# v1.3.0 verification tips (automated checks)
+color "v1.3.0 verification: running lightweight checks..."
+# 1) Check app version reported by /api/health
+if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  VER=$(curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/health" | jq -r '.versions.appVersion // empty') || VER=""
+  if [ -n "$VER" ]; then
+    color "Backend reports app version: $VER"
+  else
+    warn "Could not read app version from /api/health"
+  fi
+  # 2) Check telegram bot status endpoint
+  BOTSTATUS=$(curl -fsS "http://127.0.0.1:$BACKEND_PORT/internal/bot/status" 2>/dev/null || echo "")
+  if [ -n "$BOTSTATUS" ]; then
+    color "Telegram bot status endpoint returned data (see /internal/bot/status)."
+  else
+    warn "Telegram bot status endpoint did not return data (ensure bot started and backend DB is accessible)."
+  fi
+else
+  warn "Skipping automated v1.3.0 checks: 'curl' and/or 'jq' not available on this system."
+fi
+
+cat <<'EOF'
+
+Manual verification (GUI):
+
+- Open the frontend and go to Settings → General. Confirm the timezone selector shows a live current date/time preview.
+- Open Servers → Server list and confirm a "Transfer user" control is available on server rows for Admin/Server Admin roles.
+- Open Financial page and inspect the monthly report table; ensure month headers and values appear correctly for your timezone.
+
+If you want scripted, authenticated verification, provide an admin API token or DB access and I can add a post-install verification script that exercises the admin endpoints.
+
+EOF

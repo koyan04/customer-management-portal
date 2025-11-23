@@ -2,7 +2,17 @@
 
 A full-stack portal for managing servers and their user accounts, with roles (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and performance features like a materialized view for user status.
 
-Current Version: `cmp ver 1.1.8`
+Current Version: `cmp ver 1.3.0`
+
+## What's new in v1.3.0
+
+- User transfer: a "Transfer user" section is available in the Servers list UI so server admins and global admins can move users between servers directly from the list view.
+- Timezone preview: the General settings tab now shows the current date/time for the selected timezone to help choose and confirm the timezone.
+- Telegram bot scheduling: periodic report time is now linked to the app timezone setting so scheduled messages respect the configured timezone.
+- Financial page: the monthly report table layout was updated for improved readability and includes timezone-aware month headings.
+- Visual polish: assorted UI and accessibility improvements across Servers, Settings, and Financial pages.
+
+See the **Verification (v1.3.0 specific checks)** section later in this README for quick post-install checks.
 
 ### PostgreSQL Admin Fallback (v1.1.7)
 
@@ -409,6 +419,30 @@ cd backend
 npx jest --detectOpenHandles --runInBand
 ```
 The teardown prints a summary of remaining handle types for quick triage.
+
+### Verification (v1.3.0 specific checks)
+
+After installation and starting services, perform these quick checks to confirm the new features:
+
+- Check backend health and app version (should show `cmp ver 1.3.0`):
+
+```bash
+curl -s http://127.0.0.1:3001/api/health | jq '.versions.appVersion'
+```
+
+- Check Telegram bot status and scheduled timezone usage (bot writes last status into app settings):
+
+```bash
+curl -s http://127.0.0.1:3001/internal/bot/status | jq
+```
+
+- General settings timezone preview: open the frontend and navigate to Settings → General. The timezone selector shows a live current date/time for the selected timezone.
+
+- User transfer: open Servers → Server list in the frontend and confirm a "Transfer user" control is visible on server rows (Admin/Server Admin roles).
+
+- Financial monthly report: open the Financial page and verify month headings and the table render correctly; month labels are adjusted for the configured timezone.
+
+If you want automated, authenticated verification (API token or DB access required), I can add a `scripts/post_install_verify.sh` that performs authenticated checks and reports pass/fail.
 
 ### Operational Hardening (Next Steps)
 
