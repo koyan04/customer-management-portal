@@ -6,6 +6,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
+    host: '0.0.0.0',
     port: 5173,
     proxy: {
       '/api': {
@@ -14,5 +15,12 @@ export default defineConfig({
         secure: false,
       }
     }
+  }
+  ,
+  // Vitest configuration: ensure tests run with a browser-like environment
+  test: {
+    environment: 'jsdom',
+    globals: true,
+    setupFiles: 'src/test.setup.js'
   }
 })
