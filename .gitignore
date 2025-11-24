@@ -1,0 +1,30 @@
+# Node modules
+node_modules/
+**/node_modules/
+
+# Environment files (do NOT commit secrets)
+.env
+*.env
+**/.env
+
+# Test artifacts / results - omit large or local-only test outputs
+/test-results/
+/frontend/test-results/
+
+# Playwright / e2e local files
+/frontend/e2e/mock-server.cjs
+/frontend/e2e/mock-server.js
+
+# Local build artifacts
+/frontend/dist/
+
+# Optional: local editor / OS files
+.DS_Store
+Thumbs.db
+
+# Ignore local logs
+*.log
+
+# Ignore temporary files
+tmp/
+temp/

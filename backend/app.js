@@ -63,14 +63,62 @@ try {
 
 const getRawBody = require('raw-body');
 const app = express();
-// Read app version from project root VERSION file (e.g., "cmp ver 1.0") and cache it
+// Resolve app version / release tag
 try {
-	const versionFile = path.resolve(__dirname, '..', 'VERSION');
-	if (fs.existsSync(versionFile)) {
-		const v = fs.readFileSync(versionFile, 'utf8').trim();
-		if (v) app.locals.appVersion = v;
-	}
-} catch (_) { /* ignore version read errors */ }
+	const resolveAppVersion = () => {
+		// 1) Prefer explicit release/tag env vars (CI/containers should set one of these)
+		const envKeys = ['RELEASE_TAG', 'APP_RELEASE', 'BUILD_TAG', 'GITHUB_REF_NAME', 'GITHUB_SHA'];
+		for (const k of envKeys) {
+			const v = process.env[k];
+			if (!v) continue;
+			// strip refs/tags/ prefix if present (GitHub actions)
+			if (k === 'GITHUB_REF_NAME' && String(v).startsWith('refs/tags/')) return String(v).replace(/^refs\/tags\//, '');
+			if (k === 'GITHUB_REF_NAME' && String(v).startsWith('refs/heads/')) return String(v).replace(/^refs\/heads\//, '');
+			return String(v);
+		}
+
+		// 2) Try to resolve the nearest git tag reachable from HEAD (non-fatal)
+		try {
+			const { execSync } = require('child_process');
+			// Prefer an exact-match tag or the most recent tag in history
+			try {
+				const exact = execSync('git describe --tags --exact-match', { cwd: path.resolve(__dirname, '..'), stdio: ['ignore','pipe','ignore'] }).toString().trim();
+				if (exact) return exact;
+			} catch (_) {}
+			try {
+				const nearest = execSync('git describe --tags --abbrev=0', { cwd: path.resolve(__dirname, '..'), stdio: ['ignore','pipe','ignore'] }).toString().trim();
+				if (nearest) return nearest;
+			} catch (_) {}
+			// If no reachable tag for HEAD, fall back to the most recently created tag in the repo
+			try {
+				const tagsList = execSync('git tag --sort=-creatordate', { cwd: path.resolve(__dirname, '..'), stdio: ['ignore','pipe','ignore'] }).toString().trim();
+				if (tagsList) {
+					const first = String(tagsList).split(/\r?\n/)[0];
+					if (first) return first;
+				}
+			} catch (_) {}
+			// Fallback to short SHA (if no tag found)
+			try {
+				const sha = execSync('git rev-parse --short HEAD', { cwd: path.resolve(__dirname, '..'), stdio: ['ignore','pipe','ignore'] }).toString().trim();
+				if (sha) return sha;
+			} catch (_) {}
+		} catch (_) { }
+
+		// 3) Try reading VERSION file in project root (fallback)
+		try {
+			const versionFile = path.resolve(__dirname, '..', 'VERSION');
+			if (fs.existsSync(versionFile)) {
+				const v = fs.readFileSync(versionFile, 'utf8').trim();
+				if (v) return v;
+			}
+		} catch (_) { /* ignore */ }
+
+		return null;
+	};
+
+	const resolved = resolveAppVersion();
+	if (resolved) app.locals.appVersion = resolved;
+} catch (_) { /* ignore version resolution errors */ }
 // Allow credentials for cookie-based refresh tokens in development when frontend runs on a different port
 app.use(cors({ origin: (origin, cb) => {
 	// allow undefined origin (e.g., same-origin requests from tests or tools)
