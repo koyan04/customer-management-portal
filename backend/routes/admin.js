@@ -629,6 +629,7 @@ router.get('/financial', authenticateToken, async (req, res) => {
         LEFT JOIN users u
           ON u.created_at <= (m.month_start + interval '1 month' - interval '1 ms')
           AND (u.expire_date IS NULL OR u.expire_date >= m.month_start)
+          AND u.enabled = TRUE
           ${serverFilterClause}
         GROUP BY m.month_start, u.service_type
       )
@@ -1286,18 +1287,22 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
       }
     } catch (_) {}
     const admins = await pool.query('SELECT id, display_name, username, role, avatar_url, created_at FROM admins ORDER BY id');
-    const servers = await pool.query('SELECT id, server_name, created_at FROM servers ORDER BY id');
+    const servers = await pool.query('SELECT id, server_name, ip_address, domain_name, owner, created_at FROM servers ORDER BY id');
     // permissions tables: prefer new name, fallback to legacy
     let viewerPerms = [];
     try { const r = await pool.query('SELECT editor_id, server_id FROM viewer_server_permissions'); viewerPerms = r.rows || []; }
     catch (e) { try { const r2 = await pool.query('SELECT editor_id, server_id FROM editor_server_permissions'); viewerPerms = r2.rows || []; } catch (_) {} }
     const serverAdmins = await pool.query('SELECT admin_id, server_id FROM server_admin_permissions');
     const settings = await pool.query('SELECT settings_key, data, updated_at FROM app_settings ORDER BY settings_key');
+    const serverKeys = await pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys ORDER BY id');
+    const users = await pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, created_at FROM users ORDER BY id');
     const payload = {
       type: 'db-backup-v1',
       createdAt: new Date().toISOString(),
       admins: admins.rows || [],
       servers: servers.rows || [],
+      server_keys: serverKeys.rows || [],
+      users: users.rows || [],
       viewer_server_permissions: viewerPerms,
       server_admin_permissions: serverAdmins.rows || [],
       app_settings: (settings.rows || []).map(r => ({ settings_key: r.settings_key, data: maskSecrets(r.settings_key, r.data), updated_at: r.updated_at })),
@@ -1322,15 +1327,17 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
         await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, 'backup', 'BACKUP', null, null]);
       }
     } catch (_) {}
-    const [settingsRes, serversRes, usersRes] = await Promise.all([
+    const [settingsRes, serversRes, serverKeysRes, usersRes] = await Promise.all([
       pool.query('SELECT * FROM app_settings'),
       pool.query('SELECT id, server_name, ip_address, domain_name, owner, created_at FROM servers'),
-      pool.query('SELECT id, server_id, account_name, service_type, expire_date FROM users')
+      pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys'),
+      pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, created_at FROM users')
     ]);
     const payload = {
       created_at: new Date().toISOString(),
       app_settings: settingsRes.rows || [],
       servers: serversRes.rows || [],
+      server_keys: serverKeysRes.rows || [],
       users: usersRes.rows || []
     };
     const json = JSON.stringify(payload, null, 2);
@@ -1365,7 +1372,7 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       return res.status(400).json({ msg: 'Invalid JSON' });
     }
 
-    if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.users))) {
+    if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.server_keys) && !Array.isArray(data.users))) {
       return res.status(400).json({ msg: 'Invalid snapshot format' });
     }
     const client = await pool.connect();
@@ -1403,16 +1410,45 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
         );
       }
     }
-    // users: upsert by id (safe subset of fields)
+    // server_keys: upsert by id
+    if (Array.isArray(data.server_keys)) {
+      for (const k of data.server_keys) {
+        if (!k.server_id) continue;
+        await client.query(
+          `INSERT INTO server_keys (id, server_id, username, description, original_key, generated_key, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7, now()))
+           ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, username = EXCLUDED.username, description = EXCLUDED.description, original_key = EXCLUDED.original_key, generated_key = EXCLUDED.generated_key`,
+          [k.id || null, k.server_id, k.username || null, k.description || null, k.original_key || null, k.generated_key || null, k.created_at || null]
+        );
+      }
+    }
+    // users: upsert by id (all fields) - handle both id and (server_id, account_name) conflicts
     if (Array.isArray(data.users)) {
       for (const u of data.users) {
         if (!u.id) continue;
-        await client.query(
-          `INSERT INTO users (id, server_id, account_name, service_type, expire_date)
-           VALUES ($1,$2,$3,$4,$5)
-           ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, account_name = EXCLUDED.account_name, service_type = EXCLUDED.service_type, expire_date = EXCLUDED.expire_date`,
-          [u.id, u.server_id || null, u.account_name || null, u.service_type || null, u.expire_date || null]
+        // First try to find existing user by server_id + account_name
+        const existing = await client.query(
+          'SELECT id FROM users WHERE server_id = $1 AND account_name = $2',
+          [u.server_id, u.account_name]
         );
+        const existingId = existing.rows && existing.rows[0] ? existing.rows[0].id : null;
+        
+        if (existingId && existingId !== u.id) {
+          // User exists with different ID - update the existing one instead
+          await client.query(
+            `UPDATE users SET service_type = $1, contact = $2, expire_date = $3, total_devices = $4, data_limit_gb = $5, remark = $6, display_pos = $7
+             WHERE id = $8`,
+            [u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, existingId]
+          );
+        } else {
+          // Insert or update by ID
+          await client.query(
+            `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, COALESCE($11, now()))
+             ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, account_name = EXCLUDED.account_name, service_type = EXCLUDED.service_type, contact = EXCLUDED.contact, expire_date = EXCLUDED.expire_date, total_devices = EXCLUDED.total_devices, data_limit_gb = EXCLUDED.data_limit_gb, remark = EXCLUDED.remark, display_pos = EXCLUDED.display_pos`,
+            [u.id, u.server_id || null, u.account_name || null, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, u.created_at || null]
+          );
+        }
       }
     }
     await client.query('COMMIT');
@@ -1421,6 +1457,7 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
     return res.json({ msg: 'Snapshot restored (merge)', counts: {
       settings: Array.isArray(data.app_settings) ? data.app_settings.length : 0,
       servers: Array.isArray(data.servers) ? data.servers.length : 0,
+      server_keys: Array.isArray(data.server_keys) ? data.server_keys.length : 0,
       users: Array.isArray(data.users) ? data.users.length : 0,
     }});
     } catch (err) {
@@ -1474,10 +1511,34 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           const name = s.server_name || s.name;
           if (!name) continue;
           await client.query(
-            `INSERT INTO servers (id, server_name, created_at)
-             VALUES ($1,$2,COALESCE($3, now()))
-             ON CONFLICT (id) DO UPDATE SET server_name = EXCLUDED.server_name`,
-            [s.id || null, name, s.created_at || null]
+            `INSERT INTO servers (id, server_name, ip_address, domain_name, owner, created_at)
+             VALUES ($1,$2,$3,$4,$5,COALESCE($6, now()))
+             ON CONFLICT (id) DO UPDATE SET server_name = EXCLUDED.server_name, ip_address = EXCLUDED.ip_address, domain_name = EXCLUDED.domain_name, owner = EXCLUDED.owner`,
+            [s.id || null, name, s.ip_address || null, s.domain_name || null, s.owner || null, s.created_at || null]
+          );
+        }
+      }
+      // server_keys
+      if (Array.isArray(payload.server_keys)) {
+        for (const k of payload.server_keys) {
+          if (!k.server_id) continue;
+          await client.query(
+            `INSERT INTO server_keys (id, server_id, username, description, original_key, generated_key, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7, now()))
+             ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, username = EXCLUDED.username, description = EXCLUDED.description, original_key = EXCLUDED.original_key, generated_key = EXCLUDED.generated_key`,
+            [k.id || null, k.server_id, k.username || null, k.description || null, k.original_key || null, k.generated_key || null, k.created_at || null]
+          );
+        }
+      }
+      // users
+      if (Array.isArray(payload.users)) {
+        for (const u of payload.users) {
+          if (!u.id) continue;
+          await client.query(
+            `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11, now()))
+             ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, account_name = EXCLUDED.account_name, service_type = EXCLUDED.service_type, contact = EXCLUDED.contact, expire_date = EXCLUDED.expire_date, total_devices = EXCLUDED.total_devices, data_limit_gb = EXCLUDED.data_limit_gb, remark = EXCLUDED.remark, display_pos = EXCLUDED.display_pos`,
+            [u.id, u.server_id || null, u.account_name || null, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, u.created_at || null]
           );
         }
       }
@@ -1535,6 +1596,8 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
       return res.json({ msg: 'Database restored (merge)',
         counts: {
           servers: payload.servers ? payload.servers.length : 0,
+          server_keys: payload.server_keys ? payload.server_keys.length : 0,
+          users: payload.users ? payload.users.length : 0,
           admins: payload.admins ? payload.admins.length : 0,
           viewer_perms: payload.viewer_server_permissions ? payload.viewer_server_permissions.length : 0,
           server_admin_perms: payload.server_admin_permissions ? payload.server_admin_permissions.length : 0,

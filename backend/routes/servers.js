@@ -56,7 +56,7 @@ router.get('/summary', authenticateToken, async (req, res) => {
     const { rows: userRows } = await pool.query(
       `SELECT u.server_id, u.service_type, u.expire_date
        FROM users u
-       WHERE u.server_id = ANY($1::int[])`,
+       WHERE u.server_id = ANY($1::int[]) AND u.enabled = TRUE`,
       [serverIds]
     );
 

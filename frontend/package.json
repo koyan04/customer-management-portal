@@ -12,12 +12,15 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
-    "ci": "npm run lint && npm run test:run"
+    "ci": "npm run lint && npm run test:run",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install --with-deps"
   },
   "dependencies": {
     "axios": "^1.12.2",
     "chart.js": "^4.4.0",
     "date-fns": "^2.30.0",
+    "express": "^5.1.0",
     "framer-motion": "^12.23.22",
     "react": "^19.1.1",
     "react-chartjs-2": "^5.2.0",
@@ -27,6 +30,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.36.0",
+    "@playwright/test": "^1.40.0",
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.5.2",

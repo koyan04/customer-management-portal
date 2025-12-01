@@ -701,9 +701,43 @@ function App() {
           <FaTelegramPlane aria-hidden className="tg-icon" />
         </a>
         {appVersion ? (
-          <span className="footer-version" style={{ marginLeft: '0.75rem', opacity: 0.7 }} title="Application Version">
-            {appVersion}
-          </span>
+          (() => {
+            // Map the reported appVersion to a GitHub release or commit link when possible
+            const repoOwner = 'koyan04';
+            const repoName = 'customer-management-portal';
+            const makeReleaseUrl = (tag) => `https://github.com/${repoOwner}/${repoName}/releases/tag/${encodeURIComponent(tag)}`;
+            const makeCommitUrl = (sha) => `https://github.com/${repoOwner}/${repoName}/commit/${encodeURIComponent(sha)}`;
+            const v = String(appVersion || '').trim();
+            let href = null;
+            // Case: "cmp ver 1.3.0" -> extract numeric part
+            const m = v.match(/cmp\s*ver\s*(v?\d+\.\d+\.\d+)/i);
+            if (m && m[1]) {
+              let tag = m[1];
+              if (!tag.startsWith('v')) tag = 'v' + tag;
+              href = makeReleaseUrl(tag);
+            } else if (/^v?\d+\.\d+\.\d+(?:[-+].*)?$/.test(v)) {
+              // Semver-like string -> treat as tag
+              let tag = v;
+              if (!tag.startsWith('v')) tag = 'v' + tag;
+              href = makeReleaseUrl(tag);
+            } else if (/^[0-9a-f]{7,40}$/i.test(v)) {
+              // Looks like a git SHA -> link to commit
+              href = makeCommitUrl(v);
+            }
+
+            if (href) {
+              return (
+                <a className="footer-version footer-link" style={{ marginLeft: '0.75rem', opacity: 0.75 }} href={href} target="_blank" rel="noopener noreferrer" title={`Open release or commit: ${v}`}>
+                  {v}
+                </a>
+              );
+            }
+            return (
+              <span className="footer-version" style={{ marginLeft: '0.75rem', opacity: 0.7 }} title="Application Version">
+                {v}
+              </span>
+            );
+          })()
         ) : null}
       </footer>
       <AboutModal

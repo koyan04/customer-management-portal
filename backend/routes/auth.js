@@ -6,7 +6,14 @@ const jwt = require('jsonwebtoken');
 const { authenticateToken } = require('../middleware/authMiddleware');
 const { randomBytes } = require('crypto');
 const crypto = require('crypto');
-const tgBot = require('../telegram_bot');
+
+// Optional telegram_bot module for login notifications
+let tgBot = null;
+try {
+  tgBot = require('../telegram_bot');
+} catch (e) {
+  // telegram_bot module not found - notifications disabled
+}
 
 // --- REGISTER A NEW ADMIN/EDITOR ---
 // This route should ideally be protected or used only once for initial setup.
@@ -140,11 +147,13 @@ router.post('/login', async (req, res) => {
         }
         res.json({ token });
         // Fire-and-forget: send a Telegram login notification (if enabled in settings)
-        try {
-          const ip = (req.headers['x-forwarded-for'] || req.ip || req.connection?.remoteAddress || '').toString();
-          const userAgent = (req.headers['user-agent'] || '').toString();
-          tgBot.notifyLoginEvent({ adminId: admin.id, role: admin.role, username: admin.username || admin.display_name || '', ip, userAgent });
-        } catch (_) {}
+        if (tgBot && tgBot.notifyLoginEvent) {
+          try {
+            const ip = (req.headers['x-forwarded-for'] || req.ip || req.connection?.remoteAddress || '').toString();
+            const userAgent = (req.headers['user-agent'] || '').toString();
+            tgBot.notifyLoginEvent({ adminId: admin.id, role: admin.role, username: admin.username || admin.display_name || '', ip, userAgent });
+          } catch (_) {}
+        }
       }
     );
 

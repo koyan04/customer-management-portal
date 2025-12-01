@@ -499,6 +499,41 @@ router.put('/:userId', authenticateToken, attachUserServerId, isServerAdminOrGlo
   }
 });
 
+// PATCH toggle enabled flag for a user (ADMIN or SERVER_ADMIN for the target user's server)
+// Body: { enabled: boolean }
+router.patch('/:userId/enabled', authenticateToken, attachUserServerId, isServerAdminOrGlobal(), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ msg: 'enabled must be a boolean' });
+    }
+
+    // fetch existing row for audit
+    let beforeRow = null;
+    try {
+      const b = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+      if (b && b.rows && b.rows.length) beforeRow = b.rows[0];
+    } catch (_) {}
+
+    const updated = await pool.query('UPDATE users SET enabled = $1 WHERE id = $2 RETURNING *', [enabled, userId]);
+    const afterRow = updated && updated.rows && updated.rows[0] ? updated.rows[0] : null;
+
+    // write audit entry (non-fatal)
+    try {
+      await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user?.id || null, 'users', 'TOGGLE_ENABLED', JSON.stringify(beforeRow || null), JSON.stringify(afterRow || null)]);
+    } catch (_) {}
+
+    // If using materialized views for status, enqueue refresh to reflect enabled state changes quickly
+    try { enqueueRefresh(); } catch (_) {}
+
+    return res.json(afterRow);
+  } catch (err) {
+    console.error('Toggle enabled failed:', err && err.message ? err.message : err);
+    return res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
 // DELETE a user (ADMIN or SERVER_ADMIN for the target user's server)
 // attachUserServerId will set req.params.serverId so isServerAdminOrGlobal can validate access
 router.delete('/:userId', authenticateToken, attachUserServerId, isServerAdminOrGlobal(), async (req, res) => {
@@ -588,13 +623,13 @@ router.get('/by-status/:status', authenticateToken, async (req, res) => {
         const mvCheck = await pool.query("SELECT to_regclass('public.user_status_matview') AS name");
         if (mvCheck && mvCheck.rows && mvCheck.rows[0] && mvCheck.rows[0].name) {
           // Build a safe query against the matview. If the user is not admin, restrict by accessible server ids.
-          let mvSql = 'SELECT * FROM user_status_matview WHERE status = $1';
+          let mvSql = 'SELECT mv.* FROM user_status_matview mv JOIN users u ON u.id = mv.id WHERE mv.status = $1 AND u.enabled = TRUE';
           const mvValues = [status];
           if (user.role !== 'ADMIN') {
-            mvSql += ` AND server_id = ANY($2::int[])`;
+            mvSql += ` AND mv.server_id = ANY($2::int[])`;
             mvValues.push(ids);
           }
-          mvSql += ' ORDER BY expire_date ASC';
+          mvSql += ' ORDER BY mv.expire_date ASC';
           try {
             const mvRes = await runWithRetries(mvSql, mvValues);
             return res.json(mvRes.rows || []);
@@ -613,7 +648,7 @@ router.get('/by-status/:status', authenticateToken, async (req, res) => {
       SELECT u.*, s.server_name, s.ip_address, s.domain_name
       FROM users u
       JOIN servers s ON s.id = u.server_id
-      WHERE ${where}${serverFilter}
+      WHERE ${where} AND u.enabled = TRUE${serverFilter}
       ORDER BY u.expire_date ASC
     `;
 
@@ -636,7 +671,7 @@ router.get('/by-status/:status', authenticateToken, async (req, res) => {
         const results = [];
         for (const s of serversRows) {
           try {
-            const ur = await runWithRetries('SELECT * FROM users WHERE server_id = $1', [s.id]);
+            const ur = await runWithRetries('SELECT * FROM users WHERE server_id = $1 AND enabled = TRUE', [s.id]);
             const users = ur.rows || [];
             for (const u of users) results.push({ ...u, server_name: s.server_name, ip_address: s.ip_address, domain_name: s.domain_name });
           } catch (e) {
@@ -712,7 +747,8 @@ router.get('/search', authenticateToken, async (req, res) => {
     const likeTerm = '%' + term.replace(/[%_]/g, s => '\\' + s) + '%';
     const params = user.role === 'ADMIN' ? [likeTerm] : [likeTerm, ...serverFilterParams];
     // If fuzzy requested, attempt pg_trgm similarity; fallback on basic search when extension not available.
-    const computeStatus = (exp) => {
+    const computeStatus = (exp, enabled) => {
+      if (enabled === false) return 'disabled';
       if (!exp) return 'active';
       try {
         const dt = new Date(exp);
@@ -730,7 +766,7 @@ router.get('/search', authenticateToken, async (req, res) => {
         const fuzzyParams = user.role === 'ADMIN' ? [term, likeTerm] : [term, likeTerm, ...serverFilterParams];
         const fuzzyFilterServer = user.role === 'ADMIN' ? '' : ' AND u.server_id = ANY($3::int[])';
         const fuzzySql = `
-          SELECT u.id, u.account_name, u.service_type, u.contact, u.expire_date, u.total_devices, u.data_limit_gb, u.server_id, u.remark, u.display_pos, s.server_name,
+          SELECT u.id, u.account_name, u.service_type, u.contact, u.expire_date, u.total_devices, u.data_limit_gb, u.server_id, u.remark, u.display_pos, u.enabled, s.server_name,
             similarity(u.account_name, $1) AS sim
           FROM users u
           JOIN servers s ON s.id = u.server_id
@@ -739,7 +775,7 @@ router.get('/search', authenticateToken, async (req, res) => {
           LIMIT 100
         `;
         const fuzzyRes = await pool.query(fuzzySql, fuzzyParams);
-        return res.json((fuzzyRes.rows || []).map(r => ({ ...r, status: computeStatus(r.expire_date) })));
+        return res.json((fuzzyRes.rows || []).map(r => ({ ...r, status: computeStatus(r.expire_date, r.enabled) })));
       } catch (e) {
         console.warn('Fuzzy search failed (falling back to basic):', e && e.message ? e.message : e);
         // Fallback fuzzy approach: broaden pattern by inserting wildcards between characters (j%o%h%n for "john")
@@ -754,7 +790,7 @@ router.get('/search', authenticateToken, async (req, res) => {
         const broadenFilterServer = user.role === 'ADMIN' ? '' : ` AND u.server_id = ANY($${broadenParams.length}::int[])`;
         try {
           const broadenSql = `
-            SELECT u.id, u.account_name, u.service_type, u.contact, u.expire_date, u.total_devices, u.data_limit_gb, u.server_id, u.remark, u.display_pos, s.server_name
+            SELECT u.id, u.account_name, u.service_type, u.contact, u.expire_date, u.total_devices, u.data_limit_gb, u.server_id, u.remark, u.display_pos, u.enabled, s.server_name
             FROM users u
             JOIN servers s ON s.id = u.server_id
             WHERE (u.account_name ILIKE $1 OR u.account_name ILIKE $2 OR u.account_name ILIKE $3)${broadenFilterServer}
@@ -763,14 +799,14 @@ router.get('/search', authenticateToken, async (req, res) => {
           `;
           const brRes = await pool.query(broadenSql, broadenParams);
           try { console.log('Fuzzy broaden debug', { term, broadenPattern, prefixPattern, names: (brRes.rows||[]).map(r=>r.account_name) }); } catch(_) {}
-          return res.json((brRes.rows || []).map(r => ({ ...r, status: computeStatus(r.expire_date) })));
+          return res.json((brRes.rows || []).map(r => ({ ...r, status: computeStatus(r.expire_date, r.enabled) })));
         } catch (e2) {
           console.warn('Broaden fuzzy fallback also failed, continuing to basic search:', e2 && e2.message ? e2.message : e2);
         }
       }
     }
     const sqlBasic = `
-      SELECT u.id, u.account_name, u.service_type, u.contact, u.expire_date, u.total_devices, u.data_limit_gb, u.server_id, u.remark, u.display_pos, s.server_name
+      SELECT u.id, u.account_name, u.service_type, u.contact, u.expire_date, u.total_devices, u.data_limit_gb, u.server_id, u.remark, u.display_pos, u.enabled, s.server_name
       FROM users u
       JOIN servers s ON s.id = u.server_id
       WHERE LOWER(u.account_name) ILIKE LOWER($1)${serverFilterSql}
@@ -778,14 +814,12 @@ router.get('/search', authenticateToken, async (req, res) => {
       LIMIT 100
     `;
     const { rows } = await pool.query(sqlBasic, params);
-    return res.json((rows || []).map(r => ({ ...r, status: computeStatus(r.expire_date) })));
+    return res.json((rows || []).map(r => ({ ...r, status: computeStatus(r.expire_date, r.enabled) })));
   } catch (err) {
     console.error('USERS ROUTE ERROR GET /api/users/search :', err && err.stack ? err.stack : err);
     return res.status(500).json({ msg: 'Server Error' });
   }
 });
-
-module.exports = router;
 
 // Admin endpoint to trigger a manual matview refresh (non-blocking enqueue)
 // Note: this is intentionally admin-only.
@@ -798,3 +832,86 @@ router.post('/admin/refresh-user-status', authenticateToken, isAdmin, async (req
     return res.status(500).json({ msg: 'Failed to enqueue refresh' });
   }
 });
+
+// Transfer users between servers (ADMIN only)
+router.post('/transfer', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { userIds, targetServerId } = req.body;
+    
+    // Validate inputs
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ msg: 'userIds must be a non-empty array' });
+    }
+    if (!targetServerId || Number.isNaN(Number(targetServerId))) {
+      return res.status(400).json({ msg: 'Invalid target server ID' });
+    }
+
+    // Verify target server exists
+    const serverCheck = await pool.query('SELECT id FROM servers WHERE id = $1', [targetServerId]);
+    if (!serverCheck.rows || serverCheck.rows.length === 0) {
+      return res.status(404).json({ msg: 'Target server not found' });
+    }
+
+    // Get current max display_pos for target server
+    const posRes = await pool.query('SELECT COALESCE(MAX(display_pos), 0) AS max_pos FROM users WHERE server_id = $1', [targetServerId]);
+    let nextPos = posRes && posRes.rows && posRes.rows[0] ? (posRes.rows[0].max_pos || 0) + 1 : 1;
+
+    // Transfer users in a transaction
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      const transferredUsers = [];
+      for (const userId of userIds) {
+        // Fetch user before transfer for audit
+        const beforeResult = await client.query('SELECT * FROM users WHERE id = $1', [userId]);
+        if (!beforeResult.rows || beforeResult.rows.length === 0) {
+          console.warn(`User ${userId} not found, skipping`);
+          continue;
+        }
+        const beforeRow = beforeResult.rows[0];
+
+        // Update user's server_id and assign new display_pos
+        const updateResult = await client.query(
+          'UPDATE users SET server_id = $1, display_pos = $2 WHERE id = $3 RETURNING *',
+          [targetServerId, nextPos, userId]
+        );
+        
+        if (updateResult.rows && updateResult.rows.length > 0) {
+          const afterRow = updateResult.rows[0];
+          transferredUsers.push(afterRow);
+          
+          // Write audit entry
+          try {
+            await client.query(
+              'INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1, $2, $3, $4, $5)',
+              [req.user?.id || null, 'users', 'TRANSFER', JSON.stringify(beforeRow), JSON.stringify(afterRow)]
+            );
+          } catch (ae) {
+            console.warn('Failed to record audit for user transfer', ae && ae.message ? ae.message : ae);
+          }
+          
+          nextPos++;
+        }
+      }
+
+      await client.query('COMMIT');
+      
+      return res.json({ 
+        msg: `Successfully transferred ${transferredUsers.length} user(s)`,
+        transferred: transferredUsers.length,
+        users: transferredUsers
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error('User transfer error:', err.message);
+    return res.status(500).json({ msg: 'Server Error during transfer' });
+  }
+});
+
+module.exports = router;
