@@ -151,7 +151,13 @@ async function run() {
       const files = fs.readdirSync(dir)
         .filter(f => f.toLowerCase().endsWith('.sql'))
         .filter(f => !f.startsWith('000_schema.sql')) // Skip base schema (already applied)
-        .filter(f => !/^\d{3}-table-.*\.sql$/.test(f)) // Skip per-table schemas (redundant with 000_schema.sql)
+        // Skip legacy per-table schemas up to 017; allow newer table migrations like 018+ (e.g., users.enabled)
+        .filter(f => {
+          const m = f.match(/^(\d{3})-table-.*\.sql$/i);
+          if (!m) return true;
+          const n = parseInt(m[1], 10);
+          return !(n <= 17);
+        })
         .sort((a, b) => a.localeCompare(b));
       for (const f of files) {
         const full = path.join(dir, f);

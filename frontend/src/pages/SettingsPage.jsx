@@ -48,6 +48,7 @@ export default function SettingsPage() {
   const [faviconPreview, setFaviconPreview] = useState('');
   const [applePreview, setApplePreview] = useState('');
   const [showInfo, setShowInfo] = useState(false);
+  const [currentDateTime, setCurrentDateTime] = useState(new Date());
   const [tgForm, setTgForm] = useState({ botToken: '', defaultChatId: '', messageTemplate: '', notificationTime: '@daily', databaseBackup: false, loginNotification: false, enabled: true, settings_reload_seconds: 60 });
   const [botStatus, setBotStatus] = useState(null);
   const [statusRefreshing, setStatusRefreshing] = useState(false);
@@ -305,6 +306,13 @@ export default function SettingsPage() {
   useEffect(() => { fetchSettings('database'); fetchSettings('telegram'); fetchSettings('remoteServer'); fetchSettings('general'); fetchBotStatus(); fetchCert(); }, [fetchSettings, fetchBotStatus, fetchCert]);
   // When switching to Control tab, load lightweight update source + status
   useEffect(() => { if (tab === 'control') { loadUpdateLight(); } }, [tab, loadUpdateLight]);
+  // Update current date/time every second
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentDateTime(new Date());
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
   // removed audit auto-refresh
   useEffect(() => {
     let cancelled = false;
@@ -865,6 +873,38 @@ export default function SettingsPage() {
                       })()}
                     </select>
                   </label>
+                  <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'rgba(0, 150, 255, 0.1)', borderRadius: '4px', border: '1px solid rgba(0, 150, 255, 0.3)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
+                      <FaClock style={{ color: '#0096ff' }} />
+                      <span style={{ fontWeight: '600', fontSize: '0.9rem' }}>Current Time</span>
+                    </div>
+                    <div style={{ fontSize: '1.1rem', fontWeight: '500', fontFamily: 'monospace', marginTop: '0.5rem' }}>
+                      {(() => {
+                        const tz = generalForm.timezone === 'auto' ? undefined : generalForm.timezone;
+                        const dateOpts = { 
+                          weekday: 'long', 
+                          year: 'numeric', 
+                          month: 'long', 
+                          day: 'numeric',
+                          timeZone: tz
+                        };
+                        const timeOpts = {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                          hour12: false,
+                          timeZone: tz
+                        };
+                        try {
+                          const datePart = currentDateTime.toLocaleDateString(undefined, dateOpts);
+                          const timePart = currentDateTime.toLocaleTimeString(undefined, timeOpts);
+                          return `${datePart}, ${timePart}`;
+                        } catch (e) {
+                          return currentDateTime.toString();
+                        }
+                      })()}
+                    </div>
+                  </div>
                 </div>
               </div>
 

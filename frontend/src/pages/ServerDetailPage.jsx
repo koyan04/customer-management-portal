@@ -9,8 +9,8 @@ import ConfirmModal from '../components/ConfirmModal.jsx';
 import ImportModeModal from '../components/ImportModeModal.jsx';
 import EditUserModal from '../components/EditUserModal.jsx';
 import UserTable from '../components/UserTable.jsx';
-import { motion } from 'framer-motion';
 import { getBackendOrigin } from '../lib/backendOrigin';
+import { motion } from 'framer-motion';
 import { useToast } from '../context/ToastContext.jsx';
 
 function ServerDetailPage() {
@@ -107,7 +107,11 @@ function ServerDetailPage() {
       const remark = (u.remark || '').toLowerCase();
       if (q && !(name.includes(q) || remark.includes(q))) return false;
       // status
-      if (statusFilter !== 'all') {
+      if (statusFilter === 'disabled') {
+        if (u.enabled !== false) return false;
+      } else if (statusFilter !== 'all') {
+        // For non-disabled filters, treat disabled users as excluded
+        if (u.enabled === false) return false;
         const exp = parseDateOnly(u.expire_date);
         const cutoff = exp ? new Date(exp.getFullYear(), exp.getMonth(), exp.getDate() + 1) : null; // exclusive end-of-day
         const diff = (cutoff ? cutoff.getTime() : NaN) - now.getTime();
@@ -122,6 +126,14 @@ function ServerDetailPage() {
       return true;
     });
   }, [users, searchQuery, statusFilter, serviceFilter]);
+
+  const handleToggleEnabled = (updatedUser, meta) => {
+    // Update the row in place and keep disabled users visible
+    setUsers(prev => {
+      if (!updatedUser) return prev;
+      return prev.map(u => (u.id === updatedUser.id ? { ...u, ...updatedUser } : u));
+    });
+  };
 
   // Import/Export handlers
   const doExport = async () => {
@@ -280,7 +292,9 @@ function ServerDetailPage() {
       const d = new Date(s);
       return isNaN(d.getTime()) ? null : d;
     };
-    users.forEach(user => {
+    // Exclude disabled users from all counts
+    const enabledUsers = users.filter(u => u.enabled !== false);
+    enabledUsers.forEach(user => {
       const exp = parseDateOnly(user.expire_date);
       const cutoff = exp ? new Date(exp.getFullYear(), exp.getMonth(), exp.getDate() + 1) : null;
       const diff = (cutoff ? cutoff.getTime() : NaN) - now.getTime();
@@ -288,7 +302,7 @@ function ServerDetailPage() {
       else if (diff <= 24 * 60 * 60 * 1000) soon++;
       else active++;
     });
-    return { total: users.length, active, soon, expired };
+    return { total: enabledUsers.length, active, soon, expired };
   }, [users]);
 
   if (loading) return <div className="app-container">Loading...</div>;
@@ -369,6 +383,7 @@ function ServerDetailPage() {
                       { value: 'active', label: 'Active' },
                       { value: 'soon', label: 'Expire Soon (≤24h)' },
                       { value: 'expired', label: 'Expired' },
+                      { value: 'disabled', label: 'Disabled' },
                     ]}
                     ariaLabel="Filter by status"
                   />
@@ -430,6 +445,7 @@ function ServerDetailPage() {
                           { value: 'active', label: 'Active' },
                           { value: 'soon', label: 'Expire Soon (≤24h)' },
                           { value: 'expired', label: 'Expired' },
+                          { value: 'disabled', label: 'Disabled' },
                         ]}
                         ariaLabel="Filter by status"
                       />
@@ -456,7 +472,7 @@ function ServerDetailPage() {
               )}
 
               {filteredUsers.length > 0 ? (
-                <UserTable users={filteredUsers} onEdit={setUserToEdit} onDelete={setUserToDelete} onQuickRenew={handleQuickRenew} canManageUsers={(role === 'ADMIN') || (userServerAdminFor.includes(Number(id)))} showContact={isDesktop} />
+                <UserTable users={filteredUsers} onEdit={setUserToEdit} onDelete={setUserToDelete} onQuickRenew={handleQuickRenew} onToggle={handleToggleEnabled} canManageUsers={(role === 'ADMIN') || (userServerAdminFor.includes(Number(id)))} showContact={isDesktop} />
               ) : (
                 <p className="no-users-message">No users found for this server. { (role === 'ADMIN' || userServerAdminFor.includes(Number(id))) ? 'Click "Add New User" to begin.' : '' }</p>
               )}
@@ -488,6 +504,7 @@ function ServerDetailPage() {
                         { value: 'active', label: 'Active' },
                         { value: 'soon', label: 'Expire Soon (≤24h)' },
                         { value: 'expired', label: 'Expired' },
+                        { value: 'disabled', label: 'Disabled' },
                       ]}
                       ariaLabel="Filter by status"
                     />
@@ -520,7 +537,7 @@ function ServerDetailPage() {
               )}
 
               {filteredUsers.length > 0 ? (
-                <UserTable users={filteredUsers} onEdit={setUserToEdit} onDelete={setUserToDelete} onQuickRenew={handleQuickRenew} canManageUsers={(role === 'ADMIN') || (userServerAdminFor.includes(Number(id)))} showContact={isDesktop} />
+                <UserTable users={filteredUsers} onEdit={setUserToEdit} onDelete={setUserToDelete} onQuickRenew={handleQuickRenew} onToggle={handleToggleEnabled} canManageUsers={(role === 'ADMIN') || (userServerAdminFor.includes(Number(id)))} showContact={isDesktop} />
               ) : (
                 <p className="no-users-message">No users found for this server. { (role === 'ADMIN' || userServerAdminFor.includes(Number(id))) ? 'Click "Add New User" to begin.' : '' }</p>
               )}

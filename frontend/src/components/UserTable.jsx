@@ -3,6 +3,7 @@ import formatWithAppTZ from '../lib/timezone';
 import { createPortal } from 'react-dom';
 import { FaCog, FaTrashAlt, FaClock, FaEllipsisV } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
+import UserEnabledToggle from './UserEnabledToggle.jsx';
 
 // Parse a date-only string (YYYY-MM-DD) in local time to avoid UTC midnight shifts
 const parseDateOnly = (val) => {
@@ -14,7 +15,8 @@ const parseDateOnly = (val) => {
   return isNaN(d.getTime()) ? null : d;
 };
 
-const getUserStatus = (expireDate) => {
+const getUserStatus = (expireDate, enabled) => {
+  if (enabled === false) return { text: 'Disabled', className: 'status-disabled' };
   const now = new Date();
   const expiry = parseDateOnly(expireDate);
   if (!expiry) return { text: 'Active', className: 'status-active' };
@@ -41,7 +43,7 @@ const formatDuration = (expireDate) => {
   return `${days}d ${hours}h`;
 };
 
-function UserTable({ users, onEdit, onDelete, onQuickRenew, canManageUsers = null, showContact = false }) {
+function UserTable({ users, onEdit, onDelete, onQuickRenew, onToggle, canManageUsers = null, showContact = false }) {
   // determine role from localStorage as a fallback to AuthContext
   let role = null;
   try { role = JSON.parse(localStorage.getItem('user'))?.role || (localStorage.getItem('user') || null); } catch(e) { role = null; }
@@ -117,7 +119,7 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, canManageUsers = nul
         <tbody>
           <AnimatePresence>
               {users.map(user => {
-              const status = getUserStatus(user.expire_date);
+              const status = getUserStatus(user.expire_date, user.enabled);
                 // ensure there's a ref element for this row
                 const ensureRef = (el) => { if (el) rowRefs.current[user.id] = el; };
               return (
@@ -128,6 +130,7 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, canManageUsers = nul
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0, x: -50 }}
                     transition={{ duration: 0.3 }}
+                  className={user.enabled === false ? 'row-disabled' : ''}
                 >
                   <td data-label="Name">
                     <div className="user-name-cell">
@@ -143,7 +146,7 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, canManageUsers = nul
                   {showContact && (
                     <td data-label="Contact">{user.contact || '—'}</td>
                   )}
-                  <td data-label="Duration" title={`Expire: ${formatWithAppTZ(user.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB')}`}>{formatDuration(user.expire_date)}</td>
+                  <td data-label="Duration" title={`Expire: ${formatWithAppTZ(user.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB')}`}>{user.enabled === false ? '—' : formatDuration(user.expire_date)}</td>
                   <td data-label="Expire Date">
                     {/* THIS LINE FIXES THE DATE FORMAT */}
                     {formatWithAppTZ(user.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB')}
@@ -152,6 +155,10 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, canManageUsers = nul
                     <div className="user-actions" ref={ensureRef}>
                       { allowActions ? (
                         <>
+                          {/* Enable/Disable toggle */}
+                          <div className="enable-toggle-wrap" style={{ marginRight: 6 }}>
+                            <UserEnabledToggle user={user} onChange={(updated, meta) => { if (onToggle) onToggle(updated, meta); }} />
+                          </div>
                           {/* Quick Renew toggle (left-most) */}
                           <div className="quick-renew-wrap">
                             <button
