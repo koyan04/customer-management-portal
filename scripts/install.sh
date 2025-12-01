@@ -829,7 +829,7 @@ if [ "$CMP_ENABLE_NGINX" = "1" ]; then
       color "Installing nginx..."
       
       # Wait for dpkg locks to be released (max 300 seconds)
-      local waited=0
+      waited=0
       while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || fuser /var/lib/apt/lists/lock >/dev/null 2>&1; do
         if [ $waited -eq 0 ]; then
           warn "Waiting for other package managers to finish..."
@@ -1012,6 +1012,10 @@ Manual verification (GUI):
 - Open the frontend and go to Settings → General. Confirm the timezone selector shows a live current date/time preview.
 - Open Servers → Server list and confirm a "Transfer user" control is available on server rows for Admin/Server Admin roles.
 - Open Financial page and inspect the monthly report table; ensure month headers and values appear correctly for your timezone.
+- Navigate to any server detail page and verify the user enable/disable toggle icon (checkmark/slash) is present.
+- Test disabling a user: click the enable/disable icon, verify the user row becomes grayed out with status "Disabled".
+- Verify disabled users appear in lists but are excluded from all counts (Total Users, Active, Soon, Expired, Mini, Basic, Unlimited).
+- Check that the "Disabled" filter option is available in the status dropdown and shows only disabled users when selected.
 
 If you want scripted, authenticated verification, provide an admin API token or DB access and I can add a post-install verification script that exercises the admin endpoints.
 

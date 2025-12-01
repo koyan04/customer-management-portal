@@ -6,6 +6,12 @@ Current Version: `cmp ver 1.3.0`
 
 ## What's new in v1.3.0
 
+- **User Enable/Disable**: Admins and Server Admins can now disable user accounts without deleting them. Disabled users:
+  - Appear in all user lists and search results (grayed out with "Disabled" status)
+  - Are excluded from all counts: Total Users, Active/Soon/Expired status, Mini/Basic/Unlimited tiers, Financial reports
+  - Can be filtered using the new "Disabled" option in status dropdowns
+  - Toggle is a simple icon button (checkmark/slash) for quick access
+  - All state changes are audit logged
 - User transfer: a "Transfer user" section is available in the Servers list UI so server admins and global admins can move users between servers directly from the list view.
 - Timezone preview: the General settings tab now shows the current date/time for the selected timezone to help choose and confirm the timezone.
 - Telegram bot scheduling: periodic report time is now linked to the app timezone setting so scheduled messages respect the configured timezone.
@@ -441,6 +447,14 @@ curl -s http://127.0.0.1:3001/internal/bot/status | jq
 - User transfer: open Servers → Server list in the frontend and confirm a "Transfer user" control is visible on server rows (Admin/Server Admin roles).
 
 - Financial monthly report: open the Financial page and verify month headings and the table render correctly; month labels are adjusted for the configured timezone.
+
+- **User Enable/Disable feature**: 
+  - Navigate to any server detail page and verify the enable/disable toggle icon (checkmark/slash) appears next to each user.
+  - Click the icon to disable a user and verify the row becomes grayed out with status showing "Disabled".
+  - Verify disabled users still appear in the user list but are excluded from the stats banner counts (Total Users, Active, Soon, Expired).
+  - Check the status filter dropdown includes a "Disabled" option that filters to show only disabled users.
+  - Verify the Dashboard page excludes disabled users from all counts (Total Users, Mini, Basic, Unlimited, Active, Soon, Expired).
+  - Verify disabled users are excluded from Financial reports (Mini/Basic/Unlimited counts).
 
 If you want automated, authenticated verification (API token or DB access required), I can add a `scripts/post_install_verify.sh` that performs authenticated checks and reports pass/fail.
 
