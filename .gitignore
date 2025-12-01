@@ -28,3 +28,8 @@ Thumbs.db
 # Ignore temporary files
 tmp/
 temp/
+
+# Ignore uploaded files (user avatars, etc.)
+backend/public/uploads/*
+!backend/public/uploads/.gitkeep
+!backend/public/uploads/README.md
