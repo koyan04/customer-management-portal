@@ -155,7 +155,7 @@ router.post('/', authenticateToken, isAdmin, async (req, res) => {
     res.status(201).json(newServer.rows[0]);
   } catch (err) {
     console.error('SERVER ROUTE ERROR POST /api/servers :', err && err.stack ? err.stack : err);
-    res.status(500).send('Server Error');
+    res.status(500).json({ msg: 'Server Error', error: err.message });
   }
 });
 
@@ -210,7 +210,7 @@ router.put('/:id', authenticateToken, isServerAdminOrGlobal('id'), async (req, r
     res.json(updatedServer.rows[0]);
   } catch (err) {
     console.error('SERVER ROUTE ERROR PUT /api/servers/:id :', err && err.stack ? err.stack : err);
-    res.status(500).send('Server Error');
+    res.status(500).json({ msg: 'Server Error', error: err.message });
   }
 });
 
@@ -312,7 +312,7 @@ router.post('/:id/keys', authenticateToken, async (req, res) => {
     return res.status(201).json(insert.rows[0]);
   } catch (err) {
     console.error('SERVER ROUTE ERROR POST /api/servers/:id/keys :', err && err.stack ? err.stack : err);
-    res.status(500).send('Server Error');
+    res.status(500).json({ msg: 'Server Error', error: err.message });
   }
 });
 
@@ -338,7 +338,7 @@ router.put('/:id/keys/:keyId', authenticateToken, async (req, res) => {
     return res.json(upd.rows[0]);
   } catch (err) {
     console.error('SERVER ROUTE ERROR PUT /api/servers/:id/keys/:keyId :', err && err.stack ? err.stack : err);
-    res.status(500).send('Server Error');
+    res.status(500).json({ msg: 'Server Error', error: err.message });
   }
 });
 

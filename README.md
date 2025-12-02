@@ -543,6 +543,61 @@ Clients querying `/api/health` will see:
   - Improved: Windows installer attempts (best-effort) for PostgreSQL via `winget`/`choco` and EnterpriseDB fallback; documented caveats in README and `WINDOWS_INSTALL.md`.
   - Docs: README updated to point to the Windows guide and to describe optional helpers and recommended manual flow for production on Windows.
 
+## Troubleshooting
+
+### Dashboard shows "Failed to load" after installation/upgrade
+
+**Symptom**: After installing or upgrading to v1.3.0, the Dashboard page displays "Failed to load dashboard" and the browser console shows errors about missing database columns (e.g., `column u.enabled does not exist`).
+
+**Cause**: The migration file `018-table-users-enabled.sql` was not applied during installation.
+
+**Solution**: Manually run the migrations:
+
+```bash
+# SSH into your server
+cd /srv/cmp/backend
+node run_migrations.js
+# Restart the backend service
+sudo systemctl restart cmp-backend.service
+```
+
+Check the logs to confirm the migration was applied:
+```bash
+sudo journalctl -u cmp-backend.service -n 50
+```
+
+You should see a line like: `[migrate] applied 018-table-users-enabled.sql`
+
+### Key Management: "Save failed" when adding or updating keys
+
+**Symptom**: When adding or updating keys in the Key Management page, clicking "Save" shows "Save failed" and requires multiple clicks.
+
+**Cause**: This was a frontend issue where error handling and loading states were not properly implemented, causing race conditions on rapid clicks.
+
+**Solution**: This has been fixed in v1.3.0. Ensure you're running the latest version and rebuild the frontend:
+
+```bash
+cd /srv/cmp/frontend
+npm run build
+sudo systemctl restart cmp-backend.service
+```
+
+The save button now shows "Saving..." while processing and displays clear success/error messages.
+
+### Server or User save requires multiple clicks
+
+**Symptom**: Adding or updating servers/users sometimes requires clicking the save button multiple times.
+
+**Cause**: Backend was returning plain text errors instead of JSON, causing frontend error parsing to fail silently.
+
+**Solution**: This has been fixed in v1.3.0. Backend routes now return consistent JSON error messages. Rebuild and restart:
+
+```bash
+cd /srv/cmp/frontend
+npm run build
+sudo systemctl restart cmp-backend.service
+```
+
 ## Production checklist
 
 Follow this checklist before exposing the application to production traffic. These are minimal hardening steps and operational runbook items:
