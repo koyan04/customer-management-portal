@@ -157,6 +157,7 @@ function KeyManagementInner() {
 
   const [generateAlertOpen, setGenerateAlertOpen] = useState(false);
   const [generateAlertMessage, setGenerateAlertMessage] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const doPasteOrig = async () => {
     try { const txt = await navigator.clipboard.readText(); setOrigKey(txt || ''); } catch (e) { console.debug('clipboard read failed', e); }
@@ -174,24 +175,40 @@ function KeyManagementInner() {
   };
 
   const doSave = async () => {
+    if (saving) return; // Prevent double-click
+    
+    // Validation
+    if (!selectedUser || selectedUser.trim() === '') {
+      showToast({ variant: 'error', title: 'Validation Error', message: 'Please select a username' });
+      return;
+    }
+    
+    setSaving(true);
     try {
       const token = authToken || localStorage.getItem('token');
       const payload = {
         username: selectedUser || undefined,
-        description: desc,
+        description: desc || undefined,
         original_key: origKey || undefined,
         generated_key: genKey || undefined,
       };
+      
       if (editing && editing.id) {
         await axios.put(`${backendOrigin}/api/servers/${id}/keys/${editing.id}`, payload, { headers: { Authorization: `Bearer ${token}` } });
+        showToast({ variant: 'success', title: 'Success', message: 'Key updated successfully' });
       } else {
         await axios.post(`${backendOrigin}/api/servers/${id}/keys`, payload, { headers: { Authorization: `Bearer ${token}` } });
+        showToast({ variant: 'success', title: 'Success', message: 'Key created successfully' });
       }
       closeBox();
-      fetchKeys();
+      await fetchKeys();
     } catch (e) {
       console.error('Save failed', e);
-      setError('Save failed');
+      const errorMsg = e?.response?.data?.msg || e?.response?.data?.message || e?.message || 'Failed to save key';
+      showToast({ variant: 'error', title: 'Save Failed', message: errorMsg });
+      setError(errorMsg);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -345,9 +362,11 @@ function KeyManagementInner() {
                 </div>
               </label>
               <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                <button className="btn" onClick={doGenerate}>Generate</button>
-                <button className="btn" onClick={doSave}>Save</button>
-                <button className="btn" onClick={closeBox}>Cancel</button>
+                <button className="btn" onClick={doGenerate} disabled={saving}>Generate</button>
+                <button className="btn primary" onClick={doSave} disabled={saving}>
+                  {saving ? 'Saving...' : 'Save'}
+                </button>
+                <button className="btn" onClick={closeBox} disabled={saving}>Cancel</button>
               </div>
             </div>
           </div>
