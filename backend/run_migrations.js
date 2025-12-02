@@ -204,7 +204,8 @@ async function run() {
       { seq: 'settings_audit_id_seq', table: 'settings_audit' },
       { seq: 'server_admin_permissions_id_seq', table: 'server_admin_permissions' },
       { seq: 'viewer_server_permissions_id_seq', table: 'viewer_server_permissions' },
-      { seq: 'editor_server_permissions_id_seq', table: 'editor_server_permissions' }
+      { seq: 'editor_server_permissions_id_seq', table: 'editor_server_permissions' },
+      { seq: 'server_keys_id_seq', table: 'server_keys' }
     ];
     for (const { seq, table } of sequences) {
       try {
