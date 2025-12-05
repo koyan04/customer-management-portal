@@ -838,7 +838,7 @@ export default function SettingsPage() {
                         // Fallback list if supportedValuesOf isn't available
                         if (!zones || !zones.length) {
                           zones = [
-                            'UTC','Etc/GMT','Etc/GMT+12','Pacific/Pago_Pago','Pacific/Honolulu','America/Anchorage','America/Los_Angeles','America/Denver','America/Chicago','America/New_York','America/Sao_Paulo','Atlantic/Azores','Europe/London','Europe/Dublin','Europe/Lisbon','Europe/Paris','Europe/Berlin','Europe/Warsaw','Africa/Cairo','Europe/Athens','Europe/Moscow','Asia/Dubai','Asia/Karachi','Asia/Dhaka','Asia/Colombo','Asia/Jakarta','Asia/Shanghai','Asia/Ho_Chi_Minh','Asia/Singapore','Asia/Tokyo','Asia/Seoul','Australia/Perth','Australia/Adelaide','Australia/Sydney','Pacific/Auckland'
+                            'UTC','Etc/GMT','Etc/GMT+12','Pacific/Pago_Pago','Pacific/Honolulu','America/Anchorage','America/Los_Angeles','America/Denver','America/Chicago','America/New_York','America/Sao_Paulo','Atlantic/Azores','Europe/London','Europe/Dublin','Europe/Lisbon','Europe/Paris','Europe/Berlin','Europe/Warsaw','Africa/Cairo','Europe/Athens','Europe/Moscow','Asia/Dubai','Asia/Karachi','Asia/Kolkata','Asia/Dhaka','Asia/Yangon','Asia/Colombo','Asia/Jakarta','Asia/Bangkok','Asia/Shanghai','Asia/Ho_Chi_Minh','Asia/Singapore','Asia/Tokyo','Asia/Seoul','Australia/Perth','Australia/Adelaide','Australia/Sydney','Pacific/Auckland'
                           ];
                         }
 
@@ -872,6 +872,9 @@ export default function SettingsPage() {
                         return mapped.map((z) => <option key={z.tz} value={z.tz}>{z.label}</option>);
                       })()}
                     </select>
+                    <small style={{ display: 'block', marginTop: '0.5rem', color: '#666', fontSize: '0.85rem' }}>
+                      ℹ️ Select an IANA timezone (e.g., Asia/Yangon for Myanmar). This affects Telegram bot scheduling and date/time calculations throughout the app. Changes require a backend restart to take effect.
+                    </small>
                   </label>
                   <div style={{ marginTop: '0.75rem', padding: '0.75rem', backgroundColor: 'rgba(0, 150, 255, 0.1)', borderRadius: '4px', border: '1px solid rgba(0, 150, 255, 0.3)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.25rem' }}>
