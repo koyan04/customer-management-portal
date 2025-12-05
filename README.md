@@ -598,6 +598,45 @@ npm run build
 sudo systemctl restart cmp-backend.service
 ```
 
+### Telegram bot sends reports at wrong time / Dashboard counts reset at wrong hour
+
+**Symptom**: 
+- Telegram bot @daily cron sends reports at 6:30 AM instead of 12:00 AM (midnight)
+- Dashboard active/soon/expired counts start counting from wrong time of day
+- Issue only occurs on VPS, works correctly on local machine
+
+**Cause**: The VPS system timezone (usually UTC) differs from your configured timezone. The application needs to use IANA timezone names (e.g., "Asia/Yangon") instead of offset formats (e.g., "GMT+6:30").
+
+**Solution**:
+
+1. **Use IANA timezone names** in Settings > General > Timezone:
+   - ❌ Wrong: `GMT+6:30`, `UTC+6:30`, `+06:30`
+   - ✅ Correct: `Asia/Yangon` (Myanmar), `Asia/Dhaka` (Bangladesh), `Asia/Kolkata` (India)
+   - [List of IANA timezones](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones)
+
+2. **Change the timezone in your admin panel**:
+   - Go to Settings > General tab
+   - Set Timezone to a valid IANA name (e.g., `Asia/Yangon`)
+   - Save settings
+
+3. **Restart the backend** for the timezone to take effect:
+   ```bash
+   sudo systemctl restart cmp-backend.service
+   ```
+
+4. **Verify the timezone is applied**:
+   ```bash
+   sudo journalctl -u cmp-backend.service -n 20 | grep -i TZ
+   ```
+   
+   You should see messages like:
+   ```
+   [db] Set Node.js TZ environment variable to: Asia/Yangon
+   [BOT] Using timezone from general settings: Asia/Yangon
+   ```
+
+**Note**: The fix was implemented in the latest version. If you're on an older version, pull the latest changes and redeploy.
+
 ## Production checklist
 
 Follow this checklist before exposing the application to production traffic. These are minimal hardening steps and operational runbook items:
