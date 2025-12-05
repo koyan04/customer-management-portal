@@ -276,6 +276,11 @@ body.theme-light .user-table thead {
 body.theme-light .user-table thead th { color: #0b3d35; font-weight: 800; }
 body.theme-light .user-table tbody tr { border-bottom-color: #e6eef6; }
 
+body.theme-light .user-table tbody tr.clickable-row:hover {
+  background-color: rgba(0, 191, 165, 0.12);
+  transform: translateX(2px);
+}
+
 /* Light-mode: modal content and form controls glass look */
 body.theme-light .modal-backdrop { background-color: rgba(0,0,0,0.40); }
 body.theme-light .modal-content {
@@ -4862,6 +4867,19 @@ body.theme-light .no-users-message {
 
 .user-table tbody tr:last-child {
   border-bottom: none;
+}
+
+.user-table tbody tr.clickable-row {
+  transition: background-color 0.2s ease, transform 0.1s ease;
+}
+
+.user-table tbody tr.clickable-row:hover {
+  background-color: rgba(42, 74, 96, 0.4);
+  transform: translateX(2px);
+}
+
+.user-table tbody tr.clickable-row:active {
+  transform: translateX(0);
 }
 
 .user-name-cell {

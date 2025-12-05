@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { FaServer, FaUsers, FaCheckCircle, FaExclamationTriangle, FaTimesCircle, FaNetworkWired, FaGlobe, FaLeaf, FaCube, FaInfinity, FaChartPie, FaUserShield, FaChartBar, FaChevronDown } from 'react-icons/fa';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Modal from '../components/Modal.jsx';
 import formatWithAppTZ from '../lib/timezone';
 import { getBackendOrigin } from '../lib/backendOrigin';
@@ -19,6 +19,7 @@ function DashboardPage() {
   const [tierModalData, setTierModalData] = useState({ loading: false, users: [], error: '' });
   const { token, user: authUser } = useAuth();
   const role = authUser?.user?.role || authUser?.role || null;
+  const navigate = useNavigate();
   // Removed unused health state (not referenced in current UI rendering)
   // Health state reserved for future feature flags; accessed within poll effect below.
   const [health, setHealth] = useState({ features: null, matview: { refreshing: null } }); // referenced for future feature flags
@@ -509,7 +510,13 @@ function DashboardPage() {
                   {statusModalData.users.map(u => {
                     const expText = formatWithAppTZ(u.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB');
                     return (
-                      <tr key={u.id}>
+                      <tr 
+                        key={u.id} 
+                        className="clickable-row"
+                        onClick={() => navigate(`/servers/${u.server_id}`)}
+                        style={{ cursor: 'pointer' }}
+                        title={`Go to ${u.server_name} server`}
+                      >
                         <td className="account-with-status">
                           {statusModal.type === 'expired' ? (
                             <FaTimesCircle className="row-status-icon icon-expired" aria-hidden="true" />
@@ -564,7 +571,13 @@ function DashboardPage() {
                 </thead>
                 <tbody>
                   {tierModalData.users.map(u => (
-                    <tr key={u.id}>
+                    <tr 
+                      key={u.id}
+                      className="clickable-row"
+                      onClick={() => navigate(`/servers/${u.server_id}`)}
+                      style={{ cursor: 'pointer' }}
+                      title={`Go to ${u.server_name} server`}
+                    >
                       <td>{u.account_name}</td>
                       <td>{normalizeService(u.service_type)}</td>
                       <td>{u.server_name}</td>
