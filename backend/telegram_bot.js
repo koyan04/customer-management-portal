@@ -257,7 +257,7 @@ async function fetchDashboard() {
     const serversRows = serversRes.rows || [];
     if (!serversRows.length) return { totalServers: 0, totalUsers: 0, tiers: { Mini: 0, Basic: 0, Unlimited: 0 }, status: { active: 0, soon: 0, expired: 0 }, servers: [] };
     const serverIds = serversRows.map(s => s.id);
-    const { rows: userRows } = await pool.query('SELECT u.server_id, u.service_type, u.expire_date, u.account_name FROM users u WHERE u.server_id = ANY($1::int[])', [serverIds]);
+    const { rows: userRows } = await pool.query('SELECT u.server_id, u.service_type, u.expire_date, u.account_name FROM users u WHERE u.enabled = TRUE AND u.server_id = ANY($1::int[])', [serverIds]);
     const perServer = new Map();
     let totalUsers = 0;
     let tiers = { Mini: 0, Basic: 0, Unlimited: 0 };
@@ -326,13 +326,13 @@ async function fetchUsersByStatus(status) {
   try {
     let rows = [];
     if (status === 'expired') {
-      const r = await pool.query("SELECT u.*, s.server_name FROM users u JOIN servers s ON s.id = u.server_id WHERE (u.expire_date::date + interval '1 day') <= now() ORDER BY u.expire_date ASC LIMIT 200");
+      const r = await pool.query("SELECT u.*, s.server_name FROM users u JOIN servers s ON s.id = u.server_id WHERE u.enabled = TRUE AND (u.expire_date::date + interval '1 day') <= now() ORDER BY u.expire_date ASC LIMIT 200");
       rows = r.rows || [];
     } else if (status === 'soon') {
-      const r = await pool.query("SELECT u.*, s.server_name FROM users u JOIN servers s ON s.id = u.server_id WHERE (u.expire_date::date + interval '1 day') > now() AND (u.expire_date::date + interval '1 day') <= now() + interval '1 day' ORDER BY u.expire_date ASC LIMIT 200");
+      const r = await pool.query("SELECT u.*, s.server_name FROM users u JOIN servers s ON s.id = u.server_id WHERE u.enabled = TRUE AND (u.expire_date::date + interval '1 day') > now() AND (u.expire_date::date + interval '1 day') <= now() + interval '1 day' ORDER BY u.expire_date ASC LIMIT 200");
       rows = r.rows || [];
     } else if (status === 'active') {
-      const r = await pool.query("SELECT u.*, s.server_name FROM users u JOIN servers s ON s.id = u.server_id WHERE (u.expire_date::date + interval '1 day') > now() + interval '1 day' ORDER BY u.expire_date ASC LIMIT 200");
+      const r = await pool.query("SELECT u.*, s.server_name FROM users u JOIN servers s ON s.id = u.server_id WHERE u.enabled = TRUE AND (u.expire_date::date + interval '1 day') > now() + interval '1 day' ORDER BY u.expire_date ASC LIMIT 200");
       rows = r.rows || [];
     }
     return rows;
