@@ -248,6 +248,33 @@ function formatDateTimeWithTZ(date = new Date(), includeSeconds = true) {
   }
 }
 
+// Format a date (YYYY-MM-DD) string to local date in the configured timezone
+function formatDateOnly(dateStr) {
+  if (!dateStr) return 'N/A';
+  try {
+    // Parse the date string as YYYY-MM-DD and interpret it in the local timezone
+    const match = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      const year = parseInt(match[1], 10);
+      const month = parseInt(match[2], 10) - 1; // 0-indexed
+      const day = parseInt(match[3], 10);
+      // Create date at noon in local timezone to avoid DST issues
+      const date = new Date(year, month, day, 12, 0, 0);
+      const tz = NOTIFICATION_TZ || undefined;
+      return date.toLocaleDateString('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: tz });
+    }
+    // Fallback: try to parse as Date and format
+    const date = new Date(dateStr);
+    if (!isNaN(date.getTime())) {
+      const tz = NOTIFICATION_TZ || undefined;
+      return date.toLocaleDateString('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: tz });
+    }
+  } catch (e) {
+    console.error('[BOT] formatDateOnly error:', e);
+  }
+  return String(dateStr).slice(0, 10);
+}
+
 async function fetchDashboard() {
   // Similar logic to /api/servers/summary but without auth
   const now = new Date();
@@ -571,7 +598,7 @@ async function handleCallback(callback) {
   lines.push(`📛 Status: ${formatUserStatus(user.expire_date)}`);
   lines.push(`⚙️ Service: ${escapeHtml(user.service_type || 'N/A')}`);
   lines.push(`📡 Server: ${escapeHtml(user.server_name || 'N/A')}`);
-  lines.push(`📅 Expires: ${user.expire_date ? new Date(user.expire_date).toISOString().slice(0,10) : 'N/A'}`);
+  lines.push(`📅 Expires: ${formatDateOnly(user.expire_date)}`);
     const keyboard = { reply_markup: { inline_keyboard: [
       [ { text: '🔄 Refresh', callback_data: `refresh_user:${sid}:${uid}` } ],
       [ { text: '🗓️ Change Expire Date', callback_data: `change_expire:${uid}` } ],
@@ -593,7 +620,7 @@ async function handleCallback(callback) {
     lines.push(`📛 Status: ${formatUserStatus(user.expire_date)}`);
     lines.push(`⚙️ Service: ${escapeHtml(user.service_type || 'N/A')}`);
     lines.push(`📡 Server: ${escapeHtml(user.server_name || 'N/A')}`);
-    lines.push(`📅 Expires: ${user.expire_date ? new Date(user.expire_date).toISOString().slice(0,10) : 'N/A'}`);
+    lines.push(`📅 Expires: ${formatDateOnly(user.expire_date)}`);
     const keyboard = { reply_markup: { inline_keyboard: [
       [ { text: '🔄 Refresh', callback_data: `refresh_user:${sid}:${uid}` } ],
       [ { text: '🗓️ Change Expire Date', callback_data: `change_expire:${uid}` } ],
@@ -623,7 +650,7 @@ async function handleCallback(callback) {
     if (!users.length) return sendMessage(chatId, `No ${status} users found`);
     const start = (page - 1) * PAGE_SIZE_USERS;
     const slice = users.slice(start, start + PAGE_SIZE_USERS);
-  const lines = slice.map(u => `• 👤 <b>${escapeHtml(u.account_name)}</b> — 🏷️ ${escapeHtml(u.server_name)} — 📛 ${formatUserStatus(u.expire_date)} — 📅 ${u.expire_date ? new Date(u.expire_date).toISOString().slice(0,10) : 'N/A'}`);
+  const lines = slice.map(u => `• 👤 <b>${escapeHtml(u.account_name)}</b> — 🏷️ ${escapeHtml(u.server_name)} — 📛 ${formatUserStatus(u.expire_date)} — 📅 ${formatDateOnly(u.expire_date)}`);
   const keyboardRows = buildTwoColumnRows(slice.map(u => ({ text: `👤 ${u.account_name}`, callback_data: `server_user:${u.server_id}:${u.id}` })));
     const totalPages = Math.max(1, Math.ceil(users.length / PAGE_SIZE_USERS));
     const pager = [];
@@ -658,7 +685,7 @@ async function handleCallback(callback) {
     if (!months) return sendMessage(chatId, 'Invalid selection');
     const res = await applyExtendExpire(uid, months, actorId || chatId);
     if (!res) return sendMessage(chatId, 'Failed to update expiry date');
-    const newDate = res.expire_date ? new Date(res.expire_date).toISOString().slice(0,10) : 'N/A';
+    const newDate = formatDateOnly(res.expire_date);
     const name = res.account_name || 'User';
     const infoText = `✅ Updated ${escapeHtml(name)} expiry to ${newDate}`;
     // Try to replace the inline keyboard (hide the Extend box) by editing the original message text
