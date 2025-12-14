@@ -1595,6 +1595,26 @@ body.theme-light .reorder-banner {
   font-size: 0.98rem;
   letter-spacing: 0.2px;
   text-shadow: 0 1px 0 rgba(0,0,0,0.10), 0 2px 8px rgba(0,191,165,0.08);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Status indicator for online/offline */
+.status-indicator {
+  font-size: 0.7rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 4px;
+}
+
+.status-indicator.online {
+  filter: drop-shadow(0 0 3px rgba(0, 255, 0, 0.5));
+}
+
+.status-indicator.offline {
+  opacity: 0.4;
 }
 
 /* Dark mode: make account name non-bold and adjust color only (leave size unchanged) */

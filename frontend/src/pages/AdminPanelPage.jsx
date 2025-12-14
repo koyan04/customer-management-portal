@@ -292,15 +292,26 @@ function AdminPanelPage() {
                 )}
               </div>
               <div className="account-info">
-                <div className="account-display">{a.display_name || a.username}</div>
+                <div className="account-display">
+                  {a.display_name || a.username}
+                  {/* Online/Offline indicator */}
+                  {a.is_online !== undefined && (
+                    <span 
+                      className={`status-indicator ${a.is_online ? 'online' : 'offline'}`}
+                      title={a.is_online ? 'Online' : (a.last_seen ? `Last seen: ${fmtLastSeen(a.last_seen)}` : 'Offline')}
+                    >
+                      {a.is_online ? '🟢' : '⚫'}
+                    </span>
+                  )}
+                </div>
                   <div className="account-role">{a.role === 'SERVER_ADMIN' ? 'SERVER ADMIN' : a.role}</div>
-                  {/* Last seen pill under role (if we have recent audit) */}
-                  {lastSeenMap[a.id] && lastSeenMap[a.id]?.ts && (
+                  {/* Last seen pill under role - show only when offline */}
+                  {!a.is_online && a.last_seen && (
                     <div
                       className="last-seen-pill"
-                      title={(lastSeenMap[a.id]?.ip ? `IP: ${lastSeenMap[a.id].ip}` : '') + (lastSeenMap[a.id]?.location ? `  Loc: ${lastSeenMap[a.id].location}` : '')}
+                      title={a.last_seen ? new Date(a.last_seen).toLocaleString() : ''}
                     >
-                      Last seen: {fmtLastSeen(lastSeenMap[a.id].ts)}
+                      Last seen: {fmtLastSeen(a.last_seen)}
                     </div>
                   )}
                   {/* small badge in top-right of account card showing server-admin status/count */}

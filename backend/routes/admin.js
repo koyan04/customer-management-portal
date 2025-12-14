@@ -45,10 +45,28 @@ router.get('/public/settings/:key', async (req, res) => {
 // --- ADMIN: Get all editors/admins (admin only)
 router.get('/accounts', authenticateToken, isAdmin, async (req, res) => {
   try {
-  const result = await pool.query('SELECT id, display_name, username, role, avatar_url, created_at FROM admins ORDER BY created_at DESC');
-  const rows = Array.isArray(result.rows) ? result.rows : [];
-  res.json(rows);
-  } catch (err) { console.error(err); res.status(500).send('Server Error'); }
+    // Get admins with their session status
+    const result = await pool.query(`
+      SELECT 
+        a.id, 
+        a.display_name, 
+        a.username, 
+        a.role, 
+        a.avatar_url, 
+        a.created_at,
+        a.last_seen,
+        CASE WHEN s.last_activity IS NOT NULL THEN true ELSE false END as is_online,
+        s.last_activity
+      FROM admins a
+      LEFT JOIN active_sessions s ON a.id = s.admin_id
+      ORDER BY a.created_at DESC
+    `);
+    const rows = Array.isArray(result.rows) ? result.rows : [];
+    res.json(rows);
+  } catch (err) { 
+    console.error(err); 
+    res.status(500).send('Server Error'); 
+  }
 });
 
 // --- ADMIN: Get single account by id
