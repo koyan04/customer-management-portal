@@ -165,7 +165,7 @@ function ServerList({ servers, fetchServers }) {
       <div className="list-toolbar">
         <div className="flex-spacer" />
         <div className="actions">
-          {((role === 'ADMIN') || (currentRole === 'ADMIN')) && (
+          {((role === 'ADMIN') || (currentRole === 'ADMIN') || (role === 'SERVER_ADMIN') || (currentRole === 'SERVER_ADMIN')) && (
             <>
               <button 
                 className="page-btn" 
@@ -175,6 +175,10 @@ function ServerList({ servers, fetchServers }) {
               >
                 <FaExchangeAlt /> Transfer Users
               </button>
+            </>
+          )}
+          {((role === 'ADMIN') || (currentRole === 'ADMIN')) && (
+            <>
               <button className={`page-btn${reorderMode ? ' active' : ''}`} onClick={() => setReorderMode(m => !m)}>
                 {reorderMode ? (<><FaTimes /> Exit Reorder</>) : (<><FaArrowsAlt /> Reorder</>)}
               </button>
