@@ -95,6 +95,17 @@ router.post('/login', async (req, res) => {
         try {
           const ip = (req.headers['x-forwarded-for'] || req.ip || req.connection?.remoteAddress || '').toString();
           const userAgent = (req.headers['user-agent'] || '').toString();
+          
+          // Get geolocation from IP
+          let geoData = { city: null, country: null, location: null };
+          try {
+            const { getLocationFromIP } = require('../lib/ipGeolocation');
+            geoData = await getLocationFromIP(ip);
+            if (process.env.NODE_ENV !== 'production') console.log('[login-audit] geo data:', geoData);
+          } catch (e) {
+            if (process.env.NODE_ENV !== 'production') console.warn('[login-audit] geolocation failed:', e.message);
+          }
+          
           // Check columns present to build a compatible INSERT
           let cols = [];
           try {
@@ -117,9 +128,9 @@ router.post('/login', async (req, res) => {
             else if (hasRoleCol) { fields.push('role'); values.push('$' + (params.push(admin.role))); }
             if (hasIp) { fields.push('ip'); values.push('$' + (params.push(ip))); }
             if (hasUA) { fields.push('user_agent'); values.push('$' + (params.push(userAgent))); }
-            if (hasLoc) { fields.push('location'); values.push('NULL'); }
-            if (hasGeoCity) { fields.push('geo_city'); values.push('NULL'); }
-            if (hasGeoCountry) { fields.push('geo_country'); values.push('NULL'); }
+            if (hasLoc) { fields.push('location'); values.push(geoData.location ? ('$' + params.push(geoData.location)) : 'NULL'); }
+            if (hasGeoCity) { fields.push('geo_city'); values.push(geoData.city ? ('$' + params.push(geoData.city)) : 'NULL'); }
+            if (hasGeoCountry) { fields.push('geo_country'); values.push(geoData.country ? ('$' + params.push(geoData.country)) : 'NULL'); }
             const sql = `INSERT INTO login_audit (${fields.join(',')}) VALUES (${values.join(',')})`;
             try {
               await pool.query(sql, params);
