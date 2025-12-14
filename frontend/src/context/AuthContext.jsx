@@ -76,8 +76,14 @@ export const AuthProvider = ({ children }) => {
       (async () => {
         try {
           const backendOrigin = getBackendOrigin();
+          const currentToken = token || localStorage.getItem('token');
           // Call logout endpoint which clears the refresh cookie and server-side row
-          await fetch(backendOrigin + '/api/auth/logout', { method: 'POST', credentials: 'include', headers: {} }).catch(() => {});
+          const headers = currentToken ? { 'Authorization': `Bearer ${currentToken}` } : {};
+          await fetch(backendOrigin + '/api/auth/logout', { 
+            method: 'POST', 
+            credentials: 'include', 
+            headers 
+          }).catch(() => {});
         } catch (e) {}
         setToken(null);
         localStorage.removeItem('token');
@@ -85,7 +91,7 @@ export const AuthProvider = ({ children }) => {
         navigate('/login'); // Redirect to login page after logout
       })();
     };
-  }, [navigate]);
+  }, [navigate, token]);
 
   // Idle auto-logout: reads `autoLogoutMinutes` from localStorage (0 = disabled)
   useEffect(() => {
