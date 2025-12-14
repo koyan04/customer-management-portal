@@ -80,10 +80,11 @@ router.post('/login', async (req, res) => {
     jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '24h' }, async (err, token) => {
         if (err) throw err;
         
-        // Create active session record
+        // Create active session record (delete any old sessions first)
         try {
+          await pool.query('DELETE FROM active_sessions WHERE admin_id = $1', [admin.id]);
           await pool.query(
-            'INSERT INTO active_sessions (admin_id, token_jti, last_activity) VALUES ($1, $2, NOW()) ON CONFLICT (token_jti) DO UPDATE SET last_activity = NOW()',
+            'INSERT INTO active_sessions (admin_id, token_jti, last_activity) VALUES ($1, $2, NOW())',
             [admin.id, jti]
           );
         } catch (sessionErr) {
@@ -234,14 +235,16 @@ router.post('/refresh', async (req, res) => {
     const payload = { user: { id: admin.id, role: admin.role }, jti: newJti };
     const newAccess = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
     
-    // Create new active session for refreshed token
+    // Replace old session with new one for refreshed token
     try {
+      // Delete all old sessions for this admin, then insert the new one
+      await pool.query('DELETE FROM active_sessions WHERE admin_id = $1', [adminId]);
       await pool.query(
-        'INSERT INTO active_sessions (admin_id, token_jti, last_activity) VALUES ($1, $2, NOW()) ON CONFLICT (token_jti) DO UPDATE SET last_activity = NOW()',
+        'INSERT INTO active_sessions (admin_id, token_jti, last_activity) VALUES ($1, $2, NOW())',
         [adminId, newJti]
       );
     } catch (sessionErr) {
-      console.error('Failed to create active session on refresh:', sessionErr && sessionErr.message);
+      console.error('Failed to replace active session on refresh:', sessionErr && sessionErr.message);
     }
     
     // set rotated refresh cookie
