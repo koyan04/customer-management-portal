@@ -79,6 +79,17 @@ router.post('/login', async (req, res) => {
     const tokenPayload = { ...payload, jti };
     jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '24h' }, async (err, token) => {
         if (err) throw err;
+        
+        // Create active session record
+        try {
+          await pool.query(
+            'INSERT INTO active_sessions (admin_id, token_jti, last_activity) VALUES ($1, $2, NOW()) ON CONFLICT (token_jti) DO UPDATE SET last_activity = NOW()',
+            [admin.id, jti]
+          );
+        } catch (sessionErr) {
+          console.error('Failed to create active session:', sessionErr && sessionErr.message);
+        }
+        
         // Fire-and-forget: record login audit (ignore errors)
         try {
           const ip = (req.headers['x-forwarded-for'] || req.ip || req.connection?.remoteAddress || '').toString();
@@ -222,6 +233,17 @@ router.post('/refresh', async (req, res) => {
     const newJti = randomBytes(12).toString('hex');
     const payload = { user: { id: admin.id, role: admin.role }, jti: newJti };
     const newAccess = jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '24h' });
+    
+    // Create new active session for refreshed token
+    try {
+      await pool.query(
+        'INSERT INTO active_sessions (admin_id, token_jti, last_activity) VALUES ($1, $2, NOW()) ON CONFLICT (token_jti) DO UPDATE SET last_activity = NOW()',
+        [adminId, newJti]
+      );
+    } catch (sessionErr) {
+      console.error('Failed to create active session on refresh:', sessionErr && sessionErr.message);
+    }
+    
     // set rotated refresh cookie
     const cookieOpts = { httpOnly: true, sameSite: 'lax', expires: newExpires };
     if (req.hostname !== 'localhost' && req.hostname !== '127.0.0.1') cookieOpts.secure = true;
@@ -242,6 +264,8 @@ router.post('/logout', async (req, res) => {
       try { await pool.query('DELETE FROM refresh_tokens WHERE token_hash = $1', [h]); } catch (e) { console.error('Failed to delete refresh token row', e); }
     }
     // Also invalidate access token jti if provided via Authorization header
+    let jtiToCleanup = null;
+    let adminIdToUpdate = null;
     try {
       const authHeader = req.headers['authorization'];
       const token = authHeader && authHeader.split(' ')[1];
@@ -250,12 +274,31 @@ router.post('/logout', async (req, res) => {
           const decoded = jwt.verify(token, process.env.JWT_SECRET);
           const jti = decoded && decoded.jti;
           if (jti) {
+            jtiToCleanup = jti;
             const adminId = decoded && decoded.user && decoded.user.id ? decoded.user.id : null;
+            adminIdToUpdate = adminId;
             await pool.query('INSERT INTO invalidated_tokens (jti, admin_id) VALUES ($1, $2) ON CONFLICT (jti) DO UPDATE SET invalidated_at = now()', [jti, adminId]);
           }
         } catch (_) {}
       }
     } catch (e) { /* ignore */ }
+    
+    // Remove active session and update last_seen
+    if (jtiToCleanup) {
+      try {
+        await pool.query('DELETE FROM active_sessions WHERE token_jti = $1', [jtiToCleanup]);
+      } catch (e) {
+        console.error('Failed to delete active session:', e && e.message);
+      }
+    }
+    if (adminIdToUpdate) {
+      try {
+        await pool.query('UPDATE admins SET last_seen = NOW() WHERE id = $1', [adminIdToUpdate]);
+      } catch (e) {
+        console.error('Failed to update last_seen:', e && e.message);
+      }
+    }
+    
     // clear cookie
     res.clearCookie('refresh_token');
     return res.json({ ok: true });
@@ -264,4 +307,86 @@ router.post('/logout', async (req, res) => {
     return res.status(500).json({ msg: 'Server error' });
   }
 });
+
+// Heartbeat endpoint: update last_activity for current session
+router.post('/heartbeat', authenticateToken, async (req, res) => {
+  try {
+    const jti = req.tokenPayload && req.tokenPayload.jti;
+    if (!jti) {
+      return res.status(400).json({ msg: 'Token does not contain jti' });
+    }
+
+    const adminId = req.user && req.user.id;
+    
+    // Update session last_activity or create if not exists
+    await pool.query(
+      'INSERT INTO active_sessions (admin_id, token_jti, last_activity) VALUES ($1, $2, NOW()) ON CONFLICT (token_jti) DO UPDATE SET last_activity = NOW()',
+      [adminId, jti]
+    );
+    
+    return res.json({ ok: true, timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('Heartbeat error:', err && err.message);
+    return res.status(500).json({ msg: 'Server error' });
+  }
+});
+
+// Get active sessions (with timeout check)
+router.get('/sessions/active', authenticateToken, async (req, res) => {
+  try {
+    const timeoutMinutes = 60; // Match your session timeout setting
+    
+    // Clean up inactive sessions first
+    await pool.query(
+      'DELETE FROM active_sessions WHERE last_activity < NOW() - INTERVAL \'1 minute\' * $1',
+      [timeoutMinutes]
+    );
+    
+    // Update last_seen for cleaned up sessions
+    await pool.query(
+      `UPDATE admins 
+       SET last_seen = s.last_activity 
+       FROM (
+         SELECT admin_id, MAX(last_activity) as last_activity 
+         FROM active_sessions 
+         WHERE last_activity < NOW() - INTERVAL '1 minute' * $1
+         GROUP BY admin_id
+       ) s 
+       WHERE admins.id = s.admin_id`,
+      [timeoutMinutes]
+    );
+    
+    // Get currently active sessions
+    const result = await pool.query(
+      `SELECT 
+        a.id,
+        a.username,
+        a.display_name,
+        a.role,
+        a.last_seen,
+        s.last_activity,
+        s.created_at as session_started
+       FROM admins a
+       LEFT JOIN active_sessions s ON a.id = s.admin_id
+       ORDER BY a.id`
+    );
+    
+    const sessions = result.rows.map(row => ({
+      id: row.id,
+      username: row.username,
+      displayName: row.display_name,
+      role: row.role,
+      isOnline: !!row.last_activity,
+      lastActivity: row.last_activity,
+      sessionStarted: row.session_started,
+      lastSeen: row.last_seen
+    }));
+    
+    return res.json({ sessions });
+  } catch (err) {
+    console.error('Sessions active error:', err && err.message);
+    return res.status(500).json({ msg: 'Server error' });
+  }
+});
+
 

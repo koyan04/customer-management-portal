@@ -338,6 +338,33 @@ function App() {
     try { window.dispatchEvent(new Event('extend-session')); } catch (_) {}
     setIdleWarning({ show: false, remainingMs: 0 });
   };
+  
+  // Session heartbeat: send heartbeat every 30 seconds when logged in
+  useEffect(() => {
+    if (!token) return;
+    
+    const sendHeartbeat = async () => {
+      try {
+        await axios.post('/api/auth/heartbeat', {}, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      } catch (err) {
+        // Silently fail - user might be offline or session expired
+        console.debug('Heartbeat failed:', err.message);
+      }
+    };
+    
+    // Send initial heartbeat
+    sendHeartbeat();
+    
+    // Set up interval to send heartbeat every 30 seconds
+    const heartbeatInterval = setInterval(sendHeartbeat, 30000);
+    
+    return () => {
+      clearInterval(heartbeatInterval);
+    };
+  }, [token]);
+  
   // small SVG fallback (data URI) used when no avatar is found
   const FALLBACK_AVATAR = 'data:image/svg+xml;utf8,' + encodeURIComponent(`
     <svg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 24 24' fill='none'>

@@ -833,8 +833,8 @@ router.post('/admin/refresh-user-status', authenticateToken, isAdmin, async (req
   }
 });
 
-// Transfer users between servers (ADMIN only)
-router.post('/transfer', authenticateToken, isAdmin, async (req, res) => {
+// Transfer users between servers (ADMIN or SERVER_ADMIN with permissions)
+router.post('/transfer', authenticateToken, async (req, res) => {
   try {
     const { userIds, targetServerId } = req.body;
     
@@ -850,6 +850,42 @@ router.post('/transfer', authenticateToken, isAdmin, async (req, res) => {
     const serverCheck = await pool.query('SELECT id FROM servers WHERE id = $1', [targetServerId]);
     if (!serverCheck.rows || serverCheck.rows.length === 0) {
       return res.status(404).json({ msg: 'Target server not found' });
+    }
+
+    // Authorization check: ADMIN can transfer anyone, SERVER_ADMIN can only transfer users from/to servers they manage
+    if (req.user.role !== 'ADMIN') {
+      // Check if user has permission for target server
+      const targetPermCheck = await pool.query(
+        'SELECT 1 FROM server_admin_permissions WHERE admin_id = $1 AND server_id = $2',
+        [req.user.id, targetServerId]
+      );
+      if (!targetPermCheck.rows || targetPermCheck.rows.length === 0) {
+        return res.status(403).json({ msg: 'You do not have permission to transfer users to this server' });
+      }
+
+      // Check if user has permission for all source servers
+      const sourceServersQuery = await pool.query(
+        'SELECT DISTINCT server_id FROM users WHERE id = ANY($1::int[])',
+        [userIds]
+      );
+      const sourceServerIds = sourceServersQuery.rows.map(r => r.server_id);
+      
+      if (sourceServerIds.length > 0) {
+        const sourcePermCheck = await pool.query(
+          'SELECT server_id FROM server_admin_permissions WHERE admin_id = $1 AND server_id = ANY($2::int[])',
+          [req.user.id, sourceServerIds]
+        );
+        const allowedSourceServers = sourcePermCheck.rows.map(r => r.server_id);
+        
+        // Check if all source servers are in allowed list
+        const unauthorizedServers = sourceServerIds.filter(sid => !allowedSourceServers.includes(sid));
+        if (unauthorizedServers.length > 0) {
+          return res.status(403).json({ 
+            msg: 'You do not have permission to transfer users from some of the source servers',
+            unauthorizedServers 
+          });
+        }
+      }
     }
 
     // Get current max display_pos for target server
