@@ -46,8 +46,9 @@ router.get('/public/settings/:key', async (req, res) => {
 router.get('/accounts', authenticateToken, isAdmin, async (req, res) => {
   try {
     // Get admins with their session status
+    // Use DISTINCT ON to ensure only one row per admin even if multiple sessions exist
     const result = await pool.query(`
-      SELECT 
+      SELECT DISTINCT ON (a.id)
         a.id, 
         a.display_name, 
         a.username, 
@@ -55,11 +56,11 @@ router.get('/accounts', authenticateToken, isAdmin, async (req, res) => {
         a.avatar_url, 
         a.created_at,
         a.last_seen,
-        CASE WHEN s.last_activity IS NOT NULL THEN true ELSE false END as is_online,
+        CASE WHEN s.last_activity IS NOT NULL AND s.last_activity > NOW() - INTERVAL '60 minutes' THEN true ELSE false END as is_online,
         s.last_activity
       FROM admins a
       LEFT JOIN active_sessions s ON a.id = s.admin_id
-      ORDER BY a.created_at DESC
+      ORDER BY a.id, s.last_activity DESC NULLS LAST
     `);
     const rows = Array.isArray(result.rows) ? result.rows : [];
     res.json(rows);
