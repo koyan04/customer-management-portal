@@ -19,15 +19,27 @@ function AdminPanelPage() {
   const [page, setPage] = useState(1);
   const perPage = 8;
 
+  // Fetch accounts function (reusable)
+  const fetchAccounts = async () => {
+    try {
+      const r = await axios.get('/api/admin/accounts', { headers: { Authorization: `Bearer ${token}` } });
+      const d = r.data;
+      const normalized = Array.isArray(d) ? d : (d && Array.isArray(d.data) ? d.data : (d && Array.isArray(d.accounts) ? d.accounts : []));
+      setAccounts(normalized);
+      return normalized;
+    } catch (err) {
+      console.error('Failed to fetch accounts:', err);
+      return null;
+    }
+  };
+
+  // Initial load
   useEffect(() => {
     if (!token) return;
     (async () => {
       setLoading(true);
       try {
-        const r = await axios.get('/api/admin/accounts', { headers: { Authorization: `Bearer ${token}` } });
-        const d = r.data;
-        const normalized = Array.isArray(d) ? d : (d && Array.isArray(d.data) ? d.data : (d && Array.isArray(d.accounts) ? d.accounts : []));
-        setAccounts(normalized);
+        await fetchAccounts();
       } catch (err) {
         console.error(err);
       }
@@ -45,6 +57,18 @@ function AdminPanelPage() {
         setLoading(false);
       }
     })();
+  }, [token]);
+
+  // Real-time polling for online status (every 30 seconds)
+  useEffect(() => {
+    if (!token) return;
+    
+    const pollInterval = setInterval(async () => {
+      // Silently update accounts to refresh online status
+      await fetchAccounts();
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(pollInterval);
   }, [token]);
 
   const [formOpen, setFormOpen] = useState(false);

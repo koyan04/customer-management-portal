@@ -332,6 +332,14 @@ router.post('/heartbeat', authenticateToken, async (req, res) => {
 
     const adminId = req.user && req.user.id;
     
+    // Clean up any duplicate/old sessions for this admin (keep only current jti)
+    // Then update or insert the current session
+    try {
+      await pool.query('DELETE FROM active_sessions WHERE admin_id = $1 AND token_jti != $2', [adminId, jti]);
+    } catch (e) {
+      console.error('Failed to cleanup duplicate sessions:', e && e.message);
+    }
+    
     // Update session last_activity or create if not exists
     await pool.query(
       'INSERT INTO active_sessions (admin_id, token_jti, last_activity) VALUES ($1, $2, NOW()) ON CONFLICT (token_jti) DO UPDATE SET last_activity = NOW()',
