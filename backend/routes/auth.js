@@ -358,23 +358,31 @@ router.get('/sessions/active', authenticateToken, async (req, res) => {
   try {
     const timeoutMinutes = 60; // Match your session timeout setting
     
-    // Clean up inactive sessions first
-    await pool.query(
-      'DELETE FROM active_sessions WHERE last_activity < NOW() - INTERVAL \'1 minute\' * $1',
+    // First, find all expired sessions and update last_seen before deleting them
+    const expiredSessions = await pool.query(
+      `SELECT admin_id, last_activity 
+       FROM active_sessions 
+       WHERE last_activity < NOW() - INTERVAL '1 minute' * $1`,
       [timeoutMinutes]
     );
     
-    // Update last_seen for cleaned up sessions
+    // Update last_seen for users with expired sessions
+    if (expiredSessions.rows && expiredSessions.rows.length > 0) {
+      for (const row of expiredSessions.rows) {
+        try {
+          await pool.query(
+            'UPDATE admins SET last_seen = $1 WHERE id = $2',
+            [row.last_activity, row.admin_id]
+          );
+        } catch (e) {
+          console.error('Failed to update last_seen for admin', row.admin_id, e.message);
+        }
+      }
+    }
+    
+    // Now clean up inactive sessions
     await pool.query(
-      `UPDATE admins 
-       SET last_seen = s.last_activity 
-       FROM (
-         SELECT admin_id, MAX(last_activity) as last_activity 
-         FROM active_sessions 
-         WHERE last_activity < NOW() - INTERVAL '1 minute' * $1
-         GROUP BY admin_id
-       ) s 
-       WHERE admins.id = s.admin_id`,
+      'DELETE FROM active_sessions WHERE last_activity < NOW() - INTERVAL \'1 minute\' * $1',
       [timeoutMinutes]
     );
     

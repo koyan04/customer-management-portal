@@ -66,7 +66,7 @@ function AdminPanelPage() {
     const pollInterval = setInterval(async () => {
       // Silently update accounts to refresh online status
       await fetchAccounts();
-    }, 30000); // 30 seconds
+    }, 10000); // 10 seconds for more responsive status updates
 
     return () => clearInterval(pollInterval);
   }, [token]);

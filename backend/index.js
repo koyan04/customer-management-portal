@@ -48,6 +48,14 @@ async function start() {
   } catch (e) {
     console.warn('[index] failed to preload general settings:', e && e.message ? e.message : e);
   }
+  // Start session cleanup scheduler
+  try {
+    const sessionCleanup = require('./lib/sessionCleanup');
+    sessionCleanup.startSessionCleanup();
+    console.log('[index] session cleanup scheduler started');
+  } catch (e) {
+    console.warn('[index] failed to start session cleanup scheduler:', e && e.message ? e.message : e);
+  }
   // Start telegram bot alongside the backend unless explicitly disabled or running tests
   if (process.env.START_TELEGRAM_BOT !== 'false' && process.env.NODE_ENV !== 'test') {
     try {
@@ -72,6 +80,14 @@ async function start() {
 // Graceful shutdown: stop bot and close HTTP server
 async function shutdown(code = 0) {
   console.log('[index] shutting down');
+  // Stop session cleanup scheduler
+  try {
+    const sessionCleanup = require('./lib/sessionCleanup');
+    sessionCleanup.stopSessionCleanup();
+    console.log('[index] session cleanup scheduler stopped');
+  } catch (e) {
+    console.warn('[index] error stopping session cleanup:', e && e.message ? e.message : e);
+  }
   try {
     const bot = require.cache[require.resolve('./telegram_bot')];
     if (bot) {
