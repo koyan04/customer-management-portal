@@ -1,19 +1,34 @@
-﻿cmp ver 1.3.0
+﻿cmp ver 1.4.1
 
 What's new
-- User transfer: added a "Transfer user" section in the Servers list UI allowing server admins and global admins to move users between servers from the server list view.
-- Timezone preview: the General settings tab now shows the current date/time for the selected timezone to help choose and confirm the timezone.
-- Telegram bot: periodic report time is now linked to the app timezone setting so scheduled messages respect the configured timezone.
-- Financial page: modified monthly report table for improved readability and timezone-aware month headings.
-- Visual polish: assorted UI and accessibility improvements across server list, settings, and financial pages.
+- Activity Logs: Comprehensive audit logging for account and user operations with filtering and clear logs functionality
+- Logo Persistence: Logos now stored in dedicated `/logos/` directory and survive database restores with backup/restore scripts
+- Financial Report: Fixed filtering for SERVER_ADMIN users with proper server permission tracking
+- UI Improvements: Enhanced action button styling with circular design and better color scheme (purple/blue/red)
+
+Key Features
+- Activity logs modal shows Action, Object (user/account), Server, and Date & Time in DD/MM/YYYY format
+- Clear Logs button to remove old activity records
+- Persistent logo storage in `backend/public/logos/` with consistent naming (logo-70x70.png, etc.)
+- Backup scripts: `backup_logos.js`, `restore_logos.js`, `migrate_logos.js`
+- Automatic exclusion of system operations (cert_status) from activity logs
 
 Verification
-- Backend health and version (should show `cmp ver 1.3.0`): curl -s http://127.0.0.1:3001/api/health | jq '.versions.appVersion'
-- Telegram bot status: curl -s http://127.0.0.1:3001/internal/bot/status | jq
-- Frontend checks: Settings  General (timezone preview), Servers  Server list (Transfer user control), Financial page (monthly report table)
+- Backend health and version (should show `cmp ver 1.4.1`): curl -s http://127.0.0.1:3001/api/health | jq '.versions.appVersion'
+- Activity logs: Login as admin → Admin Panel → Click activity logs icon for any account
+- Logo persistence: Check `backend/public/logos/` directory exists with consistent file names
+- Financial filtering: Login as SERVER_ADMIN user and verify financial data displays correctly
 
 CI / Tests
-- Frontend tests (Vitest) and backend tests (Jest) were run locally and passed in this workspace.
+- Frontend tests (Vitest) and backend tests (Jest) passed locally in this workspace.
+
+Upgrade Notes
+- For existing installations with logos: run `node backend/scripts/migrate_logos.js` to migrate to new persistent storage
+- Backup logos before database restore: `node backend/scripts/backup_logos.js`
+- Restore after database restore: `node backend/scripts/restore_logos.js`
+- Seed server permissions for existing SERVER_ADMINs: `node backend/seedServerAdminPerms.js`
 
 Notes
-- Tag `v1.3.0` now points at the commit included in this repo. Overwriting the remote tag was done by request.
+- Tag `v1.4.1` includes activity logs, logo persistence, and financial report fixes.
+- See `LOGO_SETUP.md` and `backend/LOGO_PERSISTENCE.md` for detailed logo management documentation.
+
