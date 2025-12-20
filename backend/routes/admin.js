@@ -653,7 +653,6 @@ router.get('/financial', authenticateToken, async (req, res) => {
         const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [targetUserId]);
         const sids = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
         if (sids.length > 0) {
-          serverFilterClause = ' AND u.server_id = ANY($1::int[])';
           queryParams = [sids];
         }
       }
@@ -672,29 +671,31 @@ router.get('/financial', authenticateToken, async (req, res) => {
         try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] SERVER_ADMIN has no assigned servers, denying access userId=', req.user && req.user.id); } catch (e) {}
         return res.status(403).json({ msg: 'Forbidden' });
       }
-      // we'll bind server ids as $1
-      serverFilterClause = ' AND u.server_id = ANY($1::int[])';
       queryParams = [sids];
     }
 
     // Single SQL to aggregate counts per month and per service_type for the last 12 months,
     // plus fetch the most-recent `settings_audit.after_data` per month (LATERAL) so we can derive prices.
-    // Build proper WHERE clause for filtering
-    const userFilterWhere = serverFilterClause ? 'WHERE server_id = ANY($1::int[])' : '';
+    // Build filtered users subquery first - use WHERE clause in CTE without table alias
+    const filteredUsersClause = queryParams.length > 0 ? `
+      WITH filtered_users AS (
+        SELECT * FROM users WHERE server_id = ANY($1::int[])
+      )
+    ` : '';
+    
+    const userTableName = queryParams.length > 0 ? 'filtered_users' : 'users';
     
     const q = `
-      WITH months AS (
+      ${filteredUsersClause}
+      ${filteredUsersClause ? ',' : 'WITH'} months AS (
         SELECT generate_series(date_trunc('month', CURRENT_DATE) - interval '11 months', date_trunc('month', CURRENT_DATE), interval '1 month') AS month_start
-      ),
-      filtered_users AS (
-        SELECT * FROM users ${userFilterWhere}
       ),
       user_counts AS (
         SELECT m.month_start,
                COALESCE(u.service_type, '') AS service_type,
                COUNT(u.*)::int AS cnt
         FROM months m
-        LEFT JOIN filtered_users u
+        LEFT JOIN ${userTableName} u
           ON u.created_at <= (m.month_start + interval '1 month' - interval '1 ms')
           AND (u.expire_date IS NULL OR u.expire_date >= m.month_start)
           AND u.enabled = TRUE
