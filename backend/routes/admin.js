@@ -553,17 +553,35 @@ router.get('/accounts/:id/activity-logs', authenticateToken, isAdmin, async (req
     const { id } = req.params;
     const limit = Math.min(Number(req.query.limit) || 100, 500);
     
-    // Fetch audit logs from control_panel_audit table
-    const result = await pool.query(
-      `SELECT id, admin_id, action, payload, created_at 
+    // Fetch audit logs from both control_panel_audit (for account operations) and settings_audit (for user operations)
+    // control_panel_audit: operations on admin accounts (create, update, delete accounts)
+    // settings_audit: operations on users (create, update, delete, enable/disable users)
+    
+    const controlPanelResult = await pool.query(
+      `SELECT id, admin_id, action, payload, created_at, 'control_panel' as source
        FROM control_panel_audit 
-       WHERE payload->>'target_admin_id' = $1 OR admin_id = $2
+       WHERE (payload->>'target_id')::int = $1 OR admin_id = $2
        ORDER BY created_at DESC 
        LIMIT $3`,
-      [String(id), id, limit]
+      [id, id, limit]
     );
     
-    res.json(result.rows || []);
+    // Also fetch user operations performed by this admin
+    const settingsResult = await pool.query(
+      `SELECT id, admin_id, settings_key as action, before_data as payload, created_at, 'settings' as source
+       FROM settings_audit 
+       WHERE admin_id = $1 AND settings_key = 'users'
+       ORDER BY created_at DESC 
+       LIMIT $2`,
+      [id, limit]
+    );
+    
+    // Combine and sort by created_at
+    const allLogs = [...controlPanelResult.rows, ...settingsResult.rows]
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      .slice(0, limit);
+    
+    res.json(allLogs);
   } catch (err) {
     console.error('get activity logs failed:', err && err.message ? err.message : err);
     res.status(500).json({ msg: 'Server Error' });
