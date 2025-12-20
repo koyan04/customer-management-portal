@@ -335,9 +335,9 @@ function AdminPanelPage() {
                   <span className="avatar-initials">{initials}</span>
                 )}
               </div>
-              <div className="account-info" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
-                <div className="account-display" style={{ textAlign: 'center', width: '100%' }}>
-                  {a.display_name || a.username}
+              <div className="account-info">
+                <div className="account-display" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <span>{a.display_name || a.username}</span>
                   {/* Online/Offline indicator */}
                   {a.is_online !== undefined && (
                     <span 
@@ -348,7 +348,7 @@ function AdminPanelPage() {
                     </span>
                   )}
                 </div>
-                  <div className="account-role">{a.role === 'SERVER_ADMIN' ? 'SERVER ADMIN' : a.role}</div>
+                  <div className="account-role" style={{ textAlign: 'center' }}>{a.role === 'SERVER_ADMIN' ? 'SERVER ADMIN' : a.role}</div>
                   {/* Last seen pill under role - show only when offline */}
                   {!a.is_online && a.last_seen && (
                     <div
@@ -370,13 +370,13 @@ function AdminPanelPage() {
               </div>
               {/* Action buttons aligned at bottom-right */}
               { (user && (user.user?.role || user.role) === 'ADMIN') && (
-                <div className="account-actions" style={{ position: 'absolute', bottom: '0.5rem', right: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                <div className="account-actions" style={{ position: 'absolute', bottom: '0.75rem', right: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
                   <button
                     title={`Activity logs for ${a.display_name || a.username}`}
                     aria-label={`Activity logs for ${a.display_name || a.username}`}
                     className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); fetchActivityLogs(a); }}
-                    style={{ fontSize: '0.85rem', padding: '0.35rem' }}
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   >
                     <FaHistory />
                   </button>
@@ -385,7 +385,7 @@ function AdminPanelPage() {
                     aria-label={`Info for ${a.display_name || a.username}`}
                     className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); openInfo(a); }}
-                    style={{ fontSize: '0.85rem', padding: '0.35rem' }}
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   >
                     <FaInfoCircle />
                   </button>
@@ -394,7 +394,7 @@ function AdminPanelPage() {
                     aria-label={`Delete ${a.display_name || a.username}`}
                     className="icon-btn delete-icon small"
                     onClick={(e) => { e.stopPropagation(); handleDelete(a); }}
-                    style={{ fontSize: '0.85rem', padding: '0.35rem' }}
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   >
                     <FaTrashAlt />
                   </button>
