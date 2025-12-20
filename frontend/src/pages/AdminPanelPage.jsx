@@ -374,14 +374,14 @@ function AdminPanelPage() {
               </div>
               {/* Action buttons aligned at bottom-right */}
               { (user && (user.user?.role || user.role) === 'ADMIN') && (
-                <div style={{ position: 'absolute', bottom: '10px', right: '10px', display: 'flex', flexDirection: 'column', gap: '8px', zIndex: 10 }}>
+                <div style={{ position: 'absolute', bottom: '10px', right: '10px', display: 'flex', flexDirection: 'column', gap: '4px', zIndex: 10 }}>
                   <button
                     title={`Activity logs for ${a.display_name || a.username}`}
                     aria-label={`Activity logs for ${a.display_name || a.username}`}
                     onClick={(e) => { e.stopPropagation(); fetchActivityLogs(a); }}
                     style={{ 
-                      width: '48px', 
-                      height: '48px', 
+                      width: '24px', 
+                      height: '24px', 
                       borderRadius: '50%', 
                       border: 'none', 
                       backgroundColor: '#7c3aed', 
@@ -390,17 +390,17 @@ function AdminPanelPage() {
                       alignItems: 'center', 
                       justifyContent: 'center',
                       cursor: 'pointer',
-                      fontSize: '1.1rem',
-                      boxShadow: '0 2px 8px rgba(124, 58, 237, 0.3)',
+                      fontSize: '0.65rem',
+                      boxShadow: '0 1px 4px rgba(124, 58, 237, 0.3)',
                       transition: 'transform 0.2s, box-shadow 0.2s'
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.transform = 'scale(1.05)';
-                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(124, 58, 237, 0.4)';
+                      e.currentTarget.style.boxShadow = '0 2px 6px rgba(124, 58, 237, 0.4)';
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.transform = 'scale(1)';
-                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(124, 58, 237, 0.3)';
+                      e.currentTarget.style.boxShadow = '0 1px 4px rgba(124, 58, 237, 0.3)';
                     }}
                   >
                     <FaHistory />
@@ -410,8 +410,8 @@ function AdminPanelPage() {
                     aria-label={`Info for ${a.display_name || a.username}`}
                     onClick={(e) => { e.stopPropagation(); openInfo(a); }}
                     style={{ 
-                      width: '48px', 
-                      height: '48px', 
+                      width: '24px', 
+                      height: '24px', 
                       borderRadius: '50%', 
                       border: 'none', 
                       backgroundColor: '#3b82f6', 
@@ -420,17 +420,17 @@ function AdminPanelPage() {
                       alignItems: 'center', 
                       justifyContent: 'center',
                       cursor: 'pointer',
-                      fontSize: '1.1rem',
-                      boxShadow: '0 2px 8px rgba(59, 130, 246, 0.3)',
+                      fontSize: '0.65rem',
+                      boxShadow: '0 1px 4px rgba(59, 130, 246, 0.3)',
                       transition: 'transform 0.2s, box-shadow 0.2s'
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.transform = 'scale(1.05)';
-                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.4)';
+                      e.currentTarget.style.boxShadow = '0 2px 6px rgba(59, 130, 246, 0.4)';
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.transform = 'scale(1)';
-                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.3)';
+                      e.currentTarget.style.boxShadow = '0 1px 4px rgba(59, 130, 246, 0.3)';
                     }}
                   >
                     <FaInfoCircle />
@@ -440,8 +440,8 @@ function AdminPanelPage() {
                     aria-label={`Delete ${a.display_name || a.username}`}
                     onClick={(e) => { e.stopPropagation(); handleDelete(a); }}
                     style={{ 
-                      width: '48px', 
-                      height: '48px', 
+                      width: '24px', 
+                      height: '24px', 
                       borderRadius: '50%', 
                       border: 'none', 
                       backgroundColor: '#ef4444', 
@@ -450,17 +450,17 @@ function AdminPanelPage() {
                       alignItems: 'center', 
                       justifyContent: 'center',
                       cursor: 'pointer',
-                      fontSize: '1.1rem',
-                      boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)',
+                      fontSize: '0.65rem',
+                      boxShadow: '0 1px 4px rgba(239, 68, 68, 0.3)',
                       transition: 'transform 0.2s, box-shadow 0.2s'
                     }}
                     onMouseEnter={(e) => {
                       e.currentTarget.style.transform = 'scale(1.05)';
-                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.4)';
+                      e.currentTarget.style.boxShadow = '0 2px 6px rgba(239, 68, 68, 0.4)';
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.transform = 'scale(1)';
-                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(239, 68, 68, 0.3)';
+                      e.currentTarget.style.boxShadow = '0 1px 4px rgba(239, 68, 68, 0.3)';
                     }}
                   >
                     <FaTrashAlt />
