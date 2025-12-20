@@ -451,7 +451,20 @@ router.post('/', authenticateToken, isServerAdminOrGlobal(), async (req, res) =>
       'INSERT INTO users (account_name, service_type, contact, expire_date, total_devices, data_limit_gb, server_id, remark, display_pos) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *',
       [account_name, service_type, contact, expire_date, total_devices, data_limit_gb, server_id, remark, nextPos]
     );
-    res.status(201).json(newUser.rows[0]);
+    
+    const createdUser = newUser.rows[0];
+    
+    // Write audit entry (non-fatal)
+    try {
+      await pool.query(
+        'INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)',
+        [req.user?.id || null, 'users', 'CREATE', null, JSON.stringify(createdUser)]
+      );
+    } catch (ae) {
+      console.warn('Failed to record audit for user creation', ae && ae.message ? ae.message : ae);
+    }
+    
+    res.status(201).json(createdUser);
   } catch (err) {
     console.error(err.message);
     res.status(500).send('Server Error');
@@ -539,7 +552,30 @@ router.patch('/:userId/enabled', authenticateToken, attachUserServerId, isServer
 router.delete('/:userId', authenticateToken, attachUserServerId, isServerAdminOrGlobal(), async (req, res) => {
   try {
     const { userId } = req.params;
+    
+    // Fetch user info before deleting for audit log
+    let beforeRow = null;
+    try {
+      const b = await pool.query('SELECT * FROM users WHERE id = $1', [userId]);
+      if (b && b.rows && b.rows.length) beforeRow = b.rows[0];
+    } catch (e) {
+      console.warn('Failed to read user before delete for audit', e && e.message ? e.message : e);
+    }
+    
     await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+    
+    // Write audit entry (non-fatal)
+    if (beforeRow) {
+      try {
+        await pool.query(
+          'INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)',
+          [req.user?.id || null, 'users', 'DELETE', JSON.stringify(beforeRow), null]
+        );
+      } catch (ae) {
+        console.warn('Failed to record audit for user deletion', ae && ae.message ? ae.message : ae);
+      }
+    }
+    
     res.json({ msg: 'User deleted' });
   } catch (err) {
     console.error(err.message);

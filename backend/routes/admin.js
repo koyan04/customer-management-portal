@@ -157,6 +157,24 @@ router.post('/accounts', authenticateToken, isAdmin, upload.single('avatar'), as
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
     const { rows } = await pool.query('INSERT INTO admins (display_name, username, password_hash, role, avatar_url) VALUES ($1,$2,$3,$4,$5) RETURNING id, display_name, username, role, avatar_url', [display_name, username, password_hash, role, avatar_url]);
+    
+    // Log to control_panel_audit
+    const adminId = req.user && req.user.id;
+    const newAccount = rows[0];
+    try {
+      await pool.query(
+        'INSERT INTO control_panel_audit (admin_id, action, payload) VALUES ($1, $2, $3)',
+        [adminId, 'create_account', { 
+          target_id: newAccount.id, 
+          username: newAccount.username, 
+          display_name: newAccount.display_name,
+          role: newAccount.role 
+        }]
+      );
+    } catch (auditErr) {
+      console.error('Failed to log account creation to audit:', auditErr);
+    }
+    
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error('Error creating admin account:', err && err.message ? err.message : err);
@@ -233,6 +251,30 @@ router.put('/accounts/:id', authenticateToken, isAdmin, upload.single('avatar'),
   console.log('[PUT /accounts/:id] params:', params);
     try {
       const { rows } = await pool.query(q, params);
+      
+      // Log to control_panel_audit
+      const adminId = req.user && req.user.id;
+      const updatedAccount = rows[0];
+      const changes = {};
+      if (display_name !== null) changes.display_name = display_name;
+      if (role !== null) changes.role = role;
+      if (username !== null) changes.username = username;
+      if (avatar_url !== null) changes.avatar_url = avatar_url;
+      if (clearRequested) changes.avatar_cleared = true;
+      
+      try {
+        await pool.query(
+          'INSERT INTO control_panel_audit (admin_id, action, payload) VALUES ($1, $2, $3)',
+          [adminId, 'update_account', {
+            target_id: updatedAccount.id,
+            username: updatedAccount.username,
+            changes: changes
+          }]
+        );
+      } catch (auditErr) {
+        console.error('Failed to log account update to audit:', auditErr);
+      }
+      
       res.json(rows[0]);
     } catch (dbErr) {
       // handle unique constraint violation on username
@@ -248,7 +290,31 @@ router.put('/accounts/:id', authenticateToken, isAdmin, upload.single('avatar'),
 router.delete('/accounts/:id', authenticateToken, isAdmin, async (req, res) => {
   try {
     const { id } = req.params;
+    
+    // Get account info before deleting for audit log
+    const accountInfo = await pool.query('SELECT id, username, display_name, role FROM admins WHERE id = $1', [id]);
+    const account = accountInfo.rows && accountInfo.rows[0] ? accountInfo.rows[0] : null;
+    
     await pool.query('DELETE FROM admins WHERE id = $1', [id]);
+    
+    // Log to control_panel_audit
+    if (account) {
+      const adminId = req.user && req.user.id;
+      try {
+        await pool.query(
+          'INSERT INTO control_panel_audit (admin_id, action, payload) VALUES ($1, $2, $3)',
+          [adminId, 'delete_account', {
+            target_id: account.id,
+            username: account.username,
+            display_name: account.display_name,
+            role: account.role
+          }]
+        );
+      } catch (auditErr) {
+        console.error('Failed to log account deletion to audit:', auditErr);
+      }
+    }
+    
     res.json({ msg: 'Account deleted' });
   } catch (err) { console.error(err); res.status(500).send('Server Error'); }
 });
