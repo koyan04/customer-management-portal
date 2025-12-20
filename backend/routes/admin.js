@@ -1420,7 +1420,49 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-    // app_settings: upsert by settings_key (take data as-is; secrets may need re-entry separately)
+    
+    // OVERWRITE MODE: Delete existing data first, then insert fresh data
+    // Delete in correct order to respect foreign key constraints
+    console.log('Snapshot restore: clearing existing data (overwrite mode)...');
+    
+    // Delete users first (depends on servers via server_id)
+    if (Array.isArray(data.users) && data.users.length > 0) {
+      await client.query('DELETE FROM users');
+      console.log('Deleted all users');
+    }
+    
+    // Delete server_keys (depends on servers via server_id)
+    if (Array.isArray(data.server_keys) && data.server_keys.length > 0) {
+      await client.query('DELETE FROM server_keys');
+      console.log('Deleted all server_keys');
+    }
+    
+    // Delete viewer/editor permissions
+    try {
+      await client.query('DELETE FROM viewer_server_permissions');
+      console.log('Deleted all viewer_server_permissions');
+    } catch (e) {
+      // Table might not exist or be named differently
+      try {
+        await client.query('DELETE FROM editor_server_permissions');
+      } catch (_) {}
+    }
+    
+    // Delete server admin permissions
+    try {
+      await client.query('DELETE FROM server_admin_permissions');
+      console.log('Deleted all server_admin_permissions');
+    } catch (_) {}
+    
+    // Delete servers
+    if (Array.isArray(data.servers) && data.servers.length > 0) {
+      await client.query('DELETE FROM servers');
+      console.log('Deleted all servers');
+    }
+    
+    console.log('Starting data insertion...');
+    
+    // app_settings: Still use merge for safety (critical system settings)
     if (Array.isArray(data.app_settings)) {
       for (const s of data.app_settings) {
         const key = s.settings_key || s.key || s.settingsKey;
@@ -1439,64 +1481,48 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
         try { await warnIfKeyDrop(client, key, current, toStore); } catch (_) {}
       }
     }
-    // servers: upsert by id (if present) else by name
+    
+    // servers: Direct insert (tables cleared above)
     if (Array.isArray(data.servers)) {
       for (const s of data.servers) {
         const name = s.server_name || s.name;
         if (!name) continue;
         await client.query(
           `INSERT INTO servers (id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8, COALESCE($9, now()))
-           ON CONFLICT (id) DO UPDATE SET server_name = EXCLUDED.server_name, ip_address = EXCLUDED.ip_address, domain_name = EXCLUDED.domain_name, owner = EXCLUDED.owner, service_type = EXCLUDED.service_type, api_key = EXCLUDED.api_key, display_pos = EXCLUDED.display_pos`,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8, COALESCE($9, now()))`,
           [s.id || null, name, s.ip_address || null, s.domain_name || null, s.owner || null, s.service_type || null, s.api_key || null, s.display_pos || null, s.created_at || null]
         );
       }
     }
-    // server_keys: upsert by id
+    
+    // server_keys: Direct insert
     if (Array.isArray(data.server_keys)) {
       for (const k of data.server_keys) {
         if (!k.server_id) continue;
         await client.query(
           `INSERT INTO server_keys (id, server_id, username, description, original_key, generated_key, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7, now()))
-           ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, username = EXCLUDED.username, description = EXCLUDED.description, original_key = EXCLUDED.original_key, generated_key = EXCLUDED.generated_key`,
+           VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7, now()))`,
           [k.id || null, k.server_id, k.username || null, k.description || null, k.original_key || null, k.generated_key || null, k.created_at || null]
         );
       }
     }
-    // users: upsert by id (all fields) - handle both id and (server_id, account_name) conflicts
+    
+    // users: Direct insert (no conflict handling needed since table is cleared)
     if (Array.isArray(data.users)) {
       for (const u of data.users) {
-        if (!u.id) continue;
-        // First try to find existing user by server_id + account_name
-        const existing = await client.query(
-          'SELECT id FROM users WHERE server_id = $1 AND account_name = $2',
-          [u.server_id, u.account_name]
+        if (!u.server_id || !u.account_name) continue;
+        await client.query(
+          `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, COALESCE($12, now()))`,
+          [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
         );
-        const existingId = existing.rows && existing.rows[0] ? existing.rows[0].id : null;
-        
-        if (existingId && existingId !== u.id) {
-          // User exists with different ID - update the existing one instead
-          await client.query(
-            `UPDATE users SET service_type = $1, contact = $2, expire_date = $3, total_devices = $4, data_limit_gb = $5, remark = $6, display_pos = $7, enabled = $8
-             WHERE id = $9`,
-            [u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, existingId]
-          );
-        } else {
-          // Insert or update by ID
-          await client.query(
-            `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, COALESCE($12, now()))
-             ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, account_name = EXCLUDED.account_name, service_type = EXCLUDED.service_type, contact = EXCLUDED.contact, expire_date = EXCLUDED.expire_date, total_devices = EXCLUDED.total_devices, data_limit_gb = EXCLUDED.data_limit_gb, remark = EXCLUDED.remark, display_pos = EXCLUDED.display_pos, enabled = EXCLUDED.enabled`,
-            [u.id, u.server_id || null, u.account_name || null, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
-          );
-        }
       }
     }
+    
     await client.query('COMMIT');
     // refresh general settings cache after snapshot restore
     try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
-    return res.json({ msg: 'Snapshot restored (merge)', counts: {
+    return res.json({ msg: 'Snapshot restored (overwrite)', counts: {
       settings: Array.isArray(data.app_settings) ? data.app_settings.length : 0,
       servers: Array.isArray(data.servers) ? data.servers.length : 0,
       server_keys: Array.isArray(data.server_keys) ? data.server_keys.length : 0,
@@ -1547,40 +1573,76 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      // servers
+      
+      // OVERWRITE MODE: Delete existing data first
+      console.log('DB restore: clearing existing data (overwrite mode)...');
+      
+      // Delete users first (foreign key dependency)
+      if (Array.isArray(payload.users) && payload.users.length > 0) {
+        await client.query('DELETE FROM users');
+        console.log('Deleted all users');
+      }
+      
+      // Delete server_keys
+      if (Array.isArray(payload.server_keys) && payload.server_keys.length > 0) {
+        await client.query('DELETE FROM server_keys');
+        console.log('Deleted all server_keys');
+      }
+      
+      // Delete permissions
+      if (Array.isArray(payload.viewer_server_permissions)) {
+        try {
+          await client.query('DELETE FROM viewer_server_permissions');
+        } catch (e) {
+          try { await client.query('DELETE FROM editor_server_permissions'); } catch (_) {}
+        }
+      }
+      if (Array.isArray(payload.server_admin_permissions)) {
+        try {
+          await client.query('DELETE FROM server_admin_permissions');
+        } catch (_) {}
+      }
+      
+      // Delete servers
+      if (Array.isArray(payload.servers) && payload.servers.length > 0) {
+        await client.query('DELETE FROM servers');
+        console.log('Deleted all servers');
+      }
+      
+      console.log('Starting data insertion...');
+      
+      // servers: Direct insert (no conflicts after delete)
       if (Array.isArray(payload.servers)) {
         for (const s of payload.servers) {
           const name = s.server_name || s.name;
           if (!name) continue;
           await client.query(
             `INSERT INTO servers (id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9, now()))
-             ON CONFLICT (id) DO UPDATE SET server_name = EXCLUDED.server_name, ip_address = EXCLUDED.ip_address, domain_name = EXCLUDED.domain_name, owner = EXCLUDED.owner, service_type = EXCLUDED.service_type, api_key = EXCLUDED.api_key, display_pos = EXCLUDED.display_pos`,
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9, now()))`,
             [s.id || null, name, s.ip_address || null, s.domain_name || null, s.owner || null, s.service_type || null, s.api_key || null, s.display_pos || null, s.created_at || null]
           );
         }
       }
-      // server_keys
+      
+      // server_keys: Direct insert
       if (Array.isArray(payload.server_keys)) {
         for (const k of payload.server_keys) {
           if (!k.server_id) continue;
           await client.query(
             `INSERT INTO server_keys (id, server_id, username, description, original_key, generated_key, created_at)
-             VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7, now()))
-             ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, username = EXCLUDED.username, description = EXCLUDED.description, original_key = EXCLUDED.original_key, generated_key = EXCLUDED.generated_key`,
+             VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7, now()))`,
             [k.id || null, k.server_id, k.username || null, k.description || null, k.original_key || null, k.generated_key || null, k.created_at || null]
           );
         }
       }
-      // users
+      // users: Direct insert
       if (Array.isArray(payload.users)) {
         for (const u of payload.users) {
-          if (!u.id) continue;
+          if (!u.server_id || !u.account_name) continue;
           await client.query(
             `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12, now()))
-             ON CONFLICT (id) DO UPDATE SET server_id = EXCLUDED.server_id, account_name = EXCLUDED.account_name, service_type = EXCLUDED.service_type, contact = EXCLUDED.contact, expire_date = EXCLUDED.expire_date, total_devices = EXCLUDED.total_devices, data_limit_gb = EXCLUDED.data_limit_gb, remark = EXCLUDED.remark, display_pos = EXCLUDED.display_pos, enabled = EXCLUDED.enabled`,
-            [u.id, u.server_id || null, u.account_name || null, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12, now()))`,
+            [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
           );
         }
       }
@@ -1615,11 +1677,11 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           try { await warnIfKeyDrop(client, key, current, toStore); } catch (_) {}
         }
       }
-      // permissions
+      // permissions: Direct insert
       if (Array.isArray(payload.viewer_server_permissions)) {
         for (const p of payload.viewer_server_permissions) {
           await client.query(
-            `INSERT INTO viewer_server_permissions (editor_id, server_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+            `INSERT INTO viewer_server_permissions (editor_id, server_id) VALUES ($1,$2)`,
             [p.editor_id, p.server_id]
           );
         }
@@ -1627,7 +1689,7 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
       if (Array.isArray(payload.server_admin_permissions)) {
         for (const p of payload.server_admin_permissions) {
           await client.query(
-            `INSERT INTO server_admin_permissions (admin_id, server_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+            `INSERT INTO server_admin_permissions (admin_id, server_id) VALUES ($1,$2)`,
             [p.admin_id, p.server_id]
           );
         }
@@ -1635,7 +1697,7 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
       await client.query('COMMIT');
       // refresh general settings cache after DB restore
       try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
-      return res.json({ msg: 'Database restored (merge)',
+      return res.json({ msg: 'Database restored (overwrite)',
         counts: {
           servers: payload.servers ? payload.servers.length : 0,
           server_keys: payload.server_keys ? payload.server_keys.length : 0,
