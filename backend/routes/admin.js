@@ -722,6 +722,9 @@ router.get('/financial', authenticateToken, async (req, res) => {
     console.log('[DEBUG] Executing SQL with params:', queryParams);
 
   const { rows } = await pool.query(q, queryParams);
+  
+    console.log('[DEBUG] Query returned', rows.length, 'rows');
+    console.log('[DEBUG] Sample rows:', rows.slice(0, 3));
 
     // organize rows by month
     const monthsMap = new Map();
@@ -763,6 +766,8 @@ router.get('/financial', authenticateToken, async (req, res) => {
     }
 
     const results = Array.from(monthsMap.values());
+    console.log('[DEBUG] Sending', results.length, 'months to frontend');
+    console.log('[DEBUG] Sample month data:', results.slice(-2).map(m => ({ month: m.month, counts: m.counts, revenue: m.revenue_cents })));
     // compute year totals for current year
     const now = new Date();
     const thisYear = now.getFullYear();

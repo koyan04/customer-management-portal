@@ -63,6 +63,7 @@ export default function FinancialPage() {
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
         const params = selectedUserId ? { userId: selectedUserId } : {};
+        console.log('[DEBUG FinancialPage] Fetching with params:', params, 'selectedUserId:', selectedUserId);
         const res = await axios.get('/api/admin/financial', { headers, params, validateStatus: () => true });
         if (res.status !== 200) throw new Error(res.data && res.data.msg ? res.data.msg : `Status ${res.status}`);
         if (!mounted) return;
