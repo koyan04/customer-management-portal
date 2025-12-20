@@ -178,10 +178,16 @@ function AdminPanelPage() {
   const fetchActivityLogs = async (account) => {
     setLogsModal({ open: true, account, logs: [], loading: true });
     try {
-      const res = await axios.get(`/api/admin/accounts/${account.id}/activity-logs?limit=50`, {
+      const res = await axios.get(`/api/admin/accounts/${account.id}/activity-logs?limit=100`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setLogsModal(prev => ({ ...prev, logs: res.data || [], loading: false }));
+      // Filter to only show CREATE, UPDATE, DELETE, DISABLE, and TRANSFER actions
+      const filteredLogs = (res.data || []).filter(log => {
+        const action = (log.action || '').toUpperCase();
+        return action === 'CREATE' || action === 'UPDATE' || action === 'DELETE' || 
+               action === 'DISABLE' || action === 'ENABLE' || action.includes('TRANSFER');
+      });
+      setLogsModal(prev => ({ ...prev, logs: filteredLogs, loading: false }));
     } catch (err) {
       console.error('Failed to fetch activity logs:', err);
       setLogsModal(prev => ({ ...prev, logs: [], loading: false }));
@@ -330,7 +336,7 @@ function AdminPanelPage() {
                 )}
               </div>
               <div className="account-info">
-                <div className="account-display">
+                <div className="account-display" style={{ textAlign: 'center', width: '100%' }}>
                   {a.display_name || a.username}
                   {/* Online/Offline indicator */}
                   {a.is_online !== undefined && (
@@ -362,23 +368,24 @@ function AdminPanelPage() {
                     </div>
                   )}
               </div>
-              {/* Delete icon positioned at lower-right of the card */}
+              {/* Action buttons aligned at bottom-right */}
               { (user && (user.user?.role || user.role) === 'ADMIN') && (
-                <>
+                <div className="account-actions" style={{ position: 'absolute', bottom: '0.5rem', right: '0.5rem', display: 'flex', gap: '0.25rem' }}>
                   <button
                     title={`Activity logs for ${a.display_name || a.username}`}
                     aria-label={`Activity logs for ${a.display_name || a.username}`}
-                    className="icon-btn info-icon"
+                    className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); fetchActivityLogs(a); }}
-                    style={{ right: '80px' }}
+                    style={{ fontSize: '0.85rem', padding: '0.35rem' }}
                   >
                     <FaHistory />
                   </button>
                   <button
                     title={`Info for ${a.display_name || a.username}`}
                     aria-label={`Info for ${a.display_name || a.username}`}
-                    className="icon-btn info-icon"
+                    className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); openInfo(a); }}
+                    style={{ fontSize: '0.85rem', padding: '0.35rem' }}
                   >
                     <FaInfoCircle />
                   </button>
@@ -387,10 +394,11 @@ function AdminPanelPage() {
                     aria-label={`Delete ${a.display_name || a.username}`}
                     className="icon-btn delete-icon small"
                     onClick={(e) => { e.stopPropagation(); handleDelete(a); }}
+                    style={{ fontSize: '0.85rem', padding: '0.35rem' }}
                   >
                     <FaTrashAlt />
                   </button>
-                </>
+                </div>
               ) }
             </motion.div>
           );
