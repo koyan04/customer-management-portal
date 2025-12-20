@@ -370,13 +370,13 @@ function AdminPanelPage() {
               </div>
               {/* Action buttons aligned at bottom-right */}
               { (user && (user.user?.role || user.role) === 'ADMIN') && (
-                <div className="account-actions" style={{ position: 'absolute', bottom: '0.75rem', right: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                <div className="account-actions" style={{ position: 'absolute', bottom: 'auto', top: '50%', transform: 'translateY(-50%)', right: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
                   <button
                     title={`Activity logs for ${a.display_name || a.username}`}
                     aria-label={`Activity logs for ${a.display_name || a.username}`}
                     className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); fetchActivityLogs(a); }}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    style={{ fontSize: '1rem', padding: '0.45rem', minWidth: '34px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px' }}
                   >
                     <FaHistory />
                   </button>
@@ -385,7 +385,7 @@ function AdminPanelPage() {
                     aria-label={`Info for ${a.display_name || a.username}`}
                     className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); openInfo(a); }}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    style={{ fontSize: '1rem', padding: '0.45rem', minWidth: '34px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px' }}
                   >
                     <FaInfoCircle />
                   </button>
@@ -394,7 +394,7 @@ function AdminPanelPage() {
                     aria-label={`Delete ${a.display_name || a.username}`}
                     className="icon-btn delete-icon small"
                     onClick={(e) => { e.stopPropagation(); handleDelete(a); }}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    style={{ fontSize: '1rem', padding: '0.45rem', minWidth: '34px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '6px' }}
                   >
                     <FaTrashAlt />
                   </button>
