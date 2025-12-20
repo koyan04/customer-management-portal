@@ -335,7 +335,7 @@ function AdminPanelPage() {
                   <span className="avatar-initials">{initials}</span>
                 )}
               </div>
-              <div className="account-info">
+              <div className="account-info" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
                 <div className="account-display" style={{ textAlign: 'center', width: '100%' }}>
                   {a.display_name || a.username}
                   {/* Online/Offline indicator */}
@@ -370,7 +370,7 @@ function AdminPanelPage() {
               </div>
               {/* Action buttons aligned at bottom-right */}
               { (user && (user.user?.role || user.role) === 'ADMIN') && (
-                <div className="account-actions" style={{ position: 'absolute', bottom: '0.5rem', right: '0.5rem', display: 'flex', gap: '0.25rem' }}>
+                <div className="account-actions" style={{ position: 'absolute', bottom: '0.5rem', right: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                   <button
                     title={`Activity logs for ${a.display_name || a.username}`}
                     aria-label={`Activity logs for ${a.display_name || a.username}`}
