@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import AdminEditorForm from '../components/AdminEditorForm.jsx';
-import { FaTrashAlt, FaUserPlus, FaTools, FaSearch, FaInfoCircle, FaHistory, FaSync } from 'react-icons/fa';
+import { FaTrashAlt, FaUserPlus, FaTools, FaSearch, FaInfoCircle, FaHistory } from 'react-icons/fa';
 import MatviewStatus from '../components/MatviewStatus.jsx';
 import Modal from '../components/Modal.jsx';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -372,24 +372,96 @@ function AdminPanelPage() {
                     </div>
                   )}
               </div>
-              {/* Action buttons aligned at top-right */}
+              {/* Action buttons aligned at bottom-right */}
               { (user && (user.user?.role || user.role) === 'ADMIN') && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', position: 'absolute', right: '10px', top: '10px', zIndex: 10 }}>
+                <div style={{ position: 'absolute', bottom: '10px', right: '10px', display: 'flex', flexDirection: 'column', gap: '8px', zIndex: 10 }}>
                   <button
-                    title={`Refresh ${a.display_name || a.username}`}
-                    aria-label={`Refresh ${a.display_name || a.username}`}
-                    className="icon-btn small"
-                    onClick={(e) => { e.stopPropagation(); openInfo(a); }}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '32px', width: '32px', height: '32px' }}
+                    title={`Activity logs for ${a.display_name || a.username}`}
+                    aria-label={`Activity logs for ${a.display_name || a.username}`}
+                    onClick={(e) => { e.stopPropagation(); fetchActivityLogs(a); }}
+                    style={{ 
+                      width: '48px', 
+                      height: '48px', 
+                      borderRadius: '50%', 
+                      border: 'none', 
+                      backgroundColor: '#7c3aed', 
+                      color: 'white',
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      fontSize: '1.1rem',
+                      boxShadow: '0 2px 8px rgba(124, 58, 237, 0.3)',
+                      transition: 'transform 0.2s, box-shadow 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'scale(1.05)';
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(124, 58, 237, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'scale(1)';
+                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(124, 58, 237, 0.3)';
+                    }}
                   >
-                    <FaSync />
+                    <FaHistory />
+                  </button>
+                  <button
+                    title={`Info for ${a.display_name || a.username}`}
+                    aria-label={`Info for ${a.display_name || a.username}`}
+                    onClick={(e) => { e.stopPropagation(); openInfo(a); }}
+                    style={{ 
+                      width: '48px', 
+                      height: '48px', 
+                      borderRadius: '50%', 
+                      border: 'none', 
+                      backgroundColor: '#3b82f6', 
+                      color: 'white',
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      fontSize: '1.1rem',
+                      boxShadow: '0 2px 8px rgba(59, 130, 246, 0.3)',
+                      transition: 'transform 0.2s, box-shadow 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'scale(1.05)';
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(59, 130, 246, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'scale(1)';
+                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(59, 130, 246, 0.3)';
+                    }}
+                  >
+                    <FaInfoCircle />
                   </button>
                   <button
                     title={`Delete ${a.display_name || a.username}`}
                     aria-label={`Delete ${a.display_name || a.username}`}
-                    className="icon-btn delete-icon small"
                     onClick={(e) => { e.stopPropagation(); handleDelete(a); }}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '32px', width: '32px', height: '32px' }}
+                    style={{ 
+                      width: '48px', 
+                      height: '48px', 
+                      borderRadius: '50%', 
+                      border: 'none', 
+                      backgroundColor: '#ef4444', 
+                      color: 'white',
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      cursor: 'pointer',
+                      fontSize: '1.1rem',
+                      boxShadow: '0 2px 8px rgba(239, 68, 68, 0.3)',
+                      transition: 'transform 0.2s, box-shadow 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'scale(1.05)';
+                      e.currentTarget.style.boxShadow = '0 4px 12px rgba(239, 68, 68, 0.4)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'scale(1)';
+                      e.currentTarget.style.boxShadow = '0 2px 8px rgba(239, 68, 68, 0.3)';
+                    }}
                   >
                     <FaTrashAlt />
                   </button>
