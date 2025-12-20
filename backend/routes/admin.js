@@ -679,26 +679,22 @@ router.get('/financial', authenticateToken, async (req, res) => {
 
     // Single SQL to aggregate counts per month and per service_type for the last 12 months,
     // plus fetch the most-recent `settings_audit.after_data` per month (LATERAL) so we can derive prices.
-    // Build filtered users subquery first
-    const filteredUsersClause = serverFilterClause ? `
-      WITH filtered_users AS (
-        SELECT * FROM users WHERE 1=1 ${serverFilterClause}
-      )
-    ` : '';
-    
-    const userTableName = serverFilterClause ? 'filtered_users' : 'users';
+    // Build proper WHERE clause for filtering
+    const userFilterWhere = serverFilterClause ? 'WHERE server_id = ANY($1::int[])' : '';
     
     const q = `
-      ${filteredUsersClause}
-      ${filteredUsersClause ? ',' : 'WITH'} months AS (
+      WITH months AS (
         SELECT generate_series(date_trunc('month', CURRENT_DATE) - interval '11 months', date_trunc('month', CURRENT_DATE), interval '1 month') AS month_start
+      ),
+      filtered_users AS (
+        SELECT * FROM users ${userFilterWhere}
       ),
       user_counts AS (
         SELECT m.month_start,
                COALESCE(u.service_type, '') AS service_type,
                COUNT(u.*)::int AS cnt
         FROM months m
-        LEFT JOIN ${userTableName} u
+        LEFT JOIN filtered_users u
           ON u.created_at <= (m.month_start + interval '1 month' - interval '1 ms')
           AND (u.expire_date IS NULL OR u.expire_date >= m.month_start)
           AND u.enabled = TRUE
