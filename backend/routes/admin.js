@@ -638,8 +638,7 @@ router.get('/financial', authenticateToken, async (req, res) => {
     const role = req.user && req.user.role;
     const targetUserId = req.query.userId ? Number(req.query.userId) : null;
     
-    try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] branch check, role=', role, 'userId=', req.user && req.user.id, 'targetUserId=', targetUserId); } catch (e) {}
-    let serverFilterClause = '';
+    try { console.log('[DEBUG GET /api/admin/financial] branch check, role=', role, 'userId=', req.user && req.user.id, 'targetUserId=', targetUserId); } catch (e) {}
     let queryParams = [];
     
     // If ADMIN is viewing as another user, apply that user's permissions
@@ -648,10 +647,13 @@ router.get('/financial', authenticateToken, async (req, res) => {
       const userRes = await pool.query('SELECT role FROM admins WHERE id = $1', [targetUserId]);
       const targetRole = userRes.rows && userRes.rows[0] ? userRes.rows[0].role : null;
       
+      console.log('[DEBUG] Target user role:', targetRole, 'for userId:', targetUserId);
+      
       if (targetRole === 'SERVER_ADMIN') {
         // Apply SERVER_ADMIN filtering for target user
         const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [targetUserId]);
         const sids = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
+        console.log('[DEBUG] SERVER_ADMIN server IDs for target user:', sids);
         if (sids.length > 0) {
           queryParams = [sids];
         }
@@ -660,19 +662,21 @@ router.get('/financial', authenticateToken, async (req, res) => {
     } else if (role && role !== 'ADMIN') {
       // only SERVER_ADMIN should reach here; others are forbidden
       if (role !== 'SERVER_ADMIN') {
-        try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] deny non-server-admin role=', role, 'userId=', req.user && req.user.id); } catch (e) {}
+        try { console.log('[DEBUG GET /api/admin/financial] deny non-server-admin role=', role, 'userId=', req.user && req.user.id); } catch (e) {}
         return res.status(403).json({ msg: 'Forbidden' });
       }
       // fetch assigned server ids
       const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [req.user.id]);
       const sids = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
-      try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] SERVER_ADMIN sids for user', req.user && req.user.id, '=', sids); } catch (e) {}
+      console.log('[DEBUG] SERVER_ADMIN sids for current user', req.user && req.user.id, '=', sids);
       if (!sids.length) {
-        try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] SERVER_ADMIN has no assigned servers, denying access userId=', req.user && req.user.id); } catch (e) {}
+        try { console.log('[DEBUG GET /api/admin/financial] SERVER_ADMIN has no assigned servers, denying access userId=', req.user && req.user.id); } catch (e) {}
         return res.status(403).json({ msg: 'Forbidden' });
       }
       queryParams = [sids];
     }
+    
+    console.log('[DEBUG] Final queryParams before SQL:', queryParams);
 
     // Single SQL to aggregate counts per month and per service_type for the last 12 months,
     // plus fetch the most-recent `settings_audit.after_data` per month (LATERAL) so we can derive prices.
@@ -684,6 +688,8 @@ router.get('/financial', authenticateToken, async (req, res) => {
     ` : '';
     
     const userTableName = queryParams.length > 0 ? 'filtered_users' : 'users';
+    
+    console.log('[DEBUG] Using table:', userTableName, 'with CTE:', !!filteredUsersClause);
     
     const q = `
       ${filteredUsersClause}
@@ -712,6 +718,8 @@ router.get('/financial', authenticateToken, async (req, res) => {
       LEFT JOIN user_counts uc ON uc.month_start = m.month_start
       ORDER BY m.month_start ASC, uc.service_type NULLS FIRST
     `;
+    
+    console.log('[DEBUG] Executing SQL with params:', queryParams);
 
   const { rows } = await pool.query(q, queryParams);
 
