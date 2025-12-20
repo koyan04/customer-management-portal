@@ -12,7 +12,9 @@ const { Pool: PgPool } = require('pg');
 const sharp = require('sharp');
 
 const uploadsPath = path.join(__dirname, '..', 'public', 'uploads');
+const logosPath = path.join(__dirname, '..', 'public', 'logos'); // Persistent logo storage
 try { if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true }); } catch(e) { console.warn('mkdir uploads failed', e && e.message ? e.message : e); }
+try { if (!fs.existsSync(logosPath)) fs.mkdirSync(logosPath, { recursive: true }); } catch(e) { console.warn('mkdir logos failed', e && e.message ? e.message : e); }
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsPath),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + Math.round(Math.random()*1e9) + path.extname(file.originalname))
@@ -164,7 +166,7 @@ router.post('/accounts', authenticateToken, isAdmin, upload.single('avatar'), as
     try {
       await pool.query(
         'INSERT INTO control_panel_audit (admin_id, action, payload) VALUES ($1, $2, $3)',
-        [adminId, 'create_account', { 
+        [adminId, 'CREATE_ACCOUNT', { 
           target_id: newAccount.id, 
           username: newAccount.username, 
           display_name: newAccount.display_name,
@@ -265,7 +267,7 @@ router.put('/accounts/:id', authenticateToken, isAdmin, upload.single('avatar'),
       try {
         await pool.query(
           'INSERT INTO control_panel_audit (admin_id, action, payload) VALUES ($1, $2, $3)',
-          [adminId, 'update_account', {
+          [adminId, 'UPDATE_ACCOUNT', {
             target_id: updatedAccount.id,
             username: updatedAccount.username,
             changes: changes
@@ -303,7 +305,7 @@ router.delete('/accounts/:id', authenticateToken, isAdmin, async (req, res) => {
       try {
         await pool.query(
           'INSERT INTO control_panel_audit (admin_id, action, payload) VALUES ($1, $2, $3)',
-          [adminId, 'delete_account', {
+          [adminId, 'DELETE_ACCOUNT', {
             target_id: account.id,
             username: account.username,
             display_name: account.display_name,
@@ -555,35 +557,80 @@ router.get('/accounts/:id/activity-logs', authenticateToken, isAdmin, async (req
     
     console.log('[activity-logs] Fetching logs for admin id:', id);
     
-    // Fetch audit logs from both control_panel_audit (for account operations) and settings_audit (for user operations)
-    // control_panel_audit: operations on admin accounts (create, update, delete accounts)
-    // settings_audit: operations on users (create, update, delete, enable/disable users)
-    
+    // Fetch account operations from control_panel_audit
     const controlPanelResult = await pool.query(
-      `SELECT id, admin_id, action, payload, created_at, 'control_panel' as source
-       FROM control_panel_audit 
-       WHERE (payload->>'target_id')::int = $1 OR admin_id = $2
-       ORDER BY created_at DESC 
+      `SELECT 
+         cpa.id, 
+         cpa.admin_id, 
+         cpa.action, 
+         cpa.payload, 
+         cpa.created_at,
+         'control_panel' as source,
+         a.username as target_username,
+         a.display_name as target_display_name
+       FROM control_panel_audit cpa
+       LEFT JOIN admins a ON (cpa.payload->>'target_id')::int = a.id
+       WHERE ((cpa.payload->>'target_id')::int = $1 OR cpa.admin_id = $2)
+         AND cpa.action NOT IN ('cert_status', 'CERT_CHECK', 'cert_check')
+       ORDER BY cpa.created_at DESC 
        LIMIT $3`,
       [id, id, limit]
     );
     
     console.log('[activity-logs] control_panel_audit rows:', controlPanelResult.rows.length);
     
-    // Also fetch user operations performed by this admin
+    // Fetch user operations from settings_audit with user and server details
     const settingsResult = await pool.query(
-      `SELECT id, admin_id, settings_key as action, before_data as payload, created_at, 'settings' as source
-       FROM settings_audit 
-       WHERE admin_id = $1 AND settings_key = 'users'
-       ORDER BY created_at DESC 
+      `SELECT 
+         sa.id,
+         sa.admin_id,
+         sa.action,
+         sa.settings_key,
+         sa.before_data,
+         sa.after_data,
+         sa.created_at,
+         'settings' as source,
+         COALESCE(
+           (sa.after_data->>'account_name'),
+           (sa.before_data->>'account_name')
+         ) as user_name,
+         COALESCE(
+           (sa.after_data->>'server_id')::int,
+           (sa.before_data->>'server_id')::int
+         ) as server_id,
+         s.server_name
+       FROM settings_audit sa
+       LEFT JOIN servers s ON COALESCE(
+           (sa.after_data->>'server_id')::int,
+           (sa.before_data->>'server_id')::int
+         ) = s.id
+       WHERE sa.admin_id = $1 AND sa.settings_key = 'users'
+       ORDER BY sa.created_at DESC 
        LIMIT $2`,
       [id, limit]
     );
     
     console.log('[activity-logs] settings_audit rows:', settingsResult.rows.length);
     
-    // Combine and sort by created_at
-    const allLogs = [...controlPanelResult.rows, ...settingsResult.rows]
+    // Transform the results into a consistent format
+    const allLogs = [
+      ...controlPanelResult.rows.map(row => ({
+        id: row.id,
+        action: row.action,
+        object: row.target_display_name || row.target_username || 'Account',
+        server: null,
+        created_at: row.created_at,
+        source: row.source
+      })),
+      ...settingsResult.rows.map(row => ({
+        id: row.id,
+        action: row.action,
+        object: row.user_name || 'User',
+        server: row.server_name || null,
+        created_at: row.created_at,
+        source: row.source
+      }))
+    ]
       .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
       .slice(0, limit);
     
@@ -592,6 +639,42 @@ router.get('/accounts/:id/activity-logs', authenticateToken, isAdmin, async (req
     res.json(allLogs);
   } catch (err) {
     console.error('get activity logs failed:', err && err.message ? err.message : err);
+    res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
+// Clear activity logs for an account
+router.delete('/accounts/:id/activity-logs', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log('[clear-activity-logs] Clearing logs for admin id:', id);
+    
+    // Delete from control_panel_audit
+    const controlPanelResult = await pool.query(
+      `DELETE FROM control_panel_audit 
+       WHERE (payload->>'target_id')::int = $1 OR admin_id = $2`,
+      [id, id]
+    );
+    
+    // Delete from settings_audit
+    const settingsResult = await pool.query(
+      `DELETE FROM settings_audit WHERE admin_id = $1 AND settings_key = 'users'`,
+      [id]
+    );
+    
+    console.log('[clear-activity-logs] Deleted', controlPanelResult.rowCount, 'control_panel_audit rows');
+    console.log('[clear-activity-logs] Deleted', settingsResult.rowCount, 'settings_audit rows');
+    
+    res.json({ 
+      msg: 'Activity logs cleared successfully',
+      deleted: {
+        control_panel: controlPanelResult.rowCount,
+        settings: settingsResult.rowCount
+      }
+    });
+  } catch (err) {
+    console.error('clear activity logs failed:', err && err.message ? err.message : err);
     res.status(500).json({ msg: 'Server Error' });
   }
 });
@@ -1003,11 +1086,11 @@ router.post('/settings/general/logo', authenticateToken, isAdmin, upload.single(
     // Server-side resize to 70x70 (1x) and 140x140 (2x) PNG for crisp display on high-DPI screens
     const inputPath = req.file.path;
   const ext = '.png';
-  const baseName = path.basename(req.file.filename, path.extname(req.file.filename));
+  const baseName = 'logo'; // Use consistent naming for easy persistence
   const outName1x = `${baseName}-70x70${ext}`;
   const outName2x = `${baseName}-140x140${ext}`;
-    const outPath1x = path.join(uploadsPath, outName1x);
-    const outPath2x = path.join(uploadsPath, outName2x);
+    const outPath1x = path.join(logosPath, outName1x); // Store in logos directory
+    const outPath2x = path.join(logosPath, outName2x);
     try {
       // Generate 2x first from original for maximum fidelity
       await sharp(inputPath)
@@ -1027,8 +1110,8 @@ router.post('/settings/general/logo', authenticateToken, isAdmin, upload.single(
       // use original file as 1x fallback
       try { fs.renameSync(inputPath, outPath1x); } catch (_) {}
     }
-    const logoUrl = `/uploads/${outName1x}`;
-    const logoUrl2x = fs.existsSync(outPath2x) ? `/uploads/${outName2x}` : undefined;
+    const logoUrl = `/logos/${outName1x}`; // Update URL to use logos path
+    const logoUrl2x = fs.existsSync(outPath2x) ? `/logos/${outName2x}` : undefined;
     const next = { ...current };
     next.logo_url = logoUrl;
     if (logoUrl2x) next.logo_url_2x = logoUrl2x; else delete next.logo_url_2x;
@@ -1046,16 +1129,7 @@ router.post('/settings/general/logo', authenticateToken, isAdmin, upload.single(
       );
     } catch (_) {}
 
-    // Cleanup old logo file if different
-    try {
-      const oldUrl = current && current.logo_url;
-      if (oldUrl && typeof oldUrl === 'string' && oldUrl.startsWith('/uploads/')) {
-        const oldPath = path.join(uploadsPath, path.basename(oldUrl));
-        if (fs.existsSync(oldPath) && path.dirname(oldPath) === uploadsPath) {
-          try { fs.unlinkSync(oldPath); } catch (_) {}
-        }
-      }
-    } catch (_) {}
+    // Note: We keep old logo files as backup - they're small and using consistent naming now
 
   const origin = req.protocol + '://' + req.get('host');
   const absolute = logoUrl.startsWith('http') ? logoUrl : (origin + logoUrl);
@@ -1085,11 +1159,11 @@ router.post('/settings/general/favicon', authenticateToken, isAdmin, upload.sing
     const current = rows && rows[0] ? (rows[0].data || {}) : {};
 
     const inputPath = req.file.path;
-    const baseName = path.basename(req.file.filename, path.extname(req.file.filename));
+    const baseName = 'favicon'; // Use consistent naming
     const outName32 = `${baseName}-32x32.png`;
     const outName180 = `${baseName}-180x180.png`;
-    const outPath32 = path.join(uploadsPath, outName32);
-    const outPath180 = path.join(uploadsPath, outName180);
+    const outPath32 = path.join(logosPath, outName32); // Store in logos directory
+    const outPath180 = path.join(logosPath, outName180);
     try {
       // Generate 180x180 (Apple touch icon) first for quality, then 32x32
       await sharp(inputPath)
@@ -1107,8 +1181,8 @@ router.post('/settings/general/favicon', authenticateToken, isAdmin, upload.sing
       try { if (!fs.existsSync(outPath32)) fs.renameSync(inputPath, outPath32); } catch (_) {}
     }
 
-    const faviconUrl = `/uploads/${outName32}`;
-    const touchUrl = fs.existsSync(outPath180) ? `/uploads/${outName180}` : undefined;
+    const faviconUrl = `/logos/${outName32}`; // Update URL to use logos path
+    const touchUrl = fs.existsSync(outPath180) ? `/logos/${outName180}` : undefined;
     const next = { ...current, favicon_url: faviconUrl };
     if (touchUrl) next.apple_touch_icon_url = touchUrl; else delete next.apple_touch_icon_url;
     await pool.query(
@@ -1125,16 +1199,7 @@ router.post('/settings/general/favicon', authenticateToken, isAdmin, upload.sing
       );
     } catch (_) {}
 
-    // Cleanup old favicon file if different
-    try {
-      const oldUrl = current && current.favicon_url;
-      if (oldUrl && typeof oldUrl === 'string' && oldUrl.startsWith('/uploads/')) {
-        const oldPath = path.join(uploadsPath, path.basename(oldUrl));
-        if (fs.existsSync(oldPath) && path.dirname(oldPath) === uploadsPath) {
-          try { fs.unlinkSync(oldPath); } catch (_) {}
-        }
-      }
-    } catch (_) {}
+    // Note: We keep old favicon files as backup - they're small and using consistent naming now
 
     const origin = req.protocol + '://' + req.get('host');
     const absolute = faviconUrl.startsWith('http') ? faviconUrl : (origin + faviconUrl);

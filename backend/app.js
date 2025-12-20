@@ -228,12 +228,19 @@ app.get('/api/my-server-admins', async (req, res, next) => {
 
 // ensure uploads directory exists and serve uploaded files at /uploads
 const uploadsDir = path.join(__dirname, 'public', 'uploads');
+const logosDir = path.join(__dirname, 'public', 'logos'); // Persistent logo storage
 try {
 	if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 } catch (e) {
 	console.warn('Failed to ensure uploads directory:', e && e.message ? e.message : e);
 }
+try {
+	if (!fs.existsSync(logosDir)) fs.mkdirSync(logosDir, { recursive: true });
+} catch (e) {
+	console.warn('Failed to ensure logos directory:', e && e.message ? e.message : e);
+}
 app.use('/uploads', express.static(uploadsDir));
+app.use('/logos', express.static(logosDir)); // Serve persistent logos
 
 // Serve any static assets from backend/public (e.g., favicon.ico)
 try {

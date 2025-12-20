@@ -185,16 +185,27 @@ function AdminPanelPage() {
       const res = await axios.get(`/api/admin/accounts/${account.id}/activity-logs?limit=100`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      // Filter to only show CREATE, UPDATE, DELETE, DISABLE, and TRANSFER actions
-      const filteredLogs = (res.data || []).filter(log => {
-        const action = (log.action || '').toUpperCase();
-        return action === 'CREATE' || action === 'UPDATE' || action === 'DELETE' || 
-               action === 'DISABLE' || action === 'ENABLE' || action.includes('TRANSFER');
-      });
-      setLogsModal(prev => ({ ...prev, logs: filteredLogs, loading: false }));
+      console.log('[fetchActivityLogs] received', res.data.length, 'logs');
+      setLogsModal(prev => ({ ...prev, logs: res.data || [], loading: false }));
     } catch (err) {
       console.error('Failed to fetch activity logs:', err);
       setLogsModal(prev => ({ ...prev, logs: [], loading: false }));
+    }
+  };
+
+  const clearActivityLogs = async () => {
+    if (!logsModal.account) return;
+    if (!window.confirm('Are you sure you want to clear all activity logs for this account? This action cannot be undone.')) return;
+    
+    try {
+      await axios.delete(`/api/admin/accounts/${logsModal.account.id}/activity-logs`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setLogsModal(prev => ({ ...prev, logs: [] }));
+      alert('Activity logs cleared successfully');
+    } catch (err) {
+      console.error('Failed to clear activity logs:', err);
+      alert('Failed to clear activity logs');
     }
   };
 
@@ -565,6 +576,26 @@ function AdminPanelPage() {
         )}
         {!logsModal.loading && (
           <div className="logs-content">
+            {logsModal.logs.length > 0 && (
+              <div style={{ marginBottom: '1rem', textAlign: 'right' }}>
+                <button 
+                  onClick={clearActivityLogs}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    backgroundColor: '#dc3545',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem'
+                  }}
+                  onMouseOver={(e) => e.target.style.backgroundColor = '#c82333'}
+                  onMouseOut={(e) => e.target.style.backgroundColor = '#dc3545'}
+                >
+                  Clear Logs
+                </button>
+              </div>
+            )}
             {logsModal.logs.length === 0 ? (
               <div className="muted" style={{ textAlign: 'center', padding: '1rem' }}>No activity logs found.</div>
             ) : (
@@ -572,30 +603,49 @@ function AdminPanelPage() {
                 <table className="logs-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
                   <thead>
                     <tr style={{ borderBottom: '2px solid #ddd' }}>
-                      <th style={{ padding: '0.5rem', textAlign: 'left' }}>Date & Time</th>
                       <th style={{ padding: '0.5rem', textAlign: 'left' }}>Action</th>
-                      <th style={{ padding: '0.5rem', textAlign: 'left' }}>Details</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'left' }}>Object</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'left' }}>Server</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'left' }}>Date & Time</th>
                     </tr>
                   </thead>
                   <tbody>
                     {logsModal.logs.map((log, idx) => {
-                      const payload = log.payload || {};
-                      const action = log.action || 'UNKNOWN';
-                      let details = '';
-                      if (payload.target_admin_id) details += `Target ID: ${payload.target_admin_id}`;
-                      if (payload.username) details += ` User: ${payload.username}`;
-                      if (payload.role) details += ` Role: ${payload.role}`;
+                      // Format action name from CREATE_ACCOUNT -> Create Account
+                      const formatAction = (action) => {
+                        if (!action) return 'Unknown';
+                        return action
+                          .split('_')
+                          .map(word => word.charAt(0) + word.slice(1).toLowerCase())
+                          .join(' ');
+                      };
+                      
+                      // Format date as DD/MM/YYYY (H:MM AM/PM)
+                      const formatDateTime = (dateStr) => {
+                        const date = new Date(dateStr);
+                        const day = String(date.getDate()).padStart(2, '0');
+                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                        const year = date.getFullYear();
+                        let hours = date.getHours();
+                        const minutes = String(date.getMinutes()).padStart(2, '0');
+                        const ampm = hours >= 12 ? 'PM' : 'AM';
+                        hours = hours % 12 || 12;
+                        return `${day}/${month}/${year} (${hours}:${minutes} ${ampm})`;
+                      };
                       
                       return (
                         <tr key={log.id || idx} style={{ borderBottom: '1px solid #eee' }}>
-                          <td style={{ padding: '0.5rem', whiteSpace: 'nowrap' }}>
-                            {formatWithAppTZ(log.created_at, { dateStyle: 'short', timeStyle: 'medium' })}
-                          </td>
                           <td style={{ padding: '0.5rem', fontWeight: '500' }}>
-                            {action}
+                            {formatAction(log.action)}
                           </td>
-                          <td style={{ padding: '0.5rem', fontSize: '0.9em', color: '#666' }}>
-                            {details || '—'}
+                          <td style={{ padding: '0.5rem' }}>
+                            {log.object || '—'}
+                          </td>
+                          <td style={{ padding: '0.5rem' }}>
+                            {log.server || '—'}
+                          </td>
+                          <td style={{ padding: '0.5rem', whiteSpace: 'nowrap' }}>
+                            {formatDateTime(log.created_at)}
                           </td>
                         </tr>
                       );
