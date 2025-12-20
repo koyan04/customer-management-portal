@@ -279,33 +279,73 @@ export default function FinancialPage() {
 
   return (
     <div className="app-container">
-      <h2 className="admin-title"><FiTrendingUp aria-hidden style={{ marginRight: 10, verticalAlign: 'middle' }} />Financials</h2>
-      
-      {/* User Selector - Only for ADMIN role */}
-      {(user && (user.user?.role || user.role) === 'ADMIN') && accounts.length > 0 && (
-        <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <label htmlFor="user-selector" style={{ fontWeight: '500' }}>View as:</label>
-          <select 
-            id="user-selector"
-            value={selectedUserId || ''}
-            onChange={(e) => setSelectedUserId(e.target.value || null)}
-            style={{ 
-              padding: '0.5rem', 
-              borderRadius: '4px', 
-              border: '1px solid #ddd',
-              minWidth: '200px',
-              backgroundColor: 'white'
-            }}
-          >
-            <option value="">All Users (Admin View)</option>
-            {accounts.map(acc => (
-              <option key={acc.id} value={acc.id}>
-                {acc.display_name || acc.username} ({acc.role})
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <h2 className="admin-title" style={{ margin: 0 }}>
+          <FiTrendingUp aria-hidden style={{ marginRight: 10, verticalAlign: 'middle' }} />
+          Financials
+        </h2>
+        
+        {/* User Selector - Only for ADMIN role */}
+        {(user && (user.user?.role || user.role) === 'ADMIN') && accounts.length > 0 && (
+          <div className="glass-panel" style={{ 
+            padding: '0.75rem 1rem', 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '0.75rem',
+            borderRadius: '8px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+          }}>
+            <FiGlobe style={{ fontSize: '1.2rem', color: '#666' }} />
+            <label htmlFor="user-selector" style={{ fontWeight: '600', color: '#333', whiteSpace: 'nowrap' }}>View as:</label>
+            <select 
+              id="user-selector"
+              value={selectedUserId || ''}
+              onChange={(e) => setSelectedUserId(e.target.value || null)}
+              style={{ 
+                padding: '0.5rem 0.75rem', 
+                borderRadius: '6px', 
+                border: '2px solid #e0e0e0',
+                minWidth: '220px',
+                fontSize: '0.95rem',
+                fontWeight: '500',
+                backgroundColor: 'white',
+                cursor: 'pointer',
+                transition: 'border-color 0.2s ease'
+              }}
+              onFocus={(e) => e.target.style.borderColor = '#4CAF50'}
+              onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+            >
+              <option value="">📊 All Users (Admin View)</option>
+              {accounts.map(acc => (
+                <option key={acc.id} value={acc.id}>
+                  👤 {acc.display_name || acc.username} - {acc.role === 'ADMIN' ? '🔑 Admin' : acc.role === 'SERVER_ADMIN' ? '🛠️ Server Admin' : '👁️ Viewer'}
+                </option>
+              ))}
+            </select>
+            {selectedUserId && (
+              <button 
+                onClick={() => setSelectedUserId(null)}
+                style={{
+                  padding: '0.4rem 0.6rem',
+                  borderRadius: '4px',
+                  border: 'none',
+                  backgroundColor: '#f44336',
+                  color: 'white',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                  fontWeight: '500',
+                  transition: 'background-color 0.2s ease'
+                }}
+                onMouseEnter={(e) => e.target.style.backgroundColor = '#d32f2f'}
+                onMouseLeave={(e) => e.target.style.backgroundColor = '#f44336'}
+                title="Clear selection"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+        )}
+      </div>
       
       <p>Year: {data.year} — Year-to-date revenue: {fmtCurrency(data.yearTotals.revenue_cents, currency)}</p>
 

@@ -262,6 +262,12 @@ function ServerList({ servers, fetchServers }) {
                         onClick={() => handleCopyApiKey(server.api_key, server.id)} 
                         className={`icon-btn${copiedApiKey === server.id ? ' copied' : ''}`} 
                         title={copiedApiKey === server.id ? 'API key copied!' : 'Copy API key'}
+                        style={{ 
+                          color: copiedApiKey === server.id ? '#28a745' : '#DAA520',
+                          transition: 'all 0.2s ease',
+                        }}
+                        onMouseEnter={(e) => { if (copiedApiKey !== server.id) e.currentTarget.style.color = '#FFD700'; }}
+                        onMouseLeave={(e) => { if (copiedApiKey !== server.id) e.currentTarget.style.color = '#DAA520'; }}
                       >
                         {copiedApiKey === server.id ? <FaCheck /> : <FaKey />}
                       </button>
