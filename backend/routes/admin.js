@@ -634,11 +634,31 @@ router.get('/financial', authenticateToken, async (req, res) => {
     // DEBUG: log the authenticated user to help trace permission issues during testing
     try { console.debug('[DEBUG GET /api/admin/financial] req.user=', req.user); } catch (e) {}
     // Allow global ADMINs full access. SERVER_ADMINs may view financials scoped to their assigned servers.
+    // Support userId query param for ADMIN to view as another user
     const role = req.user && req.user.role;
-    try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] branch check, role=', role, 'userId=', req.user && req.user.id); } catch (e) {}
+    const targetUserId = req.query.userId ? Number(req.query.userId) : null;
+    
+    try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] branch check, role=', role, 'userId=', req.user && req.user.id, 'targetUserId=', targetUserId); } catch (e) {}
     let serverFilterClause = '';
     let queryParams = [];
-    if (role && role !== 'ADMIN') {
+    
+    // If ADMIN is viewing as another user, apply that user's permissions
+    if (role === 'ADMIN' && targetUserId) {
+      // Fetch target user's role
+      const userRes = await pool.query('SELECT role FROM admins WHERE id = $1', [targetUserId]);
+      const targetRole = userRes.rows && userRes.rows[0] ? userRes.rows[0].role : null;
+      
+      if (targetRole === 'SERVER_ADMIN') {
+        // Apply SERVER_ADMIN filtering for target user
+        const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [targetUserId]);
+        const sids = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
+        if (sids.length > 0) {
+          serverFilterClause = ' AND u.server_id = ANY($1::int[])';
+          queryParams = [sids];
+        }
+      }
+      // If target is ADMIN or other role, show all data (no filter)
+    } else if (role && role !== 'ADMIN') {
       // only SERVER_ADMIN should reach here; others are forbidden
       if (role !== 'SERVER_ADMIN') {
         try { if (process.env.NODE_ENV !== 'production') console.debug('[DEBUG GET /api/admin/financial] deny non-server-admin role=', role, 'userId=', req.user && req.user.id); } catch (e) {}

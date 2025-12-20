@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import AdminEditorForm from '../components/AdminEditorForm.jsx';
-import { FaTrashAlt, FaUserPlus, FaTools, FaSearch, FaInfoCircle } from 'react-icons/fa';
+import { FaTrashAlt, FaUserPlus, FaTools, FaSearch, FaInfoCircle, FaHistory } from 'react-icons/fa';
 import MatviewStatus from '../components/MatviewStatus.jsx';
 import Modal from '../components/Modal.jsx';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -13,6 +13,7 @@ import TopProgressBar from '../components/TopProgressBar.jsx';
 function AdminPanelPage() {
   const { token, user } = useAuth();
   const [loading, setLoading] = useState(true);
+  const [logsModal, setLogsModal] = useState({ open: false, account: null, logs: [], loading: false });
   const [accounts, setAccounts] = useState([]);
   const [servers, setServers] = useState([]);
   const [query, setQuery] = useState('');
@@ -172,6 +173,19 @@ function AdminPanelPage() {
       const sameDay = isSameDayInAppTZ(d, now);
       return sameDay ? ('Today ' + formatWithAppTZ(d, { timeStyle: 'short' })) : formatWithAppTZ(d, { dateStyle: 'medium', timeStyle: 'short' });
     } catch (_) { return null; }
+  };
+
+  const fetchActivityLogs = async (account) => {
+    setLogsModal({ open: true, account, logs: [], loading: true });
+    try {
+      const res = await axios.get(`/api/admin/accounts/${account.id}/activity-logs?limit=50`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setLogsModal(prev => ({ ...prev, logs: res.data || [], loading: false }));
+    } catch (err) {
+      console.error('Failed to fetch activity logs:', err);
+      setLogsModal(prev => ({ ...prev, logs: [], loading: false }));
+    }
   };
 
   const handleDelete = async (acct) => {
@@ -352,6 +366,15 @@ function AdminPanelPage() {
               { (user && (user.user?.role || user.role) === 'ADMIN') && (
                 <>
                   <button
+                    title={`Activity logs for ${a.display_name || a.username}`}
+                    aria-label={`Activity logs for ${a.display_name || a.username}`}
+                    className="icon-btn info-icon"
+                    onClick={(e) => { e.stopPropagation(); fetchActivityLogs(a); }}
+                    style={{ right: '80px' }}
+                  >
+                    <FaHistory />
+                  </button>
+                  <button
                     title={`Info for ${a.display_name || a.username}`}
                     aria-label={`Info for ${a.display_name || a.username}`}
                     className="icon-btn info-icon"
@@ -447,6 +470,64 @@ function AdminPanelPage() {
                       </div>
                     )}
                   </>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* Activity Logs Modal */}
+      <Modal
+        isOpen={logsModal.open}
+        onClose={() => setLogsModal({ open: false, account: null, logs: [], loading: false })}
+        title={logsModal.account ? `Activity Logs - ${logsModal.account.display_name || logsModal.account.username}` : 'Activity Logs'}
+        className="logs-modal"
+      >
+        {logsModal.loading && (
+          <div style={{ textAlign: 'center', padding: '2rem' }}>
+            <div className="spinner" />
+            <div>Loading logs...</div>
+          </div>
+        )}
+        {!logsModal.loading && (
+          <div className="logs-content">
+            {logsModal.logs.length === 0 ? (
+              <div className="muted" style={{ textAlign: 'center', padding: '1rem' }}>No activity logs found.</div>
+            ) : (
+              <div className="logs-table-wrapper">
+                <table className="logs-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '2px solid #ddd' }}>
+                      <th style={{ padding: '0.5rem', textAlign: 'left' }}>Date & Time</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'left' }}>Action</th>
+                      <th style={{ padding: '0.5rem', textAlign: 'left' }}>Details</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {logsModal.logs.map((log, idx) => {
+                      const payload = log.payload || {};
+                      const action = log.action || 'UNKNOWN';
+                      let details = '';
+                      if (payload.target_admin_id) details += `Target ID: ${payload.target_admin_id}`;
+                      if (payload.username) details += ` User: ${payload.username}`;
+                      if (payload.role) details += ` Role: ${payload.role}`;
+                      
+                      return (
+                        <tr key={log.id || idx} style={{ borderBottom: '1px solid #eee' }}>
+                          <td style={{ padding: '0.5rem', whiteSpace: 'nowrap' }}>
+                            {formatWithAppTZ(log.created_at, { dateStyle: 'short', timeStyle: 'medium' })}
+                          </td>
+                          <td style={{ padding: '0.5rem', fontWeight: '500' }}>
+                            {action}
+                          </td>
+                          <td style={{ padding: '0.5rem', fontSize: '0.9em', color: '#666' }}>
+                            {details || '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         )}

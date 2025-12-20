@@ -31,8 +31,23 @@ export default function FinancialPage() {
   const [duration, setDuration] = useState('last6');
   const [startDate, setStartDate] = useState(null); // Date
   const [endDate, setEndDate] = useState(null); // Date
+  const [accounts, setAccounts] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState(null);
   // validationMsg was unused; keeping placeholder for future form validation feature
   // validationMsg placeholder removed (unused) – reintroduce when adding form validation UI
+
+  // Fetch accounts list for ADMIN user selector
+  useEffect(() => {
+    const role = user && (user.user?.role || user.role);
+    if (role === 'ADMIN' && token) {
+      axios.get('/api/admin/accounts', { headers: { Authorization: `Bearer ${token}` } })
+        .then(res => {
+          const accts = Array.isArray(res.data) ? res.data : [];
+          setAccounts(accts);
+        })
+        .catch(err => console.error('Failed to fetch accounts:', err));
+    }
+  }, [token, user]);
 
   useEffect(() => {
     let mounted = true;
@@ -47,7 +62,8 @@ export default function FinancialPage() {
       setLoading(true);
       try {
         const headers = token ? { Authorization: `Bearer ${token}` } : {};
-        const res = await axios.get('/api/admin/financial', { headers, validateStatus: () => true });
+        const params = selectedUserId ? { userId: selectedUserId } : {};
+        const res = await axios.get('/api/admin/financial', { headers, params, validateStatus: () => true });
         if (res.status !== 200) throw new Error(res.data && res.data.msg ? res.data.msg : `Status ${res.status}`);
         if (!mounted) return;
         setData(res.data);
@@ -74,7 +90,7 @@ export default function FinancialPage() {
     };
     fetchData();
     return () => { mounted = false; };
-  }, [token, user]);
+  }, [token, user, selectedUserId]);
 
   // helper: convert month string 'YYYY-MM' to yyyy-mm-01 date string
   const monthToISO = (monthStr) => (monthStr ? `${monthStr}-01` : null);
@@ -264,6 +280,33 @@ export default function FinancialPage() {
   return (
     <div className="app-container">
       <h2 className="admin-title"><FiTrendingUp aria-hidden style={{ marginRight: 10, verticalAlign: 'middle' }} />Financials</h2>
+      
+      {/* User Selector - Only for ADMIN role */}
+      {(user && (user.user?.role || user.role) === 'ADMIN') && accounts.length > 0 && (
+        <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <label htmlFor="user-selector" style={{ fontWeight: '500' }}>View as:</label>
+          <select 
+            id="user-selector"
+            value={selectedUserId || ''}
+            onChange={(e) => setSelectedUserId(e.target.value || null)}
+            style={{ 
+              padding: '0.5rem', 
+              borderRadius: '4px', 
+              border: '1px solid #ddd',
+              minWidth: '200px',
+              backgroundColor: 'white'
+            }}
+          >
+            <option value="">All Users (Admin View)</option>
+            {accounts.map(acc => (
+              <option key={acc.id} value={acc.id}>
+                {acc.display_name || acc.username} ({acc.role})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      
       <p>Year: {data.year} — Year-to-date revenue: {fmtCurrency(data.yearTotals.revenue_cents, currency)}</p>
 
       <div className="stat-banners">
