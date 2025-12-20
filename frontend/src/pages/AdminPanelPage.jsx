@@ -380,7 +380,7 @@ function AdminPanelPage() {
                     aria-label={`Refresh ${a.display_name || a.username}`}
                     className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); openInfo(a); }}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '32px' }}
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '32px', width: '32px', height: '32px' }}
                   >
                     <FaSync />
                   </button>
@@ -389,7 +389,7 @@ function AdminPanelPage() {
                     aria-label={`Delete ${a.display_name || a.username}`}
                     className="icon-btn delete-icon small"
                     onClick={(e) => { e.stopPropagation(); handleDelete(a); }}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '32px' }}
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '32px', width: '32px', height: '32px' }}
                   >
                     <FaTrashAlt />
                   </button>
