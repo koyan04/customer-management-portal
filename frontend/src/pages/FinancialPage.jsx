@@ -300,7 +300,10 @@ export default function FinancialPage() {
             <select 
               id="user-selector"
               value={selectedUserId || ''}
-              onChange={(e) => setSelectedUserId(e.target.value || null)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setSelectedUserId(val ? Number(val) : null);
+              }}
               style={{ 
                 padding: '0.5rem 0.75rem', 
                 borderRadius: '6px', 
