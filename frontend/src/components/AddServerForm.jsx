@@ -10,6 +10,7 @@ function AddServerForm({ onServerAdded, onCancel }) {
     service_type: '',
     ip_address: '',
     domain_name: '',
+    api_key: '',
   });
 
   const handleChange = (e) => {
@@ -40,6 +41,7 @@ function AddServerForm({ onServerAdded, onCancel }) {
       <input name="service_type" value={formData.service_type} onChange={handleChange} placeholder="Service Type (e.g., Outline)" />
       <input name="ip_address" value={formData.ip_address} onChange={handleChange} placeholder="IP Address" />
       <input name="domain_name" value={formData.domain_name} onChange={handleChange} placeholder="Domain Name" />
+      <input name="api_key" value={formData.api_key} onChange={handleChange} placeholder="API Key (Optional)" type="password" />
       
       {/* Container for the buttons */}
       <div className="form-buttons">

@@ -13,6 +13,7 @@ function EditServerModal({ server, onClose, onSave }) {
     service_type: '',
     ip_address: '',
     domain_name: '',
+    api_key: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -26,6 +27,7 @@ function EditServerModal({ server, onClose, onSave }) {
         service_type: server.service_type,
         ip_address: server.ip_address,
         domain_name: server.domain_name,
+        api_key: server.api_key || '',
       });
     }
   }, [server]);
@@ -68,6 +70,7 @@ function EditServerModal({ server, onClose, onSave }) {
               <input name="service_type" value={formData.service_type} onChange={handleChange} placeholder="Service Type" />
               <input name="ip_address" value={formData.ip_address} onChange={handleChange} placeholder="IP Address" />
               <input name="domain_name" value={formData.domain_name} onChange={handleChange} placeholder="Domain Name" />
+              <input name="api_key" value={formData.api_key} onChange={handleChange} placeholder="API Key (Optional)" type="password" />
               {error && <div className="form-error" role="alert" style={{ color: '#ff9d9d' }}>{error}</div>}
               <div className="modal-actions">
                 <button type="button" onClick={onClose} className="btn-secondary" disabled={saving}>Cancel</button>

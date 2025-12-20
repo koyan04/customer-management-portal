@@ -59,6 +59,17 @@ function DashboardPage() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
+  // Auto-refresh dashboard stats every 30 seconds
+  useEffect(() => {
+    if (!token) return;
+    
+    const refreshInterval = setInterval(() => {
+      fetchAll();
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(refreshInterval);
+  }, [token, fetchAll]);
+
   // Poll a lightweight health endpoint for feature flags and refresh state (admin-only)
   useEffect(() => {
     if (role !== 'ADMIN') return;
