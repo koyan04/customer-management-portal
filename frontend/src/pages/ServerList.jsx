@@ -2,14 +2,16 @@ import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link } from 'react-router-dom';
-import { FaCog, FaTrashAlt, FaUser, FaCogs, FaNetworkWired, FaGlobe, FaRegCopy, FaCheck, FaArrowsAlt, FaGripVertical, FaSave, FaTimes, FaExchangeAlt } from 'react-icons/fa';
+import { FaCog, FaTrashAlt, FaUser, FaCogs, FaNetworkWired, FaGlobe, FaRegCopy, FaCheck, FaArrowsAlt, FaGripVertical, FaSave, FaTimes, FaExchangeAlt, FaKey } from 'react-icons/fa';
 import { getBackendOrigin } from '../lib/backendOrigin';
+import { useToast } from '../context/ToastContext.jsx';
 // Corrected import paths below
 import ConfirmModal from '../components/ConfirmModal.jsx';
 import EditServerModal from '../components/EditServerModal.jsx';
 import UserTransferModal from '../components/UserTransferModal.jsx';
 
 function ServerList({ servers, fetchServers }) {
+  const { show: showToast } = useToast();
   const [serverToDelete, setServerToDelete] = useState(null);
   const [serverToEdit, setServerToEdit] = useState(null);
   const [page, setPage] = useState(1);
@@ -33,6 +35,7 @@ function ServerList({ servers, fetchServers }) {
   const sourceList = reorderMode ? (localOrder.length ? localOrder : servers) : servers;
   const visibleServers = Array.isArray(sourceList) ? sourceList.slice(firstIndex, firstIndex + pageSize) : [];
   const [copiedIp, setCopiedIp] = useState(null);
+  const [copiedApiKey, setCopiedApiKey] = useState(null);
   const [userServerAdminFor, setUserServerAdminFor] = useState([]);
   const [currentRole, setCurrentRole] = useState(null);
   // get current user role from local storage or AuthContext if available
@@ -95,6 +98,24 @@ function ServerList({ servers, fetchServers }) {
       setCopiedIp(text);
       setTimeout(() => setCopiedIp(null), 1200);
     } catch (e) { /* ignore */ }
+  };
+
+  const handleCopyApiKey = async (apiKey, serverId) => {
+    try {
+      if (!apiKey) return;
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(apiKey);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = apiKey; document.body.appendChild(ta); ta.select();
+        document.execCommand('copy'); document.body.removeChild(ta);
+      }
+      setCopiedApiKey(serverId);
+      setTimeout(() => setCopiedApiKey(null), 1200);
+      showToast({ variant: 'success', title: 'API Key Copied', message: 'API key copied to clipboard' });
+    } catch (e) { 
+      showToast({ variant: 'error', title: 'Copy Failed', message: 'Could not copy API key to clipboard' });
+    }
   };
 
   // HTML5 drag-and-drop handlers (reorderMode only)
@@ -236,6 +257,15 @@ function ServerList({ servers, fetchServers }) {
               <div className="server-actions">
                 { !reorderMode && ((role === 'ADMIN') || userServerAdminFor.includes(Number(server.id))) && (
                   <>
+                    {server.api_key && (
+                      <button 
+                        onClick={() => handleCopyApiKey(server.api_key, server.id)} 
+                        className={`icon-btn${copiedApiKey === server.id ? ' copied' : ''}`} 
+                        title={copiedApiKey === server.id ? 'API key copied!' : 'Copy API key'}
+                      >
+                        {copiedApiKey === server.id ? <FaCheck /> : <FaKey />}
+                      </button>
+                    )}
                     <button onClick={() => setServerToEdit(server)} className="icon-btn edit-btn" title="Edit server">
                       <FaCog />
                     </button>
