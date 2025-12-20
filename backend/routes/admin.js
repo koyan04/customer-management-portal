@@ -481,6 +481,29 @@ router.get('/accounts/:id/login-audit', authenticateToken, isAdmin, async (req, 
   }
 });
 
+// --- ADMIN: get control panel audit logs for an account (admin only)
+router.get('/accounts/:id/activity-logs', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    
+    // Fetch audit logs from control_panel_audit table
+    const result = await pool.query(
+      `SELECT id, admin_id, action, payload, created_at 
+       FROM control_panel_audit 
+       WHERE payload->>'target_admin_id' = $1 OR admin_id = $2
+       ORDER BY created_at DESC 
+       LIMIT $3`,
+      [String(id), id, limit]
+    );
+    
+    res.json(result.rows || []);
+  } catch (err) {
+    console.error('get activity logs failed:', err && err.message ? err.message : err);
+    res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
 // --- Password change for logged-in user
 router.post('/change-password', authenticateToken, async (req, res) => {
   try {
