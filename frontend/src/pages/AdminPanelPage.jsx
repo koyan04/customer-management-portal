@@ -380,7 +380,7 @@ function AdminPanelPage() {
                     aria-label={`Activity logs for ${a.display_name || a.username}`}
                     className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); fetchActivityLogs(a); }}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '32px' }}
                   >
                     <FaHistory />
                   </button>
@@ -389,7 +389,7 @@ function AdminPanelPage() {
                     aria-label={`Info for ${a.display_name || a.username}`}
                     className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); openInfo(a); }}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '32px' }}
                   >
                     <FaInfoCircle />
                   </button>
@@ -398,7 +398,7 @@ function AdminPanelPage() {
                     aria-label={`Delete ${a.display_name || a.username}`}
                     className="icon-btn delete-icon small"
                     onClick={(e) => { e.stopPropagation(); handleDelete(a); }}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '32px' }}
                   >
                     <FaTrashAlt />
                   </button>
