@@ -78,6 +78,10 @@ function AdminPanelPage() {
   const [highlightId, setHighlightId] = useState(null);
 
   const reload = (highlightForId = null) => {
+    // Clear caches to force fresh data fetch
+    setServerAdminCounts({});
+    setLastSeenMap({});
+    
     axios.get('/api/admin/accounts', { headers: { Authorization: `Bearer ${token}` } })
       .then(r => {
         const d = r.data;
@@ -85,9 +89,6 @@ function AdminPanelPage() {
         setAccounts(normalized);
         // bump refreshTick to bust avatar cache on the UI
         setRefreshTick(t => t + 1);
-        // Clear cached counts to force refresh
-        setServerAdminCounts({});
-        setLastSeenMap({});
         // if we were editing an account, refresh the editing object so the modal shows updated avatar/url
         setEditing(prev => {
           if (!prev || !prev.id) return prev;
@@ -373,13 +374,13 @@ function AdminPanelPage() {
               </div>
               {/* Action buttons aligned at bottom-right */}
               { (user && (user.user?.role || user.role) === 'ADMIN') && (
-                <div className="account-actions" style={{ position: 'absolute', bottom: '0.5rem', right: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', position: 'absolute', right: '10px', bottom: '10px', zIndex: 10 }}>
                   <button
                     title={`Activity logs for ${a.display_name || a.username}`}
                     aria-label={`Activity logs for ${a.display_name || a.username}`}
                     className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); fetchActivityLogs(a); }}
-                    style={{ fontSize: '1rem', padding: '0.5rem', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px' }}
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   >
                     <FaHistory />
                   </button>
@@ -388,7 +389,7 @@ function AdminPanelPage() {
                     aria-label={`Info for ${a.display_name || a.username}`}
                     className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); openInfo(a); }}
-                    style={{ fontSize: '1rem', padding: '0.5rem', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px' }}
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   >
                     <FaInfoCircle />
                   </button>
@@ -397,7 +398,7 @@ function AdminPanelPage() {
                     aria-label={`Delete ${a.display_name || a.username}`}
                     className="icon-btn delete-icon small"
                     onClick={(e) => { e.stopPropagation(); handleDelete(a); }}
-                    style={{ fontSize: '1rem', padding: '0.5rem', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '8px' }}
+                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', minWidth: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                   >
                     <FaTrashAlt />
                   </button>
