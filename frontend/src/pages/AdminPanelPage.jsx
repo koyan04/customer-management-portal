@@ -372,9 +372,9 @@ function AdminPanelPage() {
                     </div>
                   )}
               </div>
-              {/* Action buttons aligned at bottom-right */}
+              {/* Action buttons aligned at top-right */}
               { (user && (user.user?.role || user.role) === 'ADMIN') && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', position: 'absolute', right: '10px', bottom: '10px', zIndex: 10 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', position: 'absolute', right: '10px', top: '10px', zIndex: 10 }}>
                   <button
                     title={`Activity logs for ${a.display_name || a.username}`}
                     aria-label={`Activity logs for ${a.display_name || a.username}`}
