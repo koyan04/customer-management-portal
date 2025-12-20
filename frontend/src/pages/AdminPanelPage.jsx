@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import AdminEditorForm from '../components/AdminEditorForm.jsx';
-import { FaTrashAlt, FaUserPlus, FaTools, FaSearch, FaInfoCircle, FaHistory } from 'react-icons/fa';
+import { FaTrashAlt, FaUserPlus, FaTools, FaSearch, FaInfoCircle, FaHistory, FaSync } from 'react-icons/fa';
 import MatviewStatus from '../components/MatviewStatus.jsx';
 import Modal from '../components/Modal.jsx';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -376,22 +376,13 @@ function AdminPanelPage() {
               { (user && (user.user?.role || user.role) === 'ADMIN') && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', position: 'absolute', right: '10px', top: '10px', zIndex: 10 }}>
                   <button
-                    title={`Activity logs for ${a.display_name || a.username}`}
-                    aria-label={`Activity logs for ${a.display_name || a.username}`}
-                    className="icon-btn small"
-                    onClick={(e) => { e.stopPropagation(); fetchActivityLogs(a); }}
-                    style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '32px' }}
-                  >
-                    <FaHistory />
-                  </button>
-                  <button
-                    title={`Info for ${a.display_name || a.username}`}
-                    aria-label={`Info for ${a.display_name || a.username}`}
+                    title={`Refresh ${a.display_name || a.username}`}
+                    aria-label={`Refresh ${a.display_name || a.username}`}
                     className="icon-btn small"
                     onClick={(e) => { e.stopPropagation(); openInfo(a); }}
                     style={{ fontSize: '0.9rem', padding: '0.4rem 0.45rem', display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: '32px' }}
                   >
-                    <FaInfoCircle />
+                    <FaSync />
                   </button>
                   <button
                     title={`Delete ${a.display_name || a.username}`}
