@@ -146,11 +146,11 @@ router.get('/summary', authenticateToken, async (req, res) => {
 // POST a new server (admin only)
 router.post('/', authenticateToken, isAdmin, async (req, res) => {
   try {
-    const { server_name, owner, service_type, ip_address, domain_name } = req.body;
+    const { server_name, owner, service_type, ip_address, domain_name, api_key } = req.body;
     // Assign new server to the end of the ordered list
     const newServer = await pool.query(
-      'INSERT INTO servers (server_name, owner, service_type, ip_address, domain_name, display_pos) VALUES ($1, $2, $3, $4, $5, (SELECT COALESCE(MAX(display_pos), 0) + 1 FROM servers)) RETURNING *',
-      [server_name, owner, service_type, ip_address, domain_name]
+      'INSERT INTO servers (server_name, owner, service_type, ip_address, domain_name, api_key, display_pos) VALUES ($1, $2, $3, $4, $5, $6, (SELECT COALESCE(MAX(display_pos), 0) + 1 FROM servers)) RETURNING *',
+      [server_name, owner, service_type, ip_address, domain_name, api_key || null]
     );
     res.status(201).json(newServer.rows[0]);
   } catch (err) {
@@ -202,10 +202,10 @@ const { isServerAdminOrGlobal } = require('../middleware/authMiddleware');
 router.put('/:id', authenticateToken, isServerAdminOrGlobal('id'), async (req, res) => {
   try {
     const { id } = req.params;
-    const { server_name, owner, service_type, ip_address, domain_name } = req.body;
+    const { server_name, owner, service_type, ip_address, domain_name, api_key } = req.body;
     const updatedServer = await pool.query(
-      'UPDATE servers SET server_name = $1, owner = $2, service_type = $3, ip_address = $4, domain_name = $5 WHERE id = $6 RETURNING *',
-      [server_name, owner, service_type, ip_address, domain_name, id]
+      'UPDATE servers SET server_name = $1, owner = $2, service_type = $3, ip_address = $4, domain_name = $5, api_key = $6 WHERE id = $7 RETURNING *',
+      [server_name, owner, service_type, ip_address, domain_name, api_key || null, id]
     );
     res.json(updatedServer.rows[0]);
   } catch (err) {

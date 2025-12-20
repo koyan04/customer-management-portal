@@ -1329,7 +1329,7 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
       }
     } catch (_) {}
     const admins = await pool.query('SELECT id, display_name, username, role, avatar_url, created_at FROM admins ORDER BY id');
-    const servers = await pool.query('SELECT id, server_name, ip_address, domain_name, owner, created_at FROM servers ORDER BY id');
+    const servers = await pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers ORDER BY id');
     // permissions tables: prefer new name, fallback to legacy
     let viewerPerms = [];
     try { const r = await pool.query('SELECT editor_id, server_id FROM viewer_server_permissions'); viewerPerms = r.rows || []; }
@@ -1337,7 +1337,7 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
     const serverAdmins = await pool.query('SELECT admin_id, server_id FROM server_admin_permissions');
     const settings = await pool.query('SELECT settings_key, data, updated_at FROM app_settings ORDER BY settings_key');
     const serverKeys = await pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys ORDER BY id');
-    const users = await pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, created_at FROM users ORDER BY id');
+    const users = await pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users ORDER BY id');
     const payload = {
       type: 'db-backup-v1',
       createdAt: new Date().toISOString(),
@@ -1371,9 +1371,9 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
     } catch (_) {}
     const [settingsRes, serversRes, serverKeysRes, usersRes] = await Promise.all([
       pool.query('SELECT * FROM app_settings'),
-      pool.query('SELECT id, server_name, ip_address, domain_name, owner, created_at FROM servers'),
+      pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers'),
       pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys'),
-      pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, created_at FROM users')
+      pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users')
     ]);
     const payload = {
       created_at: new Date().toISOString(),
@@ -1445,10 +1445,10 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
         const name = s.server_name || s.name;
         if (!name) continue;
         await client.query(
-          `INSERT INTO servers (id, server_name, ip_address, domain_name, owner, created_at)
-           VALUES ($1,$2,$3,$4,$5, COALESCE($6, now()))
-           ON CONFLICT (id) DO UPDATE SET server_name = EXCLUDED.server_name, ip_address = EXCLUDED.ip_address, domain_name = EXCLUDED.domain_name, owner = EXCLUDED.owner`,
-          [s.id || null, name, s.ip_address || null, s.domain_name || null, s.owner || null, s.created_at || null]
+          `INSERT INTO servers (id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8, COALESCE($9, now()))
+           ON CONFLICT (id) DO UPDATE SET server_name = EXCLUDED.server_name, ip_address = EXCLUDED.ip_address, domain_name = EXCLUDED.domain_name, owner = EXCLUDED.owner, service_type = EXCLUDED.service_type, api_key = EXCLUDED.api_key, display_pos = EXCLUDED.display_pos`,
+          [s.id || null, name, s.ip_address || null, s.domain_name || null, s.owner || null, s.service_type || null, s.api_key || null, s.display_pos || null, s.created_at || null]
         );
       }
     }
@@ -1553,10 +1553,10 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           const name = s.server_name || s.name;
           if (!name) continue;
           await client.query(
-            `INSERT INTO servers (id, server_name, ip_address, domain_name, owner, created_at)
-             VALUES ($1,$2,$3,$4,$5,COALESCE($6, now()))
-             ON CONFLICT (id) DO UPDATE SET server_name = EXCLUDED.server_name, ip_address = EXCLUDED.ip_address, domain_name = EXCLUDED.domain_name, owner = EXCLUDED.owner`,
-            [s.id || null, name, s.ip_address || null, s.domain_name || null, s.owner || null, s.created_at || null]
+            `INSERT INTO servers (id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9, now()))
+             ON CONFLICT (id) DO UPDATE SET server_name = EXCLUDED.server_name, ip_address = EXCLUDED.ip_address, domain_name = EXCLUDED.domain_name, owner = EXCLUDED.owner, service_type = EXCLUDED.service_type, api_key = EXCLUDED.api_key, display_pos = EXCLUDED.display_pos`,
+            [s.id || null, name, s.ip_address || null, s.domain_name || null, s.owner || null, s.service_type || null, s.api_key || null, s.display_pos || null, s.created_at || null]
           );
         }
       }
