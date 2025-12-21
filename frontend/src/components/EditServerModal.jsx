@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
+import { FaEye, FaEyeSlash } from 'react-icons/fa';
 import { useAuth } from '../context/AuthContext';
 import { getBackendOrigin } from '../lib/backendOrigin';
 
@@ -17,6 +18,7 @@ function EditServerModal({ server, onClose, onSave }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [showApiKey, setShowApiKey] = useState(false);
 
   // useEffect updates the form data whenever the 'server' prop changes
   useEffect(() => {
@@ -70,7 +72,37 @@ function EditServerModal({ server, onClose, onSave }) {
               <input name="service_type" value={formData.service_type} onChange={handleChange} placeholder="Service Type" />
               <input name="ip_address" value={formData.ip_address} onChange={handleChange} placeholder="IP Address" />
               <input name="domain_name" value={formData.domain_name} onChange={handleChange} placeholder="Domain Name" />
-              <input name="api_key" value={formData.api_key} onChange={handleChange} placeholder="API Key (Optional)" type="password" />
+              <div style={{ position: 'relative', width: '100%' }}>
+                <input 
+                  name="api_key" 
+                  value={formData.api_key} 
+                  onChange={handleChange} 
+                  placeholder="API Key (Optional)" 
+                  type={showApiKey ? 'text' : 'password'}
+                  style={{ paddingRight: '2.5rem' }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowApiKey(!showApiKey)}
+                  style={{
+                    position: 'absolute',
+                    right: '0.5rem',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: '#888',
+                    padding: '0.5rem',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                  title={showApiKey ? 'Hide API key' : 'Show API key'}
+                >
+                  {showApiKey ? <FaEyeSlash size={16} /> : <FaEye size={16} />}
+                </button>
+              </div>
               {error && <div className="form-error" role="alert" style={{ color: '#ff9d9d' }}>{error}</div>}
               <div className="modal-actions">
                 <button type="button" onClick={onClose} className="btn-secondary" disabled={saving}>Cancel</button>

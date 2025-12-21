@@ -77,7 +77,16 @@ try {
 			return String(v);
 		}
 
-		// 2) Try to resolve the nearest git tag reachable from HEAD (non-fatal)
+		// 2) Try reading VERSION file in project root (prefer this for deployment)
+		try {
+			const versionFile = path.resolve(__dirname, '..', 'VERSION');
+			if (fs.existsSync(versionFile)) {
+				const v = fs.readFileSync(versionFile, 'utf8').trim();
+				if (v) return v;
+			}
+		} catch (_) { /* ignore */ }
+
+		// 3) Try to resolve the nearest git tag reachable from HEAD (fallback for dev)
 		try {
 			const { execSync } = require('child_process');
 			// Prefer an exact-match tag or the most recent tag in history
@@ -103,15 +112,6 @@ try {
 				if (sha) return sha;
 			} catch (_) {}
 		} catch (_) { }
-
-		// 3) Try reading VERSION file in project root (fallback)
-		try {
-			const versionFile = path.resolve(__dirname, '..', 'VERSION');
-			if (fs.existsSync(versionFile)) {
-				const v = fs.readFileSync(versionFile, 'utf8').trim();
-				if (v) return v;
-			}
-		} catch (_) { /* ignore */ }
 
 		return null;
 	};

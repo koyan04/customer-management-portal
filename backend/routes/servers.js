@@ -309,6 +309,17 @@ router.post('/:id/keys', authenticateToken, async (req, res) => {
       'INSERT INTO server_keys (server_id, username, description, original_key, generated_key, created_at) VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING id, username, description, generated_key, created_at',
       [id, username || null, description || null, original_key || null, generated_key || null]
     );
+    
+    // Log to audit table
+    try {
+      await pool.query(
+        'INSERT INTO server_keys_audit (admin_id, server_id, key_id, action, key_username, key_description) VALUES ($1, $2, $3, $4, $5, $6)',
+        [uid, id, insert.rows[0].id, 'CREATE_KEY', username || null, description || null]
+      );
+    } catch (auditErr) {
+      console.error('Failed to log server key creation to audit:', auditErr);
+    }
+    
     return res.status(201).json(insert.rows[0]);
   } catch (err) {
     console.error('SERVER ROUTE ERROR POST /api/servers/:id/keys :', err && err.stack ? err.stack : err);
@@ -335,6 +346,17 @@ router.put('/:id/keys/:keyId', authenticateToken, async (req, res) => {
       [username || null, description || null, original_key || null, generated_key || null, keyId, id]
     );
     if (!upd || upd.rowCount === 0) return res.status(404).json({ msg: 'Not found' });
+    
+    // Log to audit table
+    try {
+      await pool.query(
+        'INSERT INTO server_keys_audit (admin_id, server_id, key_id, action, key_username, key_description) VALUES ($1, $2, $3, $4, $5, $6)',
+        [uid, id, keyId, 'UPDATE_KEY', upd.rows[0].username || null, upd.rows[0].description || null]
+      );
+    } catch (auditErr) {
+      console.error('Failed to log server key update to audit:', auditErr);
+    }
+    
     return res.json(upd.rows[0]);
   } catch (err) {
     console.error('SERVER ROUTE ERROR PUT /api/servers/:id/keys/:keyId :', err && err.stack ? err.stack : err);
@@ -355,8 +377,19 @@ router.delete('/:id/keys/:keyId', authenticateToken, async (req, res) => {
       const chk = await pool.query('SELECT 1 FROM server_admin_permissions WHERE admin_id = $1 AND server_id = $2', [uid, id]);
       if (!chk || chk.rowCount === 0) return res.status(403).json({ msg: 'Forbidden' });
     }
-    const del = await pool.query('DELETE FROM server_keys WHERE id = $1 AND server_id = $2 RETURNING id', [keyId, id]);
+    const del = await pool.query('DELETE FROM server_keys WHERE id = $1 AND server_id = $2 RETURNING id, username, description', [keyId, id]);
     if (!del || del.rowCount === 0) return res.status(404).json({ msg: 'Not found' });
+    
+    // Log to audit table
+    try {
+      await pool.query(
+        'INSERT INTO server_keys_audit (admin_id, server_id, key_id, action, key_username, key_description) VALUES ($1, $2, $3, $4, $5, $6)',
+        [uid, id, keyId, 'DELETE_KEY', del.rows[0].username || null, del.rows[0].description || null]
+      );
+    } catch (auditErr) {
+      console.error('Failed to log server key deletion to audit:', auditErr);
+    }
+    
     return res.json({ msg: 'Deleted' });
   } catch (err) {
     console.error('SERVER ROUTE ERROR DELETE /api/servers/:id/keys/:keyId :', err && err.stack ? err.stack : err);
