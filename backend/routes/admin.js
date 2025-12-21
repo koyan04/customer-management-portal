@@ -612,6 +612,31 @@ router.get('/accounts/:id/activity-logs', authenticateToken, isAdmin, async (req
     
     console.log('[activity-logs] settings_audit rows:', settingsResult.rows.length);
     
+    // Fetch server key operations from server_keys_audit
+    let serverKeysResult = { rows: [] };
+    try {
+      serverKeysResult = await pool.query(
+        `SELECT 
+           ska.id,
+           ska.admin_id,
+           ska.action,
+           ska.key_username,
+           ska.key_description,
+           ska.created_at,
+           'server_keys' as source,
+           s.server_name
+         FROM server_keys_audit ska
+         LEFT JOIN servers s ON ska.server_id = s.id
+         WHERE ska.admin_id = $1
+         ORDER BY ska.created_at DESC 
+         LIMIT $2`,
+        [id, limit]
+      );
+      console.log('[activity-logs] server_keys_audit rows:', serverKeysResult.rows.length);
+    } catch (err) {
+      console.warn('[activity-logs] server_keys_audit query failed (table may not exist):', err.message);
+    }
+    
     // Transform the results into a consistent format
     const allLogs = [
       ...controlPanelResult.rows.map(row => ({
@@ -626,6 +651,14 @@ router.get('/accounts/:id/activity-logs', authenticateToken, isAdmin, async (req
         id: row.id,
         action: row.action,
         object: row.user_name || 'User',
+        server: row.server_name || null,
+        created_at: row.created_at,
+        source: row.source
+      })),
+      ...serverKeysResult.rows.map(row => ({
+        id: row.id,
+        action: row.action,
+        object: row.key_username || row.key_description || 'Server Key',
         server: row.server_name || null,
         created_at: row.created_at,
         source: row.source
@@ -663,14 +696,27 @@ router.delete('/accounts/:id/activity-logs', authenticateToken, isAdmin, async (
       [id]
     );
     
+    // Delete from server_keys_audit
+    let serverKeysResult = { rowCount: 0 };
+    try {
+      serverKeysResult = await pool.query(
+        `DELETE FROM server_keys_audit WHERE admin_id = $1`,
+        [id]
+      );
+    } catch (err) {
+      console.warn('[clear-activity-logs] server_keys_audit delete failed (table may not exist):', err.message);
+    }
+    
     console.log('[clear-activity-logs] Deleted', controlPanelResult.rowCount, 'control_panel_audit rows');
     console.log('[clear-activity-logs] Deleted', settingsResult.rowCount, 'settings_audit rows');
+    console.log('[clear-activity-logs] Deleted', serverKeysResult.rowCount, 'server_keys_audit rows');
     
     res.json({ 
       msg: 'Activity logs cleared successfully',
       deleted: {
         control_panel: controlPanelResult.rowCount,
-        settings: settingsResult.rowCount
+        settings: settingsResult.rowCount,
+        server_keys: serverKeysResult.rowCount
       }
     });
   } catch (err) {
