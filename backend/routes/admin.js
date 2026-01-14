@@ -1753,10 +1753,28 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
     if (Array.isArray(data.users)) {
       for (const u of data.users) {
         if (!u.server_id || !u.account_name) continue;
+        
+        // Determine enabled status
+        let enabled = true;
+        if (typeof u.enabled === 'boolean') {
+          // If enabled field is explicitly set in backup, use it
+          enabled = u.enabled;
+        } else {
+          // If enabled field is missing, infer from expire_date
+          // Disable if expire_date is in the past
+          if (u.expire_date) {
+            const expireDate = new Date(u.expire_date);
+            const now = new Date();
+            if (expireDate < now) {
+              enabled = false;
+            }
+          }
+        }
+        
         await client.query(
           `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, COALESCE($12, now()))`,
-          [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
+          [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, enabled, u.created_at || null]
         );
       }
     }
@@ -1881,10 +1899,28 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
       if (Array.isArray(payload.users)) {
         for (const u of payload.users) {
           if (!u.server_id || !u.account_name) continue;
+          
+          // Determine enabled status
+          let enabled = true;
+          if (typeof u.enabled === 'boolean') {
+            // If enabled field is explicitly set in backup, use it
+            enabled = u.enabled;
+          } else {
+            // If enabled field is missing, infer from expire_date
+            // Disable if expire_date is in the past
+            if (u.expire_date) {
+              const expireDate = new Date(u.expire_date);
+              const now = new Date();
+              if (expireDate < now) {
+                enabled = false;
+              }
+            }
+          }
+          
           await client.query(
             `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12, now()))`,
-            [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
+            [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, enabled, u.created_at || null]
           );
         }
       }
