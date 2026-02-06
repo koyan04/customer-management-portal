@@ -19,7 +19,11 @@ function DashboardPage() {
   const [tierModal, setTierModal] = useState({ open: false, tier: null });
   const [tierModalData, setTierModalData] = useState({ loading: false, users: [], error: '' });
   const [tierModalPage, setTierModalPage] = useState(1);
-  const [refreshInterval, setRefreshInterval] = useState(0.5); // in minutes, default 30 seconds
+  const [refreshInterval, setRefreshInterval] = useState(() => {
+    // Load from localStorage or default to 0.5 (30 seconds)
+    const saved = localStorage.getItem('dashboardRefreshInterval');
+    return saved ? parseFloat(saved) : 0.5;
+  });
   const [isRefreshing, setIsRefreshing] = useState(false);
   const { token, user: authUser } = useAuth();
   const role = authUser?.user?.role || authUser?.role || null;
@@ -62,6 +66,11 @@ function DashboardPage() {
   }, [token, backendOrigin]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
+
+  // Persist refresh interval to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('dashboardRefreshInterval', refreshInterval.toString());
+  }, [refreshInterval]);
 
   // Auto-refresh dashboard stats based on configured interval
   useEffect(() => {

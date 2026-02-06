@@ -1077,8 +1077,8 @@ router.get('/financial', authenticateToken, async (req, res) => {
 router.post('/financial/snapshot', authenticateToken, async (req, res) => {
   try {
     const role = req.user && req.user.role;
-    if (role !== 'ADMIN') {
-      return res.status(403).json({ msg: 'Only ADMINs can generate financial snapshots' });
+    if (role !== 'ADMIN' && role !== 'SERVER_ADMIN') {
+      return res.status(403).json({ msg: 'Only ADMINs and SERVER_ADMINs can generate financial snapshots' });
     }
 
     // Parse target month from query param or default to previous month
@@ -1230,13 +1230,13 @@ router.post('/financial/snapshot', authenticateToken, async (req, res) => {
   }
 });
 
-// Delete a monthly financial snapshot (ADMIN only)
+// Delete a monthly financial snapshot (ADMIN and SERVER_ADMIN only)
 // DELETE /api/admin/financial/snapshot/:month (month format: YYYY-MM)
 router.delete('/financial/snapshot/:month', authenticateToken, async (req, res) => {
   try {
     const role = req.user && req.user.role;
-    if (role !== 'ADMIN') {
-      return res.status(403).json({ msg: 'Only ADMINs can delete financial snapshots' });
+    if (role !== 'ADMIN' && role !== 'SERVER_ADMIN') {
+      return res.status(403).json({ msg: 'Only ADMINs and SERVER_ADMINs can delete financial snapshots' });
     }
 
     const monthParam = req.params.month;
@@ -1910,7 +1910,7 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       return res.status(400).json({ msg: 'Invalid JSON' });
     }
 
-    if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.server_keys) && !Array.isArray(data.users))) {
+    if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.server_keys) && !Array.isArray(data.users) && !Array.isArray(data.admins))) {
       return res.status(400).json({ msg: 'Invalid snapshot format' });
     }
     const client = await pool.connect();
@@ -2015,6 +2015,22 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       }
     }
     
+    // admins: Merge avatar data only (preserve passwords and other security data)
+    // Only restore avatar_url and avatar_data for existing admins matching by username
+    if (Array.isArray(data.admins)) {
+      for (const a of data.admins) {
+        if (!a.username) continue;
+        try {
+          await client.query(
+            `UPDATE admins SET avatar_url = $1, avatar_data = $2 WHERE username = $3`,
+            [a.avatar_url || null, a.avatar_data || null, a.username]
+          );
+        } catch (e) {
+          console.warn(`Could not restore avatar for admin ${a.username}:`, e.message);
+        }
+      }
+    }
+    
     await client.query('COMMIT');
     // refresh general settings cache after snapshot restore
     try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
@@ -2023,6 +2039,7 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       servers: Array.isArray(data.servers) ? data.servers.length : 0,
       server_keys: Array.isArray(data.server_keys) ? data.server_keys.length : 0,
       users: Array.isArray(data.users) ? data.users.length : 0,
+      admins_avatars_restored: Array.isArray(data.admins) ? data.admins.length : 0,
     }});
     } catch (err) {
       await client.query('ROLLBACK');
