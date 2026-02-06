@@ -97,20 +97,12 @@ export default function FinancialPage() {
 
   // Generate snapshot for a specific month
   const generateSnapshot = async (monthStr) => {
-    console.log('[generateSnapshot] called with monthStr:', monthStr);
-    console.log('[generateSnapshot] user object:', user);
-    
     const role = user && (user.user?.role || user.role);
-    console.log('[generateSnapshot] extracted role:', role);
-    
     if (role !== 'ADMIN' && role !== 'SERVER_ADMIN') {
-      console.warn('[generateSnapshot] permission denied, role:', role);
       setSnapshotMessage('❌ Only ADMIN and SERVER_ADMIN can generate snapshots');
       setTimeout(() => setSnapshotMessage(''), 5000);
       return;
     }
-    
-    console.log('[generateSnapshot] permission check passed, calling API...');
     setGeneratingSnapshot(true);
     setSnapshotMessage('');
     try {
@@ -118,16 +110,12 @@ export default function FinancialPage() {
       const url = monthStr 
         ? `/api/admin/financial/snapshot?month=${monthStr}`
         : '/api/admin/financial/snapshot';
-      console.log('[generateSnapshot] API URL:', url);
       const res = await axios.post(url, {}, { headers, validateStatus: () => true });
-      console.log('[generateSnapshot] API response:', res.status, res.data);
-      
       if (res.status !== 200) throw new Error(res.data?.msg || `Status ${res.status}`);
       setSnapshotMessage(`✅ Snapshot generated for ${res.data.month || monthStr || 'previous month'}`);
       // Refresh the financial data to show new snapshot
       setTimeout(() => window.location.reload(), 2000);
     } catch (err) {
-      console.error('[generateSnapshot] error:', err);
       setSnapshotMessage(`❌ Failed: ${err.message}`);
     } finally {
       setGeneratingSnapshot(false);
@@ -441,8 +429,13 @@ export default function FinancialPage() {
                 Snapshots are read-only and won't change with future price or user updates.
               </p>
             </div>
-            <button 
-              onClick={() => generateSnapshot()}
+            <button
+              type="button"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                generateSnapshot();
+              }}
               disabled={generatingSnapshot}
               style={{
                 padding: '0.75rem 1.5rem',
@@ -693,7 +686,12 @@ export default function FinancialPage() {
                         </span>
                       ) : (role === 'ADMIN' || role === 'SERVER_ADMIN') ? (
                         <button
-                          onClick={() => generateSnapshot(m.month)}
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            generateSnapshot(m.month);
+                          }}
                           disabled={generatingSnapshot}
                           style={{
                             padding: '0.25rem 0.5rem',
