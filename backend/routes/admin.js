@@ -883,28 +883,60 @@ router.get('/financial', authenticateToken, async (req, res) => {
         }
       }
       // If target is ADMIN or other role, show all data (no filter)
-    } else if (role && role !== 'ADMIN' && role !== 'SERVER_ADMIN') {
-      // Financial reports are organization-wide for both ADMIN and SERVER_ADMIN
-      // Only deny access to other roles (VIEWER, etc)
-      try { console.log('[DEBUG GET /api/admin/financial] deny non-admin role=', role, 'userId=', req.user && req.user.id); } catch (e) {}
-      return res.status(403).json({ msg: 'Forbidden' });
+    } else if (role && role !== 'ADMIN') {
+      // only SERVER_ADMIN should reach here; others are forbidden
+      if (role !== 'SERVER_ADMIN') {
+        try { console.log('[DEBUG GET /api/admin/financial] deny non-server-admin role=', role, 'userId=', req.user && req.user.id); } catch (e) {}
+        return res.status(403).json({ msg: 'Forbidden' });
+      }
+      // fetch assigned server ids
+      const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [req.user.id]);
+      const sids = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
+      console.log('[DEBUG] SERVER_ADMIN sids for current user', req.user && req.user.id, '=', sids);
+      if (!sids.length) {
+        try { console.log('[DEBUG GET /api/admin/financial] SERVER_ADMIN has no assigned servers, denying access userId=', req.user && req.user.id); } catch (e) {}
+        return res.status(403).json({ msg: 'Forbidden' });
+      }
+      serverIdsFilter = sids;
+      queryParams = [sids];
     }
-    // SERVER_ADMIN viewing directly: show all data (no server filtering)
-    // This allows them to see/use global financial snapshots
     
     console.log('[DEBUG] Final queryParams before SQL:', queryParams, 'serverIdsFilter:', serverIdsFilter);
 
     // Fetch snapshots for last 12 months
-    const snapshotsQuery = `
-      SELECT month_start, month_end, mini_count, basic_count, unlimited_count,
-             price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents,
-             TRUE as is_snapshot
-      FROM monthly_financial_snapshots
-      WHERE month_start >= date_trunc('month', CURRENT_DATE) - interval '11 months'
-        AND month_start < date_trunc('month', CURRENT_DATE)
-      ORDER BY month_start ASC
-    `;
-    const { rows: snapshotRows } = await pool.query(snapshotsQuery);
+    // ADMIN: fetch global snapshots (server_id IS NULL)
+    // SERVER_ADMIN: fetch snapshots for their assigned servers (server_id IN (...))
+    let snapshotsQuery;
+    let snapshotsParams = [];
+    
+    if (serverIdsFilter && serverIdsFilter.length > 0) {
+      // SERVER_ADMIN viewing: get snapshots for their assigned servers
+      snapshotsQuery = `
+        SELECT month_start, month_end, mini_count, basic_count, unlimited_count,
+               price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents,
+               server_id, TRUE as is_snapshot
+        FROM monthly_financial_snapshots
+        WHERE month_start >= date_trunc('month', CURRENT_DATE) - interval '11 months'
+          AND month_start < date_trunc('month', CURRENT_DATE)
+          AND server_id = ANY($1::int[])
+        ORDER BY month_start ASC
+      `;
+      snapshotsParams = [serverIdsFilter];
+    } else {
+      // ADMIN viewing: get global snapshots (server_id IS NULL)
+      snapshotsQuery = `
+        SELECT month_start, month_end, mini_count, basic_count, unlimited_count,
+               price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents,
+               server_id, TRUE as is_snapshot
+        FROM monthly_financial_snapshots
+        WHERE month_start >= date_trunc('month', CURRENT_DATE) - interval '11 months'
+          AND month_start < date_trunc('month', CURRENT_DATE)
+          AND server_id IS NULL
+        ORDER BY month_start ASC
+      `;
+    }
+    
+    const { rows: snapshotRows } = await pool.query(snapshotsQuery, snapshotsParams);
     
     // Create map of months with snapshots
     const snapshotsMap = new Map();
@@ -1098,6 +1130,16 @@ router.post('/financial/snapshot', authenticateToken, async (req, res) => {
     const monthStart = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), 1);
     const monthEnd = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0, 23, 59, 59, 999);
     
+    // Determine server filtering for SERVER_ADMIN
+    let serverIdsFilter = null;
+    if (role === 'SERVER_ADMIN') {
+      const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [req.user.id]);
+      serverIdsFilter = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
+      if (!serverIdsFilter.length) {
+        return res.status(403).json({ msg: 'No servers assigned to create snapshots' });
+      }
+    }
+    
     // Helper to normalize service type
     const normalizeService = (svc) => {
       const v = (svc || '').toString().toLowerCase();
@@ -1108,16 +1150,31 @@ router.post('/financial/snapshot', authenticateToken, async (req, res) => {
       return null;
     };
 
-    // Count active users at end of month by service type
-    const countQuery = `
-      SELECT service_type, COUNT(*)::int AS cnt
-      FROM users
-      WHERE created_at <= $1
-        AND (expire_date IS NULL OR expire_date >= $2)
-        AND enabled = TRUE
-      GROUP BY service_type
-    `;
-    const countResult = await pool.query(countQuery, [monthEnd, monthStart]);
+    // Count active users at end of month by service type (filtered by servers if SERVER_ADMIN)
+    let countQuery, countParams;
+    if (serverIdsFilter) {
+      countQuery = `
+        SELECT service_type, COUNT(*)::int AS cnt
+        FROM users
+        WHERE created_at <= $1
+          AND (expire_date IS NULL OR expire_date >= $2)
+          AND enabled = TRUE
+          AND server_id = ANY($3::int[])
+        GROUP BY service_type
+      `;
+      countParams = [monthEnd, monthStart, serverIdsFilter];
+    } else {
+      countQuery = `
+        SELECT service_type, COUNT(*)::int AS cnt
+        FROM users
+        WHERE created_at <= $1
+          AND (expire_date IS NULL OR expire_date >= $2)
+          AND enabled = TRUE
+        GROUP BY service_type
+      `;
+      countParams = [monthEnd, monthStart];
+    }
+    const countResult = await pool.query(countQuery, countParams);
     
     const counts = { Mini: 0, Basic: 0, Unlimited: 0 };
     for (const row of countResult.rows) {
@@ -1165,11 +1222,23 @@ router.post('/financial/snapshot', authenticateToken, async (req, res) => {
                          (counts.Basic * prices.price_basic_cents) + 
                          (counts.Unlimited * prices.price_unlimited_cents);
 
-    // Check if snapshot already exists
-    const existingCheck = await pool.query(
-      'SELECT id FROM monthly_financial_snapshots WHERE month_start = $1',
-      [monthStart]
-    );
+    // For SERVER_ADMIN: use first assigned server as marker
+    // For ADMIN: server_id stays NULL (global snapshot)
+    const server_id_marker = serverIdsFilter && serverIdsFilter.length > 0 ? serverIdsFilter[0] : null;
+
+    // Check if snapshot already exists (match on month_start + server marker)
+    let existingCheck;
+    if (server_id_marker) {
+      existingCheck = await pool.query(
+        'SELECT id FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id = $2',
+        [monthStart, server_id_marker]
+      );
+    } else {
+      existingCheck = await pool.query(
+        'SELECT id FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id IS NULL',
+        [monthStart]
+      );
+    }
 
     let snapshot;
     if (existingCheck.rows.length > 0) {
@@ -1186,14 +1255,17 @@ router.post('/financial/snapshot', authenticateToken, async (req, res) => {
             revenue_cents = $9,
             updated_at = NOW(),
             created_by = $10
-        WHERE month_start = $1
+        WHERE month_start = $1 AND ${server_id_marker ? 'server_id = $11' : 'server_id IS NULL'}
         RETURNING *
       `;
-      const result = await pool.query(updateQuery, [
-        monthStart, monthEnd, counts.Mini, counts.Basic, counts.Unlimited,
-        prices.price_mini_cents, prices.price_basic_cents, prices.price_unlimited_cents,
-        revenue_cents, req.user.id
-      ]);
+      const updateParams = server_id_marker 
+        ? [monthStart, monthEnd, counts.Mini, counts.Basic, counts.Unlimited,
+           prices.price_mini_cents, prices.price_basic_cents, prices.price_unlimited_cents,
+           revenue_cents, req.user.id, server_id_marker]
+        : [monthStart, monthEnd, counts.Mini, counts.Basic, counts.Unlimited,
+           prices.price_mini_cents, prices.price_basic_cents, prices.price_unlimited_cents,
+           revenue_cents, req.user.id];
+      const result = await pool.query(updateQuery, updateParams);
       snapshot = result.rows[0];
     } else {
       // Insert new snapshot
@@ -1201,19 +1273,19 @@ router.post('/financial/snapshot', authenticateToken, async (req, res) => {
         INSERT INTO monthly_financial_snapshots (
           month_start, month_end, mini_count, basic_count, unlimited_count,
           price_mini_cents, price_basic_cents, price_unlimited_cents,
-          revenue_cents, created_by
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          revenue_cents, created_by, server_id
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING *
       `;
       const result = await pool.query(insertQuery, [
         monthStart, monthEnd, counts.Mini, counts.Basic, counts.Unlimited,
         prices.price_mini_cents, prices.price_basic_cents, prices.price_unlimited_cents,
-        revenue_cents, req.user.id
+        revenue_cents, req.user.id, server_id_marker
       ]);
       snapshot = result.rows[0];
     }
 
-    console.log('Financial snapshot created/updated:', snapshot.month_start);
+    console.log('Financial snapshot created/updated:', snapshot.month_start, 'server_id:', server_id_marker || 'GLOBAL');
     return res.json({ msg: 'Snapshot created successfully', snapshot });
   } catch (err) {
     console.error('POST /financial/snapshot failed:', err);
@@ -1227,7 +1299,7 @@ router.delete('/financial/snapshot/:month', authenticateToken, async (req, res) 
   try {
     const role = req.user && req.user.role;
     if (role !== 'ADMIN' && role !== 'SERVER_ADMIN') {
-      return res.status(403).json({ msg: 'Only ADMINs and SERVER_ADMINs can delete financial snapshots' });
+      return res.status(403).json({ msg: 'Only ADMINs and SERVER_ADMIN can delete financial snapshots' });
     }
 
     const monthParam = req.params.month;
@@ -1237,10 +1309,30 @@ router.delete('/financial/snapshot/:month', authenticateToken, async (req, res) 
       return res.status(400).json({ msg: 'Invalid month format. Use YYYY-MM' });
     }
 
-    const result = await pool.query(
-      'DELETE FROM monthly_financial_snapshots WHERE month_start = $1 RETURNING id',
-      [monthStart]
-    );
+    // Determine server filtering for SERVER_ADMIN
+    let serverIdsFilter = null;
+    if (role === 'SERVER_ADMIN') {
+      const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [req.user.id]);
+      serverIdsFilter = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
+      if (!serverIdsFilter.length) {
+        return res.status(403).json({ msg: 'No servers assigned' });
+      }
+    }
+
+    let result;
+    if (serverIdsFilter) {
+      // SERVER_ADMIN: delete snapshot for their first assigned server (marker)
+      result = await pool.query(
+        'DELETE FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id = $2 RETURNING id',
+        [monthStart, serverIdsFilter[0]]
+      );
+    } else {
+      // ADMIN: delete global snapshot (server_id IS NULL)
+      result = await pool.query(
+        'DELETE FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id IS NULL RETURNING id',
+        [monthStart]
+      );
+    }
 
     if (result.rows.length === 0) {
       return res.status(404).json({ msg: 'Snapshot not found' });
