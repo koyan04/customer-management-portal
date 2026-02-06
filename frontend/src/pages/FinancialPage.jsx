@@ -3,7 +3,7 @@ import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { Bar } from 'react-chartjs-2';
 // using native date inputs with calendar pick UI
-import { FiCalendar, FiClock, FiTrendingUp, FiGlobe } from 'react-icons/fi';
+import { FiCalendar, FiClock, FiTrendingUp, FiGlobe, FiSave, FiCheck } from 'react-icons/fi';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -33,6 +33,8 @@ export default function FinancialPage() {
   const [endDate, setEndDate] = useState(null); // Date
   const [accounts, setAccounts] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(null);
+  const [generatingSnapshot, setGeneratingSnapshot] = useState(false);
+  const [snapshotMessage, setSnapshotMessage] = useState('');
   // validationMsg was unused; keeping placeholder for future form validation feature
   // validationMsg placeholder removed (unused) – reintroduce when adding form validation UI
 
@@ -92,6 +94,34 @@ export default function FinancialPage() {
     fetchData();
     return () => { mounted = false; };
   }, [token, user, selectedUserId]);
+
+  // Generate snapshot for a specific month
+  const generateSnapshot = async (monthStr) => {
+    const role = user && (user.user?.role || user.role);
+    if (role !== 'ADMIN') {
+      setSnapshotMessage('❌ Only ADMIN can generate snapshots');
+      setTimeout(() => setSnapshotMessage(''), 5000);
+      return;
+    }
+    setGeneratingSnapshot(true);
+    setSnapshotMessage('');
+    try {
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const url = monthStr 
+        ? `/api/admin/financial/snapshot?month=${monthStr}`
+        : '/api/admin/financial/snapshot';
+      const res = await axios.post(url, {}, { headers, validateStatus: () => true });
+      if (res.status !== 200) throw new Error(res.data?.msg || `Status ${res.status}`);
+      setSnapshotMessage(`✅ Snapshot generated for ${res.data.month || monthStr || 'previous month'}`);
+      // Refresh the financial data to show new snapshot
+      setTimeout(() => window.location.reload(), 2000);
+    } catch (err) {
+      setSnapshotMessage(`❌ Failed: ${err.message}`);
+    } finally {
+      setGeneratingSnapshot(false);
+      setTimeout(() => setSnapshotMessage(''), 5000);
+    }
+  };
 
   // helper: convert month string 'YYYY-MM' to yyyy-mm-01 date string
   const monthToISO = (monthStr) => (monthStr ? `${monthStr}-01` : null);
@@ -380,6 +410,66 @@ export default function FinancialPage() {
         </div>
       </div>
 
+      {/* Snapshot Management - Only for ADMIN */}
+      {(user && (user.user?.role || user.role) === 'ADMIN') && (
+        <div className="glass-panel" style={{ 
+          padding: '1rem', 
+          marginBottom: '1rem', 
+          borderRadius: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <h3 style={{ margin: '0 0 0.5rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <FiSave />
+                Financial Snapshots
+              </h3>
+              <p style={{ margin: 0, fontSize: '0.9rem', color: '#666' }}>
+                Generate permanent monthly snapshots based on user counts and prices at month-end. 
+                Snapshots are read-only and won't change with future price or user updates.
+              </p>
+            </div>
+            <button 
+              onClick={() => generateSnapshot()}
+              disabled={generatingSnapshot}
+              style={{
+                padding: '0.75rem 1.5rem',
+                borderRadius: '6px',
+                border: 'none',
+                backgroundColor: generatingSnapshot ? '#ccc' : '#4CAF50',
+                color: 'white',
+                cursor: generatingSnapshot ? 'not-allowed' : 'pointer',
+                fontSize: '0.95rem',
+                fontWeight: '600',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                transition: 'background-color 0.2s ease',
+                whiteSpace: 'nowrap'
+              }}
+              onMouseEnter={(e) => !generatingSnapshot && (e.target.style.backgroundColor = '#45a049')}
+              onMouseLeave={(e) => !generatingSnapshot && (e.target.style.backgroundColor = '#4CAF50')}
+              title="Generate snapshot for the previous month"
+            >
+              {generatingSnapshot ? '⏳ Generating...' : '📸 Generate Previous Month'}
+            </button>
+          </div>
+          {snapshotMessage && (
+            <div style={{
+              marginTop: '1rem',
+              padding: '0.75rem',
+              borderRadius: '6px',
+              backgroundColor: snapshotMessage.startsWith('✅') ? '#d4edda' : '#f8d7da',
+              color: snapshotMessage.startsWith('✅') ? '#155724' : '#721c24',
+              border: `1px solid ${snapshotMessage.startsWith('✅') ? '#c3e6cb' : '#f5c6cb'}`,
+              fontSize: '0.9rem'
+            }}>
+              {snapshotMessage}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="duration-controls">
         <div className="duration-buttons">
           <button onClick={() => {
@@ -490,11 +580,33 @@ export default function FinancialPage() {
 
         {selectedMonth ? (
           <div className="financial-month-details glass-panel">
-            <h4>Details for {formatWithAppTZ(toDate(monthToISO(selectedMonth.month)), { month: 'long', year: 'numeric' })}</h4>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <h4 style={{ margin: 0 }}>Details for {formatWithAppTZ(toDate(monthToISO(selectedMonth.month)), { month: 'long', year: 'numeric' })}</h4>
+              {selectedMonth.is_snapshot && (
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.25rem',
+                  padding: '0.25rem 0.5rem',
+                  borderRadius: '4px',
+                  backgroundColor: '#d4edda',
+                  color: '#155724',
+                  fontSize: '0.75rem',
+                  fontWeight: '600'
+                }}>
+                  <FiCheck size={12} /> Snapshot
+                </span>
+              )}
+            </div>
             <div>Revenue: {fmtCurrency(selectedMonth.revenue_cents, currency)}</div>
             <div>Mini: {selectedMonth.counts.Mini} × {fmtCurrency(selectedMonth.prices.price_mini_cents || 0, currency)}</div>
             <div>Basic: {selectedMonth.counts.Basic} × {fmtCurrency(selectedMonth.prices.price_basic_cents || 0, currency)}</div>
             <div>Unlimited: {selectedMonth.counts.Unlimited} × {fmtCurrency(selectedMonth.prices.price_unlimited_cents || 0, currency)}</div>
+            {selectedMonth.is_snapshot && (
+              <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#666', fontStyle: 'italic' }}>
+                This is a permanent snapshot from month-end. Values won't change with future updates.
+              </div>
+            )}
           </div>
         ) : (
           <div className="financial-month-details glass-panel">
@@ -515,6 +627,7 @@ export default function FinancialPage() {
                 <th style={{textAlign:'right'}}><span className="full">Basic</span><span className="abbr">B</span></th>
                 <th style={{textAlign:'right'}}><span className="full">Unlimited</span><span className="abbr">UL</span></th>
                 <th style={{textAlign:'right'}}>Revenue</th>
+                <th style={{textAlign:'center'}}>Status</th>
               </tr>
             </thead>
             <tbody>
@@ -528,6 +641,8 @@ export default function FinancialPage() {
           const fmtOpts = tz && tz !== 'auto' ? { month: 'long', timeZone: tz } : { month: 'long' };
           const monthName = monthDate ? new Intl.DateTimeFormat(undefined, fmtOpts).format(monthDate) : (m.month || '');
           const year = monthDate ? monthDate.getUTCFullYear() : (m.month || '').slice(0,4);
+          const isCurrentMonth = m.month === new Date().toISOString().slice(0, 7);
+          const role = user && (user.user?.role || user.role);
           return (
             <tr key={m.month}>
               <td>{year}</td>
@@ -536,6 +651,67 @@ export default function FinancialPage() {
                     <td style={{textAlign:'right'}}>{(m.counts && m.counts.Basic) || 0}</td>
                     <td style={{textAlign:'right'}}>{(m.counts && m.counts.Unlimited) || 0}</td>
                     <td style={{textAlign:'right'}}>{Math.round(Number(m.revenue_cents || 0) / 100).toLocaleString()} <span className="table-currency">{currency}</span></td>
+                    <td style={{textAlign:'center'}}>
+                      {m.is_snapshot ? (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '0.25rem',
+                          padding: '0.25rem 0.5rem',
+                          borderRadius: '4px',
+                          backgroundColor: '#d4edda',
+                          color: '#155724',
+                          fontSize: '0.75rem',
+                          fontWeight: '600'
+                        }} title="Permanent snapshot">
+                          <FiCheck size={12} /> Snapshot
+                        </span>
+                      ) : isCurrentMonth ? (
+                        <span style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '0.25rem 0.5rem',
+                          borderRadius: '4px',
+                          backgroundColor: '#fff3cd',
+                          color: '#856404',
+                          fontSize: '0.75rem',
+                          fontWeight: '600'
+                        }} title="Current month - changes in real-time">
+                          Current
+                        </span>
+                      ) : role === 'ADMIN' ? (
+                        <button
+                          onClick={() => generateSnapshot(m.month)}
+                          disabled={generatingSnapshot}
+                          style={{
+                            padding: '0.25rem 0.5rem',
+                            borderRadius: '4px',
+                            border: 'none',
+                            backgroundColor: generatingSnapshot ? '#e0e0e0' : '#007bff',
+                            color: 'white',
+                            cursor: generatingSnapshot ? 'not-allowed' : 'pointer',
+                            fontSize: '0.75rem',
+                            fontWeight: '600',
+                            whiteSpace: 'nowrap'
+                          }}
+                          title={`Generate snapshot for ${monthName} ${year}`}
+                        >
+                          Generate
+                        </button>
+                      ) : (
+                        <span style={{
+                          display: 'inline-flex',
+                          padding: '0.25rem 0.5rem',
+                          borderRadius: '4px',
+                          backgroundColor: '#f8f9fa',
+                          color: '#6c757d',
+                          fontSize: '0.75rem',
+                          fontWeight: '600'
+                        }}>
+                          Calculated
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -548,6 +724,7 @@ export default function FinancialPage() {
                 <td style={{textAlign:'right'}}><strong>{totals.basic}</strong></td>
                 <td style={{textAlign:'right'}}><strong>{totals.unlimited}</strong></td>
                 <td style={{textAlign:'right'}}><strong>{Math.round(totals.revenue/100).toLocaleString()} <span className="table-currency">{currency}</span></strong></td>
+                <td></td>
               </tr>
             </tfoot>
           </table>

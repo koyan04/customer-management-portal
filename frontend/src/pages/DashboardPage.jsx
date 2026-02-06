@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { FaServer, FaUsers, FaCheckCircle, FaExclamationTriangle, FaTimesCircle, FaNetworkWired, FaGlobe, FaLeaf, FaCube, FaInfinity, FaChartPie, FaUserShield, FaChartBar, FaChevronDown } from 'react-icons/fa';
+import { FaServer, FaUsers, FaCheckCircle, FaExclamationTriangle, FaTimesCircle, FaNetworkWired, FaGlobe, FaLeaf, FaCube, FaInfinity, FaChartPie, FaUserShield, FaChartBar, FaChevronDown, FaSyncAlt } from 'react-icons/fa';
 import { Link, useNavigate } from 'react-router-dom';
 import Modal from '../components/Modal.jsx';
 import formatWithAppTZ from '../lib/timezone';
@@ -15,8 +15,12 @@ function DashboardPage() {
   const [backendTotals, setBackendTotals] = useState({ tiers: null, status: null, totalUsers: null, totalServers: null });
   const [statusModal, setStatusModal] = useState({ open: false, type: null });
   const [statusModalData, setStatusModalData] = useState({ loading: false, users: [], error: '' });
+  const [statusModalPage, setStatusModalPage] = useState(1);
   const [tierModal, setTierModal] = useState({ open: false, tier: null });
   const [tierModalData, setTierModalData] = useState({ loading: false, users: [], error: '' });
+  const [tierModalPage, setTierModalPage] = useState(1);
+  const [refreshInterval, setRefreshInterval] = useState(0.5); // in minutes, default 30 seconds
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const { token, user: authUser } = useAuth();
   const role = authUser?.user?.role || authUser?.role || null;
   const navigate = useNavigate();
@@ -59,16 +63,24 @@ function DashboardPage() {
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
-  // Auto-refresh dashboard stats every 30 seconds
+  // Auto-refresh dashboard stats based on configured interval
   useEffect(() => {
-    if (!token) return;
+    if (!token || refreshInterval <= 0) return;
     
-    const refreshInterval = setInterval(() => {
+    const intervalMs = refreshInterval * 60 * 1000; // convert minutes to milliseconds
+    const autoRefreshTimer = setInterval(() => {
       fetchAll();
-    }, 30000); // 30 seconds
+    }, intervalMs);
 
-    return () => clearInterval(refreshInterval);
-  }, [token, fetchAll]);
+    return () => clearInterval(autoRefreshTimer);
+  }, [token, fetchAll, refreshInterval]);
+
+  // Manual refresh handler
+  const handleManualRefresh = async () => {
+    setIsRefreshing(true);
+    await fetchAll();
+    setTimeout(() => setIsRefreshing(false), 500);
+  };
 
   // Poll a lightweight health endpoint for feature flags and refresh state (admin-only)
   useEffect(() => {
@@ -243,8 +255,11 @@ function DashboardPage() {
     try {
       setStatusModal({ open: true, type, serverId: null, serverName: null });
       setStatusModalData({ loading: true, users: [], error: '' });
+      setStatusModalPage(1);
       const res = await axios.get(`${backendOrigin}/api/users/by-status/${type}`, { headers: { Authorization: `Bearer ${token}` } });
       const serverUsers = Array.isArray(res.data) ? res.data : [];
+      // Sort by latest expire date first (descending)
+      serverUsers.sort((a, b) => new Date(b.expire_date) - new Date(a.expire_date));
       setStatusModalData({ loading: false, users: serverUsers, error: '' });
     } catch (e) {
       setStatusModalData({ loading: false, users: [], error: e?.response?.data?.msg || e?.message || 'Failed to load' });
@@ -257,6 +272,7 @@ function DashboardPage() {
     try {
       setTierModal({ open: true, tier: normTier });
       setTierModalData({ loading: true, users: [], error: '' });
+      setTierModalPage(1);
       // Fetch all servers then fetch users per server and filter by tier
       const srvRes = await axios.get(`${backendOrigin}/api/servers`, { headers: { Authorization: `Bearer ${token}` } });
       const list = Array.isArray(srvRes.data) ? srvRes.data : (srvRes.data?.servers || []);
@@ -276,7 +292,8 @@ function DashboardPage() {
           }
         }
       }
-      users.sort((a, b) => new Date(a.expire_date) - new Date(b.expire_date));
+      // Sort by latest expire date first (descending)
+      users.sort((a, b) => new Date(b.expire_date) - new Date(a.expire_date));
       setTierModalData({ loading: false, users, error: '' });
     } catch (e) {
       setTierModalData({ loading: false, users: [], error: e?.message || 'Failed to load' });
@@ -288,6 +305,7 @@ function DashboardPage() {
     try {
       setStatusModal({ open: true, type, serverId, serverName });
       setStatusModalData({ loading: true, users: [], error: '' });
+      setStatusModalPage(1);
       const r = await axios.get(`${backendOrigin}/api/users/server/${serverId}`, { headers: { Authorization: `Bearer ${token}` } });
       const list = Array.isArray(r.data) ? r.data : [];
       const now = new Date();
@@ -309,6 +327,8 @@ function DashboardPage() {
         const isActive = cutoff > soonCutoff;
         return (type === 'expired' && isExpired) || (type === 'soon' && isSoon) || (type === 'active' && isActive);
       });
+      // Sort by latest expire date first (descending)
+      filtered.sort((a, b) => new Date(b.expire_date) - new Date(a.expire_date));
       setStatusModalData({ loading: false, users: filtered, error: '' });
     } catch (e) {
       setStatusModalData({ loading: false, users: [], error: e?.message || 'Failed to load' });
@@ -328,14 +348,38 @@ function DashboardPage() {
             <p className="admin-subtitle" style={{ margin: 0 }}>Overview of servers and users</p>
           </div>
         </div>
-        {role === 'ADMIN' && (
-          <div className="admin-header-right">
+        <div className="admin-header-right">
+          <div className="dashboard-refresh-controls">
+            <div className="refresh-interval-group">
+              <label htmlFor="refresh-interval" className="refresh-label">Auto-refresh:</label>
+              <input
+                id="refresh-interval"
+                type="number"
+                min="0"
+                step="0.5"
+                value={refreshInterval}
+                onChange={(e) => setRefreshInterval(parseFloat(e.target.value) || 0)}
+                className="refresh-interval-input"
+                title="Auto-refresh interval in minutes (0 to disable)"
+              />
+              <span className="refresh-unit">min</span>
+            </div>
+            <button
+              onClick={handleManualRefresh}
+              disabled={isRefreshing}
+              className={`refresh-btn ${isRefreshing ? 'refreshing' : ''}`}
+              title="Refresh dashboard"
+            >
+              <FaSyncAlt className={isRefreshing ? 'spinning' : ''} />
+            </button>
+          </div>
+          {role === 'ADMIN' && (
             <span className={`feature-indicator ${stats.matview ? 'enabled' : 'disabled'}`} title={`User status matview ${stats.matview ? 'enabled' : 'disabled'}`}>
               Matview: {stats.matview ? 'ON' : 'OFF'}
               {showRefreshing ? ' (Refreshing…)' : ''}
             </span>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {/* Stats banner */}
@@ -484,7 +528,10 @@ function DashboardPage() {
       {/* Status Users Modal */}
       <Modal
         isOpen={statusModal.open}
-        onClose={() => setStatusModal({ open: false, type: null, serverId: null, serverName: null })}
+        onClose={() => { 
+          setStatusModal({ open: false, type: null, serverId: null, serverName: null }); 
+          setStatusModalPage(1); 
+        }}
         title={
           statusModal.type === 'expired' ? (
             <>
@@ -503,22 +550,31 @@ function DashboardPage() {
         )}
         {statusModalData.loading && <div>Loading…</div>}
         {statusModalData.error && <div className="form-error" role="alert">{statusModalData.error}</div>}
-        {!statusModalData.loading && !statusModalData.error && (
-          <div className="status-users-list">
-            {statusModalData.users.length === 0 ? (
-              <div>No users found.</div>
-            ) : (
-              <table className="user-table compact">
-                <thead>
-                  <tr>
-                    <th>Account</th>
-                    <th>Service</th>
-                    <th>Server</th>
-                    <th>Expire</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {statusModalData.users.map(u => {
+        {!statusModalData.loading && !statusModalData.error && (() => {
+          const ITEMS_PER_PAGE = window.innerWidth <= 768 ? 15 : 10;
+          const totalUsers = statusModalData.users.length;
+          const totalPages = Math.ceil(totalUsers / ITEMS_PER_PAGE);
+          const startIdx = (statusModalPage - 1) * ITEMS_PER_PAGE;
+          const endIdx = startIdx + ITEMS_PER_PAGE;
+          const paginatedUsers = statusModalData.users.slice(startIdx, endIdx);
+          
+          return (
+            <div className="status-users-list">
+              {totalUsers === 0 ? (
+                <div>No users found.</div>
+              ) : (
+                <>
+                  <table className="user-table compact">
+                    <thead>
+                      <tr>
+                        <th>Account</th>
+                        <th>Service</th>
+                        <th>Server</th>
+                        <th>Expire</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedUsers.map(u => {
                     const expText = formatWithAppTZ(u.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB');
                     return (
                       <tr 
@@ -548,40 +604,93 @@ function DashboardPage() {
                         </td>
                       </tr>
                     );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
+                      })}
+                    </tbody>
+                  </table>
+                  {totalPages > 1 && (
+                    <div className="modal-pagination" style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center' }}>
+                      <button 
+                        className="icon-btn" 
+                        onClick={() => setStatusModalPage(1)} 
+                        disabled={statusModalPage === 1}
+                        title="First page"
+                      >
+                        First
+                      </button>
+                      <button 
+                        className="icon-btn" 
+                        onClick={() => setStatusModalPage(p => Math.max(1, p - 1))} 
+                        disabled={statusModalPage === 1}
+                        title="Previous page"
+                      >
+                        Prev
+                      </button>
+                      <div>
+                        Page {statusModalPage} of {totalPages} ({totalUsers} total)
+                      </div>
+                      <button 
+                        className="icon-btn" 
+                        onClick={() => setStatusModalPage(p => Math.min(totalPages, p + 1))} 
+                        disabled={statusModalPage === totalPages}
+                        title="Next page"
+                      >
+                        Next
+                      </button>
+                      <button 
+                        className="icon-btn" 
+                        onClick={() => setStatusModalPage(totalPages)} 
+                        disabled={statusModalPage === totalPages}
+                        title="Last page"
+                      >
+                        Last
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })()}
       </Modal>
 
 
       {/* Tier Users Modal */}
       <Modal
         isOpen={tierModal.open}
-        onClose={() => setTierModal({ open: false, tier: null })}
+        onClose={() => { 
+          setTierModal({ open: false, tier: null }); 
+          setTierModalPage(1); 
+        }}
         title={tierModal.tier ? `Users in ${tierModal.tier}` : ''}
         className="status-users-modal"
       >
         {tierModalData.loading && <div>Loading…</div>}
         {tierModalData.error && <div className="form-error" role="alert">{tierModalData.error}</div>}
-        {!tierModalData.loading && !tierModalData.error && (
-          <div className="status-users-list">
-            {tierModalData.users.length === 0 ? (
-              <div>No users found.</div>
-            ) : (
-              <table className="user-table compact">
-                <thead>
-                  <tr>
-                    <th>Account</th>
-                    <th>Service</th>
-                    <th>Server</th>
-                    <th>Expire</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tierModalData.users.map(u => (
+        {!tierModalData.loading && !tierModalData.error && (() => {
+          const ITEMS_PER_PAGE = window.innerWidth <= 768 ? 15 : 10;
+          const totalUsers = tierModalData.users.length;
+          const totalPages = Math.ceil(totalUsers / ITEMS_PER_PAGE);
+          const startIdx = (tierModalPage - 1) * ITEMS_PER_PAGE;
+          const endIdx = startIdx + ITEMS_PER_PAGE;
+          const paginatedUsers = tierModalData.users.slice(startIdx, endIdx);
+          
+          return (
+            <div className="status-users-list">
+              {totalUsers === 0 ? (
+                <div>No users found.</div>
+              ) : (
+                <>
+                  <table className="user-table compact">
+                    <thead>
+                      <tr>
+                        <th>Account</th>
+                        <th>Service</th>
+                        <th>Server</th>
+                        <th>Expire</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedUsers.map(u => (
                     <tr 
                       key={u.id}
                       className="clickable-row"
@@ -595,11 +704,52 @@ function DashboardPage() {
                       <td>{u.expire_date ? formatWithAppTZ(u.expire_date, { year: 'numeric', month: '2-digit', day: '2-digit' }, 'en-GB') : '—'}</td>
                     </tr>
                   ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
+                    </tbody>
+                  </table>
+                  {totalPages > 1 && (
+                    <div className="modal-pagination" style={{ display: 'flex', gap: '0.35rem', justifyContent: 'center' }}>
+                      <button 
+                        className="icon-btn" 
+                        onClick={() => setTierModalPage(1)} 
+                        disabled={tierModalPage === 1}
+                        title="First page"
+                      >
+                        First
+                      </button>
+                      <button 
+                        className="icon-btn" 
+                        onClick={() => setTierModalPage(p => Math.max(1, p - 1))} 
+                        disabled={tierModalPage === 1}
+                        title="Previous page"
+                      >
+                        Prev
+                      </button>
+                      <div>
+                        Page {tierModalPage} of {totalPages} ({totalUsers} total)
+                      </div>
+                      <button 
+                        className="icon-btn" 
+                        onClick={() => setTierModalPage(p => Math.min(totalPages, p + 1))} 
+                        disabled={tierModalPage === totalPages}
+                        title="Next page"
+                      >
+                        Next
+                      </button>
+                      <button 
+                        className="icon-btn" 
+                        onClick={() => setTierModalPage(totalPages)} 
+                        disabled={tierModalPage === totalPages}
+                        title="Last page"
+                      >
+                        Last
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          );
+        })()}
       </Modal>
     </div>
   );

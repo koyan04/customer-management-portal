@@ -1065,9 +1065,9 @@ async function createBackupSnapshot() {
     // Fetch app settings, servers, server_keys and complete users export
     const [settingsRes, serversRes, serverKeysRes, usersRes] = await Promise.all([
       pool.query('SELECT * FROM app_settings'),
-      pool.query('SELECT id, server_name, ip_address, domain_name, owner, created_at FROM servers'),
+      pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers'),
       pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys'),
-      pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, created_at FROM users')
+      pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users')
     ]);
     const payload = { created_at: new Date().toISOString(), app_settings: settingsRes.rows || [], servers: serversRes.rows || [], server_keys: serverKeysRes.rows || [], users: usersRes.rows || [] };
     await fs.promises.writeFile(outPath, JSON.stringify(payload, null, 2), 'utf8');

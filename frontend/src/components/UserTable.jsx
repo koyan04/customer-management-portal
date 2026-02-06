@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import formatWithAppTZ from '../lib/timezone';
 import { createPortal } from 'react-dom';
-import { FaCog, FaTrashAlt, FaClock, FaEllipsisV } from 'react-icons/fa';
+import { FaCog, FaTrashAlt, FaClock, FaBars } from 'react-icons/fa';
 import { motion, AnimatePresence } from 'framer-motion';
 import UserEnabledToggle from './UserEnabledToggle.jsx';
 
@@ -217,14 +217,14 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, onToggle, canManageU
                           <button onClick={() => onEdit(user)} className="icon-btn edit-btn"><FaCog /></button>
                           <button onClick={() => onDelete(user)} className="icon-btn delete-btn"><FaTrashAlt /></button>
 
-                          {/* Overflow menu button for very small screens */}
+                          {/* Overflow menu button for mobile */}
                           <button
                             className="icon-btn overflow-btn"
                             title="More actions"
                             onClick={() => setOpenOverflowFor(prev => prev === user.id ? null : user.id)}
                             aria-expanded={openOverflowFor === user.id}
                           >
-                            <FaEllipsisV />
+                            <FaBars />
                           </button>
 
                           {openOverflowFor === user.id && (() => {
@@ -249,8 +249,23 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, onToggle, canManageU
                                 aria-label="More actions"
                                 style={style}
                               >
-                                <button className="overflow-item" onClick={() => { onEdit(user); setOpenOverflowFor(null); }} role="menuitem">Edit</button>
-                                <button className="overflow-item" onClick={() => { onDelete(user); setOpenOverflowFor(null); }} role="menuitem">Delete</button>
+                                <div className="overflow-item-group">
+                                  <div className="overflow-item-label">Enable/Disable</div>
+                                  <div className="overflow-toggle-wrap">
+                                    <UserEnabledToggle user={user} onChange={(updated, meta) => { if (onToggle) onToggle(updated, meta); }} />
+                                  </div>
+                                </div>
+                                <div className="overflow-item-group">
+                                  <div className="overflow-item-label">Quick Renew</div>
+                                  <div className="overflow-renew-buttons">
+                                    <button className="overflow-renew-btn" onClick={() => { onQuickRenew && onQuickRenew(user, 1); setOpenOverflowFor(null); }}>1m</button>
+                                    <button className="overflow-renew-btn" onClick={() => { onQuickRenew && onQuickRenew(user, 2); setOpenOverflowFor(null); }}>2m</button>
+                                    <button className="overflow-renew-btn" onClick={() => { onQuickRenew && onQuickRenew(user, 3); setOpenOverflowFor(null); }}>3m</button>
+                                    <button className="overflow-renew-btn" onClick={() => { onQuickRenew && onQuickRenew(user, 6); setOpenOverflowFor(null); }}>6m</button>
+                                  </div>
+                                </div>
+                                <button className="overflow-item" onClick={() => { onEdit(user); setOpenOverflowFor(null); }} role="menuitem"><FaCog /> Edit</button>
+                                <button className="overflow-item" onClick={() => { onDelete(user); setOpenOverflowFor(null); }} role="menuitem"><FaTrashAlt /> Delete</button>
                               </div>
                             );
                             return popupRoot ? createPortal(menu, popupRoot) : menu;

@@ -25,6 +25,10 @@ function KeyManagementInner() {
   const [origKey, setOrigKey] = useState('');
   const [genKey, setGenKey] = useState('');
   const [selectedUser, setSelectedUser] = useState('');
+  const [prefixEnabled, setPrefixEnabled] = useState(false);
+  const [prefixValue, setPrefixValue] = useState('&prefix=%16%03%01%00%C2%A8%01%01');
+  const [suffixType, setSuffixType] = useState('username');
+  const [customSuffix, setCustomSuffix] = useState('SG0');
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [keyToDelete, setKeyToDelete] = useState(null);
 
@@ -122,12 +126,36 @@ function KeyManagementInner() {
     })();
   };
 
-  const closeBox = () => { setShowBox(false); setEditing(null); setDesc(''); setOrigKey(''); setGenKey(''); };
+  const closeBox = () => { 
+    setShowBox(false); 
+    setEditing(null); 
+    setDesc(''); 
+    setOrigKey(''); 
+    setGenKey(''); 
+    setSelectedUser(''); 
+    setPrefixEnabled(false); 
+    setPrefixValue('&prefix=%16%03%01%00%C2%A8%01%01'); 
+    setSuffixType('username'); 
+    setCustomSuffix('SG0'); 
+  };
 
   const doGenerate = () => {
     // Replace IPv4 occurrences in original key with the server's domain name
     setGenerateAlertMessage('');
     setGenerateAlertOpen(false);
+    
+    // Validate suffix type selection
+    if (suffixType === 'username' && (!selectedUser || selectedUser.trim() === '')) {
+      setGenerateAlertMessage('Please choose a username first.');
+      setGenerateAlertOpen(true);
+      return;
+    }
+    if (suffixType === 'custom' && (!customSuffix || customSuffix.trim() === '')) {
+      setGenerateAlertMessage('Please enter a custom suffix value.');
+      setGenerateAlertOpen(true);
+      return;
+    }
+    
     if (!origKey || origKey.trim() === '') {
       setGenerateAlertMessage('No original key provided. Please paste or enter an original key before generating.');
       setGenerateAlertOpen(true);
@@ -148,11 +176,27 @@ function KeyManagementInner() {
       return;
     }
     const replaced = origKey.replace(ipRegex, domain);
-    // append suffix: #ServerName(UserName)
+    
+    // Add prefix if enabled
+    const prefix = prefixEnabled ? prefixValue : '';
+    
+    // Build suffix based on type
     const serverName = (server && (server.server_name || server.domain_name || server.ip_address)) || '';
-    const userName = selectedUser || (editing && editing.username) || '';
-    const suffix = `#${serverName}(${userName})`;
-    setGenKey(replaced + suffix);
+    let suffix = '';
+    
+    if (suffixType === 'none') {
+      // No Suffix: only include #ServerName
+      suffix = `#${serverName}`;
+    } else if (suffixType === 'custom') {
+      // Custom: #ServerName CustomValue (with space, no parentheses)
+      suffix = `#${serverName} ${customSuffix}`;
+    } else {
+      // Username: #ServerName(Username)
+      const userName = selectedUser || (editing && editing.username) || '';
+      suffix = `#${serverName}(${userName})`;
+    }
+    
+    setGenKey(replaced + prefix + suffix);
   };
 
   const [generateAlertOpen, setGenerateAlertOpen] = useState(false);
@@ -328,45 +372,107 @@ function KeyManagementInner() {
       {/* Key box modal (simple) */}
       {showBox && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" style={{ zIndex: 1200 }}>
-          <div className="modal-content" style={{ maxWidth: 720 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3>{editing ? `Key for ${editing.username || ''}` : 'New Key'}</h3>
+          <style>{`
+            @media (max-width: 768px) {
+              .key-modal-grid {
+                grid-template-columns: 1fr !important;
+              }
+              .key-modal-generated textarea {
+                font-size: 1rem !important;
+                padding: 10px !important;
+                min-height: 100px !important;
+              }
+            }
+            .key-modal-generated textarea {
+              resize: vertical;
+              min-height: 80px;
+              font-family: 'Courier New', Consolas, monospace;
+              word-break: break-all;
+              line-height: 1.4;
+            }
+          `}</style>
+          <div className="modal-content" style={{ maxWidth: 720, maxHeight: '90vh', overflow: 'auto' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>{editing ? `Key for ${editing.username || ''}` : 'New Key'}</h3>
               <button className="modal-close" onClick={closeBox}><FaTimes /></button>
             </div>
-            <div className="modal-form" style={{ display: 'grid', gap: '0.75rem' }}>
+            <div className="modal-form" style={{ display: 'grid', gap: '0.5rem', fontSize: '0.9rem' }}>
+              <div className="key-modal-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                <label>
+                  <span style={{ fontSize: '0.85rem' }}>Username</span>
+                  <select value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)} style={{ padding: '6px', borderRadius: 4, fontSize: '0.9rem' }}>
+                    <option value="">(choose user)</option>
+                    {users.map(u => (
+                      <option key={u.id} value={u.username || u.account_name || u.display_name || u.id}>{u.username || u.account_name || u.display_name || u.id}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  <span style={{ fontSize: '0.85rem' }}>Key Description</span>
+                  <input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} style={{ padding: '6px', fontSize: '0.9rem' }} />
+                </label>
+              </div>
+              
+              <div className="key-modal-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                {/* Prefix column */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: 0 }}>
+                    <input type="checkbox" checked={prefixEnabled} onChange={(e) => setPrefixEnabled(e.target.checked)} />
+                    <span style={{ fontSize: '0.85rem' }}>Add Prefix</span>
+                  </label>
+                  {prefixEnabled && (
+                    <input 
+                      type="text" 
+                      value={prefixValue} 
+                      onChange={(e) => setPrefixValue(e.target.value)} 
+                      placeholder="Prefix value"
+                      style={{ padding: '6px', fontSize: '0.85rem' }}
+                    />
+                  )}
+                </div>
+                
+                {/* Suffix column */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <label style={{ marginBottom: 0 }}>
+                    <span style={{ fontSize: '0.85rem' }}>Suffix Type</span>
+                    <select value={suffixType} onChange={(e) => setSuffixType(e.target.value)} style={{ padding: '6px', fontSize: '0.9rem' }}>
+                      <option value="username">User Name</option>
+                      <option value="custom">Custom</option>
+                      <option value="none">No Suffix</option>
+                    </select>
+                  </label>
+                  {suffixType === 'custom' && (
+                    <input 
+                      type="text" 
+                      value={customSuffix} 
+                      onChange={(e) => setCustomSuffix(e.target.value)} 
+                      placeholder="Custom value"
+                      style={{ padding: '6px', fontSize: '0.85rem' }}
+                    />
+                  )}
+                </div>
+              </div>
+              
               <label>
-                <span>Username</span>
-                <select value={selectedUser} onChange={(e) => setSelectedUser(e.target.value)} style={{ padding: '8px', borderRadius: 6 }}>
-                  <option value="">(choose user)</option>
-                  {users.map(u => (
-                    <option key={u.id} value={u.username || u.account_name || u.display_name || u.id}>{u.username || u.account_name || u.display_name || u.id}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Key Description</span>
-                <input type="text" value={desc} onChange={(e) => setDesc(e.target.value)} />
-              </label>
-              <label>
-                <span>Original key</span>
-                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                  <input type="text" value={origKey} onChange={(e) => setOrigKey(e.target.value)} style={{ flex: 1 }} />
-                  <button title="Paste from clipboard" className="btn" onClick={doPasteOrig}><FaPaste /></button>
+                <span style={{ fontSize: '0.85rem' }}>Original key</span>
+                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  <input type="text" value={origKey} onChange={(e) => setOrigKey(e.target.value)} style={{ flex: 1, padding: '6px', fontSize: '0.85rem' }} />
+                  <button title="Paste from clipboard" className="btn" onClick={doPasteOrig} style={{ padding: '6px 10px' }}><FaPaste /></button>
                 </div>
               </label>
               <label>
-                <span>Generated key</span>
-                <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                  <input type="text" value={genKey} onChange={(e) => setGenKey(e.target.value)} style={{ flex: 1 }} />
-                  <button title="Copy generated" className="btn" onClick={doCopyGenerated}><FaCopy /></button>
+                <span style={{ fontSize: '0.85rem' }}>Generated key</span>
+                <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-start' }}>
+                  <textarea className="key-modal-generated" value={genKey} onChange={(e) => setGenKey(e.target.value)} style={{ flex: 1, padding: '6px', fontSize: '0.85rem', minHeight: '80px', resize: 'vertical', fontFamily: "'Courier New', Consolas, monospace", wordBreak: 'break-all', lineHeight: '1.4' }} />
+                  <button title="Copy generated" className="btn" onClick={doCopyGenerated} style={{ padding: '6px 10px' }}><FaCopy /></button>
                 </div>
               </label>
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                <button className="btn" onClick={doGenerate} disabled={saving}>Generate</button>
-                <button className="btn primary" onClick={doSave} disabled={saving}>
+              <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+                <button className="btn" onClick={doGenerate} disabled={saving} style={{ padding: '6px 12px', fontSize: '0.9rem' }}>Generate</button>
+                <button className="btn primary" onClick={doSave} disabled={saving} style={{ padding: '6px 12px', fontSize: '0.9rem' }}>
                   {saving ? 'Saving...' : 'Save'}
                 </button>
-                <button className="btn" onClick={closeBox} disabled={saving}>Cancel</button>
+                <button className="btn" onClick={closeBox} disabled={saving} style={{ padding: '6px 12px', fontSize: '0.9rem' }}>Cancel</button>
               </div>
             </div>
           </div>

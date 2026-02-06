@@ -850,6 +850,7 @@ async function warnIfKeyDrop(client, key, beforeObj, afterObj) {
 }
 
 // Financial reports: monthly/yearly summaries using historical prices from settings_audit
+// Now uses snapshots when available for completed months
 router.get('/financial', authenticateToken, async (req, res) => {
   try {
     // DEBUG: log the authenticated user to help trace permission issues during testing
@@ -861,6 +862,7 @@ router.get('/financial', authenticateToken, async (req, res) => {
     
     try { console.log('[DEBUG GET /api/admin/financial] branch check, role=', role, 'userId=', req.user && req.user.id, 'targetUserId=', targetUserId); } catch (e) {}
     let queryParams = [];
+    let serverIdsFilter = null;
     
     // If ADMIN is viewing as another user, apply that user's permissions
     if (role === 'ADMIN' && targetUserId) {
@@ -876,6 +878,7 @@ router.get('/financial', authenticateToken, async (req, res) => {
         const sids = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
         console.log('[DEBUG] SERVER_ADMIN server IDs for target user:', sids);
         if (sids.length > 0) {
+          serverIdsFilter = sids;
           queryParams = [sids];
         }
       }
@@ -894,11 +897,32 @@ router.get('/financial', authenticateToken, async (req, res) => {
         try { console.log('[DEBUG GET /api/admin/financial] SERVER_ADMIN has no assigned servers, denying access userId=', req.user && req.user.id); } catch (e) {}
         return res.status(403).json({ msg: 'Forbidden' });
       }
+      serverIdsFilter = sids;
       queryParams = [sids];
     }
     
-    console.log('[DEBUG] Final queryParams before SQL:', queryParams);
+    console.log('[DEBUG] Final queryParams before SQL:', queryParams, 'serverIdsFilter:', serverIdsFilter);
 
+    // Fetch snapshots for last 12 months
+    const snapshotsQuery = `
+      SELECT month_start, month_end, mini_count, basic_count, unlimited_count,
+             price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents,
+             TRUE as is_snapshot
+      FROM monthly_financial_snapshots
+      WHERE month_start >= date_trunc('month', CURRENT_DATE) - interval '11 months'
+        AND month_start < date_trunc('month', CURRENT_DATE)
+      ORDER BY month_start ASC
+    `;
+    const { rows: snapshotRows } = await pool.query(snapshotsQuery);
+    
+    // Create map of months with snapshots
+    const snapshotsMap = new Map();
+    for (const row of snapshotRows) {
+      const monthLabel = `${row.month_start.getFullYear()}-${String(row.month_start.getMonth() + 1).padStart(2, '0')}`;
+      snapshotsMap.set(monthLabel, row);
+    }
+
+    // For months without snapshots or SERVER_ADMIN filtering, calculate on-the-fly
     // Single SQL to aggregate counts per month and per service_type for the last 12 months,
     // plus fetch the most-recent `settings_audit.after_data` per month (LATERAL) so we can derive prices.
     // Build filtered users subquery first - use WHERE clause in CTE without table alias
@@ -910,7 +934,7 @@ router.get('/financial', authenticateToken, async (req, res) => {
     
     const userTableName = queryParams.length > 0 ? 'filtered_users' : 'users';
     
-    console.log('[DEBUG] Using table:', userTableName, 'with CTE:', !!filteredUsersClause);
+    console.log('[DEBUG] Using table:', userTableName, 'with CTE:', !!filteredUsersClause, 'snapshots:', snapshotsMap.size);
     
     const q = `
       ${filteredUsersClause}
@@ -944,11 +968,9 @@ router.get('/financial', authenticateToken, async (req, res) => {
 
   const { rows } = await pool.query(q, queryParams);
   
-    console.log('[DEBUG] Query returned', rows.length, 'rows');
-    console.log('[DEBUG] Sample rows:', rows.slice(0, 3));
+    console.log('[DEBUG] Query returned', rows.length, 'rows, snapshots:', snapshotsMap.size);
 
-    // organize rows by month
-    const monthsMap = new Map();
+    // Helper to normalize service type
     const normalizeService = (svc) => {
       const v = (svc || '').toString().toLowerCase();
       if (v === 'x-ray' || v === 'xray' || v === 'outline') return 'Mini';
@@ -958,37 +980,79 @@ router.get('/financial', authenticateToken, async (req, res) => {
       return svc || '';
     };
 
+    // Organize rows by month, prioritizing snapshots
+    const monthsMap = new Map();
     for (const r of rows) {
       const monthStart = r.month_start ? new Date(r.month_start) : null;
       const label = monthStart ? `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}` : null;
-      if (!monthsMap.has(label)) {
-        monthsMap.set(label, { month: label, start: monthStart ? monthStart.toISOString() : null, end: monthStart ? new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23,59,59,999).toISOString() : null, counts: { Mini:0, Basic:0, Unlimited:0 }, prices: { price_mini_cents:0, price_basic_cents:0, price_unlimited_cents:0 }, revenue_cents: 0, rawAudit: r.audit_after, currentApp: r.current_app });
+      
+      // Check if we have a snapshot for this month and no filtering is applied
+      if (snapshotsMap.has(label) && !serverIdsFilter) {
+        // Use snapshot data
+        const snapshot = snapshotsMap.get(label);
+        if (!monthsMap.has(label)) {
+          monthsMap.set(label, {
+            month: label,
+            start: new Date(snapshot.month_start).toISOString(),
+            end: new Date(snapshot.month_end).toISOString(),
+            counts: {
+              Mini: snapshot.mini_count,
+              Basic: snapshot.basic_count,
+              Unlimited: snapshot.unlimited_count
+            },
+            prices: {
+              price_mini_cents: snapshot.price_mini_cents,
+              price_basic_cents: snapshot.price_basic_cents,
+              price_unlimited_cents: snapshot.price_unlimited_cents
+            },
+            revenue_cents: snapshot.revenue_cents,
+            is_snapshot: true
+          });
+        }
+      } else {
+        // Calculate on-the-fly
+        if (!monthsMap.has(label)) {
+          monthsMap.set(label, {
+            month: label,
+            start: monthStart ? monthStart.toISOString() : null,
+            end: monthStart ? new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0, 23, 59, 59, 999).toISOString() : null,
+            counts: { Mini: 0, Basic: 0, Unlimited: 0 },
+            prices: { price_mini_cents: 0, price_basic_cents: 0, price_unlimited_cents: 0 },
+            revenue_cents: 0,
+            is_snapshot: false,
+            rawAudit: r.audit_after,
+            currentApp: r.current_app
+          });
+        }
+        const entry = monthsMap.get(label);
+        if (!entry.is_snapshot) {
+          const svcNorm = normalizeService(r.service_type);
+          const cnt = Number(r.cnt || 0);
+          if (svcNorm === 'Mini' || svcNorm === 'Basic' || svcNorm === 'Unlimited') {
+            entry.counts[svcNorm] += cnt;
+          }
+          if (r.audit_after && !entry.rawAudit) entry.rawAudit = r.audit_after;
+          if (r.current_app && !entry.currentApp) entry.currentApp = r.current_app;
+        }
       }
-      const entry = monthsMap.get(label);
-      const svcNorm = normalizeService(r.service_type);
-      const cnt = Number(r.cnt || 0);
-      if (svcNorm === 'Mini' || svcNorm === 'Basic' || svcNorm === 'Unlimited') {
-        entry.counts[svcNorm] += cnt;
-      }
-      // Store audit & app once (may be repeated across rows)
-      if (r.audit_after && !entry.rawAudit) entry.rawAudit = r.audit_after;
-      if (r.current_app && !entry.currentApp) entry.currentApp = r.current_app;
     }
 
-    // finalize prices and revenue per month
+    // Finalize prices and revenue for calculated months
     for (const [k, v] of monthsMap.entries()) {
-      const d = v.rawAudit || v.currentApp || {};
-      const safeNum = (x) => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
-      // try audit after_data's *_cents first
-      v.prices.price_mini_cents = safeNum((d && d.price_mini_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_mini ? Math.round(Number(d.price_backup_decimal.price_mini) * 100) : 0));
-      v.prices.price_basic_cents = safeNum((d && d.price_basic_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_basic ? Math.round(Number(d.price_backup_decimal.price_basic) * 100) : 0));
-      v.prices.price_unlimited_cents = safeNum((d && d.price_unlimited_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_unlimited ? Math.round(Number(d.price_backup_decimal.price_unlimited) * 100) : 0));
-      v.revenue_cents = (v.counts.Mini * v.prices.price_mini_cents) + (v.counts.Basic * v.prices.price_basic_cents) + (v.counts.Unlimited * v.prices.price_unlimited_cents);
+      if (!v.is_snapshot) {
+        const d = v.rawAudit || v.currentApp || {};
+        const safeNum = (x) => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
+        v.prices.price_mini_cents = safeNum((d && d.price_mini_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_mini ? Math.round(Number(d.price_backup_decimal.price_mini) * 100) : 0));
+        v.prices.price_basic_cents = safeNum((d && d.price_basic_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_basic ? Math.round(Number(d.price_backup_decimal.price_basic) * 100) : 0));
+        v.prices.price_unlimited_cents = safeNum((d && d.price_unlimited_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_unlimited ? Math.round(Number(d.price_backup_decimal.price_unlimited) * 100) : 0));
+        v.revenue_cents = (v.counts.Mini * v.prices.price_mini_cents) + (v.counts.Basic * v.prices.price_basic_cents) + (v.counts.Unlimited * v.prices.price_unlimited_cents);
+        delete v.rawAudit;
+        delete v.currentApp;
+      }
     }
 
     const results = Array.from(monthsMap.values());
-    console.log('[DEBUG] Sending', results.length, 'months to frontend');
-    console.log('[DEBUG] Sample month data:', results.slice(-2).map(m => ({ month: m.month, counts: m.counts, revenue: m.revenue_cents })));
+    console.log('[DEBUG] Sending', results.length, 'months to frontend, snapshots used:', results.filter(m => m.is_snapshot).length);
     // compute year totals for current year
     const now = new Date();
     const thisYear = now.getFullYear();
@@ -1004,6 +1068,196 @@ router.get('/financial', authenticateToken, async (req, res) => {
     return res.json({ months: results, year: thisYear, yearTotals });
   } catch (err) {
     console.error('GET /financial failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
+// Generate monthly financial snapshot
+// POST /api/admin/financial/snapshot?month=YYYY-MM (optional, defaults to previous month)
+router.post('/financial/snapshot', authenticateToken, async (req, res) => {
+  try {
+    const role = req.user && req.user.role;
+    if (role !== 'ADMIN') {
+      return res.status(403).json({ msg: 'Only ADMINs can generate financial snapshots' });
+    }
+
+    // Parse target month from query param or default to previous month
+    const monthParam = req.query.month; // Expected format: YYYY-MM
+    let targetMonth;
+    
+    if (monthParam) {
+      const parsed = new Date(monthParam + '-01');
+      if (isNaN(parsed.getTime())) {
+        return res.status(400).json({ msg: 'Invalid month format. Use YYYY-MM' });
+      }
+      targetMonth = parsed;
+    } else {
+      // Default to previous month
+      const now = new Date();
+      targetMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    }
+
+    // Don't allow snapshots for future months
+    const now = new Date();
+    const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    if (targetMonth >= currentMonth) {
+      return res.status(400).json({ msg: 'Cannot create snapshot for current or future months' });
+    }
+
+    const monthStart = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), 1);
+    const monthEnd = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0, 23, 59, 59, 999);
+    
+    // Helper to normalize service type
+    const normalizeService = (svc) => {
+      const v = (svc || '').toString().toLowerCase();
+      if (v === 'x-ray' || v === 'xray' || v === 'outline') return 'Mini';
+      if (v === 'mini') return 'Mini';
+      if (v === 'basic') return 'Basic';
+      if (v === 'unlimited') return 'Unlimited';
+      return null;
+    };
+
+    // Count active users at end of month by service type
+    const countQuery = `
+      SELECT service_type, COUNT(*)::int AS cnt
+      FROM users
+      WHERE created_at <= $1
+        AND (expire_date IS NULL OR expire_date >= $2)
+        AND enabled = TRUE
+      GROUP BY service_type
+    `;
+    const countResult = await pool.query(countQuery, [monthEnd, monthStart]);
+    
+    const counts = { Mini: 0, Basic: 0, Unlimited: 0 };
+    for (const row of countResult.rows) {
+      const svcNorm = normalizeService(row.service_type);
+      if (svcNorm) {
+        counts[svcNorm] += Number(row.cnt || 0);
+      }
+    }
+
+    // Get prices at end of month from settings_audit
+    const pricesQuery = `
+      SELECT after_data
+      FROM settings_audit
+      WHERE settings_key = 'general'
+        AND created_at <= $1
+      ORDER BY created_at DESC
+      LIMIT 1
+    `;
+    const pricesResult = await pool.query(pricesQuery, [monthEnd]);
+    
+    let prices = { price_mini_cents: 0, price_basic_cents: 0, price_unlimited_cents: 0 };
+    
+    if (pricesResult.rows.length > 0) {
+      const data = pricesResult.rows[0].after_data || {};
+      const safeNum = (x) => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
+      prices.price_mini_cents = safeNum(data.price_mini_cents || (data.price_backup_decimal?.price_mini ? Math.round(Number(data.price_backup_decimal.price_mini) * 100) : 0));
+      prices.price_basic_cents = safeNum(data.price_basic_cents || (data.price_backup_decimal?.price_basic ? Math.round(Number(data.price_backup_decimal.price_basic) * 100) : 0));
+      prices.price_unlimited_cents = safeNum(data.price_unlimited_cents || (data.price_backup_decimal?.price_unlimited ? Math.round(Number(data.price_backup_decimal.price_unlimited) * 100) : 0));
+    }
+
+    // If no audit found, fall back to current settings
+    if (prices.price_mini_cents === 0 && prices.price_basic_cents === 0 && prices.price_unlimited_cents === 0) {
+      const currentPricesResult = await pool.query('SELECT data FROM app_settings WHERE settings_key = \'general\'');
+      if (currentPricesResult.rows.length > 0) {
+        const data = currentPricesResult.rows[0].data || {};
+        const safeNum = (x) => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
+        prices.price_mini_cents = safeNum(data.price_mini_cents || (data.price_backup_decimal?.price_mini ? Math.round(Number(data.price_backup_decimal.price_mini) * 100) : 0));
+        prices.price_basic_cents = safeNum(data.price_basic_cents || (data.price_backup_decimal?.price_basic ? Math.round(Number(data.price_basic_decimal.price_basic) * 100) : 0));
+        prices.price_unlimited_cents = safeNum(data.price_unlimited_cents || (data.price_backup_decimal?.price_unlimited ? Math.round(Number(data.price_backup_decimal.price_unlimited) * 100) : 0));
+      }
+    }
+
+    // Calculate revenue
+    const revenue_cents = (counts.Mini * prices.price_mini_cents) + 
+                         (counts.Basic * prices.price_basic_cents) + 
+                         (counts.Unlimited * prices.price_unlimited_cents);
+
+    // Check if snapshot already exists
+    const existingCheck = await pool.query(
+      'SELECT id FROM monthly_financial_snapshots WHERE month_start = $1',
+      [monthStart]
+    );
+
+    let snapshot;
+    if (existingCheck.rows.length > 0) {
+      // Update existing snapshot
+      const updateQuery = `
+        UPDATE monthly_financial_snapshots
+        SET month_end = $2,
+            mini_count = $3,
+            basic_count = $4,
+            unlimited_count = $5,
+            price_mini_cents = $6,
+            price_basic_cents = $7,
+            price_unlimited_cents = $8,
+            revenue_cents = $9,
+            updated_at = NOW(),
+            created_by = $10
+        WHERE month_start = $1
+        RETURNING *
+      `;
+      const result = await pool.query(updateQuery, [
+        monthStart, monthEnd, counts.Mini, counts.Basic, counts.Unlimited,
+        prices.price_mini_cents, prices.price_basic_cents, prices.price_unlimited_cents,
+        revenue_cents, req.user.id
+      ]);
+      snapshot = result.rows[0];
+    } else {
+      // Insert new snapshot
+      const insertQuery = `
+        INSERT INTO monthly_financial_snapshots (
+          month_start, month_end, mini_count, basic_count, unlimited_count,
+          price_mini_cents, price_basic_cents, price_unlimited_cents,
+          revenue_cents, created_by
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *
+      `;
+      const result = await pool.query(insertQuery, [
+        monthStart, monthEnd, counts.Mini, counts.Basic, counts.Unlimited,
+        prices.price_mini_cents, prices.price_basic_cents, prices.price_unlimited_cents,
+        revenue_cents, req.user.id
+      ]);
+      snapshot = result.rows[0];
+    }
+
+    console.log('Financial snapshot created/updated:', snapshot.month_start);
+    return res.json({ msg: 'Snapshot created successfully', snapshot });
+  } catch (err) {
+    console.error('POST /financial/snapshot failed:', err);
+    return res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
+// Delete a monthly financial snapshot (ADMIN only)
+// DELETE /api/admin/financial/snapshot/:month (month format: YYYY-MM)
+router.delete('/financial/snapshot/:month', authenticateToken, async (req, res) => {
+  try {
+    const role = req.user && req.user.role;
+    if (role !== 'ADMIN') {
+      return res.status(403).json({ msg: 'Only ADMINs can delete financial snapshots' });
+    }
+
+    const monthParam = req.params.month;
+    const monthStart = new Date(monthParam + '-01');
+    
+    if (isNaN(monthStart.getTime())) {
+      return res.status(400).json({ msg: 'Invalid month format. Use YYYY-MM' });
+    }
+
+    const result = await pool.query(
+      'DELETE FROM monthly_financial_snapshots WHERE month_start = $1 RETURNING id',
+      [monthStart]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ msg: 'Snapshot not found' });
+    }
+
+    return res.json({ msg: 'Snapshot deleted successfully' });
+  } catch (err) {
+    console.error('DELETE /financial/snapshot failed:', err);
     return res.status(500).json({ msg: 'Server Error' });
   }
 });
@@ -1753,28 +2007,10 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
     if (Array.isArray(data.users)) {
       for (const u of data.users) {
         if (!u.server_id || !u.account_name) continue;
-        
-        // Determine enabled status
-        let enabled = true;
-        if (typeof u.enabled === 'boolean') {
-          // If enabled field is explicitly set in backup, use it
-          enabled = u.enabled;
-        } else {
-          // If enabled field is missing, infer from expire_date
-          // Disable if expire_date is in the past
-          if (u.expire_date) {
-            const expireDate = new Date(u.expire_date);
-            const now = new Date();
-            if (expireDate < now) {
-              enabled = false;
-            }
-          }
-        }
-        
         await client.query(
           `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, COALESCE($12, now()))`,
-          [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, enabled, u.created_at || null]
+          [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
         );
       }
     }
@@ -1899,28 +2135,10 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
       if (Array.isArray(payload.users)) {
         for (const u of payload.users) {
           if (!u.server_id || !u.account_name) continue;
-          
-          // Determine enabled status
-          let enabled = true;
-          if (typeof u.enabled === 'boolean') {
-            // If enabled field is explicitly set in backup, use it
-            enabled = u.enabled;
-          } else {
-            // If enabled field is missing, infer from expire_date
-            // Disable if expire_date is in the past
-            if (u.expire_date) {
-              const expireDate = new Date(u.expire_date);
-              const now = new Date();
-              if (expireDate < now) {
-                enabled = false;
-              }
-            }
-          }
-          
           await client.query(
             `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12, now()))`,
-            [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, enabled, u.created_at || null]
+            [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
           );
         }
       }
