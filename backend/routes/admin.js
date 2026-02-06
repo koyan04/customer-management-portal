@@ -937,6 +937,10 @@ router.get('/financial', authenticateToken, async (req, res) => {
     }
     
     const { rows: snapshotRows } = await pool.query(snapshotsQuery, snapshotsParams);
+    console.log('[DEBUG] Snapshot query found', snapshotRows.length, 'rows. serverIdsFilter:', serverIdsFilter);
+    if (snapshotRows.length > 0) {
+      console.log('[DEBUG] First snapshot row:', JSON.stringify(snapshotRows[0]));
+    }
     
     // Create map of months with snapshots
     const snapshotsMap = new Map();
@@ -1135,10 +1139,12 @@ router.post('/financial/snapshot', authenticateToken, async (req, res) => {
     if (role === 'SERVER_ADMIN') {
       const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [req.user.id]);
       serverIdsFilter = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
+      console.log('[DEBUG POST /financial/snapshot] SERVER_ADMIN user', req.user.id, 'has serverIdsFilter:', serverIdsFilter);
       if (!serverIdsFilter.length) {
         return res.status(403).json({ msg: 'No servers assigned to create snapshots' });
       }
     }
+    console.log('[DEBUG POST /financial/snapshot] Creating snapshot for month:', targetMonth, 'with serverIdsFilter:', serverIdsFilter);
     
     // Helper to normalize service type
     const normalizeService = (svc) => {
@@ -1285,7 +1291,7 @@ router.post('/financial/snapshot', authenticateToken, async (req, res) => {
       snapshot = result.rows[0];
     }
 
-    console.log('Financial snapshot created/updated:', snapshot.month_start, 'server_id:', server_id_marker || 'GLOBAL');
+    console.log('Financial snapshot created/updated:', snapshot.month_start, 'server_id:', server_id_marker || 'GLOBAL', 'snapshot object:', snapshot);
     return res.json({ msg: 'Snapshot created successfully', snapshot });
   } catch (err) {
     console.error('POST /financial/snapshot failed:', err);
