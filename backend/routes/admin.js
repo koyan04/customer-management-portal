@@ -1013,8 +1013,8 @@ router.get('/financial', authenticateToken, async (req, res) => {
       const monthStart = r.month_start ? new Date(r.month_start) : null;
       const label = monthStart ? `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}` : null;
       
-      // Check if we have a snapshot for this month and no filtering is applied
-      if (snapshotsMap.has(label) && !serverIdsFilter) {
+      // Check if we have a snapshot for this month (already filtered by server_id in query)
+      if (snapshotsMap.has(label)) {
         // Use snapshot data
         const snapshot = snapshotsMap.get(label);
         if (!monthsMap.has(label)) {
