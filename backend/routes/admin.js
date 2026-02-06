@@ -883,23 +883,14 @@ router.get('/financial', authenticateToken, async (req, res) => {
         }
       }
       // If target is ADMIN or other role, show all data (no filter)
-    } else if (role && role !== 'ADMIN') {
-      // only SERVER_ADMIN should reach here; others are forbidden
-      if (role !== 'SERVER_ADMIN') {
-        try { console.log('[DEBUG GET /api/admin/financial] deny non-server-admin role=', role, 'userId=', req.user && req.user.id); } catch (e) {}
-        return res.status(403).json({ msg: 'Forbidden' });
-      }
-      // fetch assigned server ids
-      const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [req.user.id]);
-      const sids = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
-      console.log('[DEBUG] SERVER_ADMIN sids for current user', req.user && req.user.id, '=', sids);
-      if (!sids.length) {
-        try { console.log('[DEBUG GET /api/admin/financial] SERVER_ADMIN has no assigned servers, denying access userId=', req.user && req.user.id); } catch (e) {}
-        return res.status(403).json({ msg: 'Forbidden' });
-      }
-      serverIdsFilter = sids;
-      queryParams = [sids];
+    } else if (role && role !== 'ADMIN' && role !== 'SERVER_ADMIN') {
+      // Financial reports are organization-wide for both ADMIN and SERVER_ADMIN
+      // Only deny access to other roles (VIEWER, etc)
+      try { console.log('[DEBUG GET /api/admin/financial] deny non-admin role=', role, 'userId=', req.user && req.user.id); } catch (e) {}
+      return res.status(403).json({ msg: 'Forbidden' });
     }
+    // SERVER_ADMIN viewing directly: show all data (no server filtering)
+    // This allows them to see/use global financial snapshots
     
     console.log('[DEBUG] Final queryParams before SQL:', queryParams, 'serverIdsFilter:', serverIdsFilter);
 
