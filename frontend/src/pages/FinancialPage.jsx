@@ -98,8 +98,8 @@ export default function FinancialPage() {
   // Generate snapshot for a specific month
   const generateSnapshot = async (monthStr) => {
     const role = user && (user.user?.role || user.role);
-    if (role !== 'ADMIN') {
-      setSnapshotMessage('❌ Only ADMIN can generate snapshots');
+    if (role !== 'ADMIN' && role !== 'SERVER_ADMIN') {
+      setSnapshotMessage('❌ Only ADMIN and SERVER_ADMIN can generate snapshots');
       setTimeout(() => setSnapshotMessage(''), 5000);
       return;
     }
@@ -410,8 +410,8 @@ export default function FinancialPage() {
         </div>
       </div>
 
-      {/* Snapshot Management - Only for ADMIN */}
-      {(user && (user.user?.role || user.role) === 'ADMIN') && (
+      {/* Snapshot Management - Only for ADMIN and SERVER_ADMIN */}
+      {(user && (user.user?.role === 'ADMIN' || user.user?.role === 'SERVER_ADMIN' || user.role === 'ADMIN' || user.role === 'SERVER_ADMIN')) && (
         <div className="glass-panel" style={{ 
           padding: '1rem', 
           marginBottom: '1rem', 
@@ -679,7 +679,7 @@ export default function FinancialPage() {
                         }} title="Current month - changes in real-time">
                           Current
                         </span>
-                      ) : role === 'ADMIN' ? (
+                      ) : (role === 'ADMIN' || role === 'SERVER_ADMIN') ? (
                         <button
                           onClick={() => generateSnapshot(m.month)}
                           disabled={generatingSnapshot}
