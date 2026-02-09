@@ -1043,7 +1043,6 @@ router.get('/financial', authenticateToken, async (req, res) => {
               price_unlimited_cents: Number(snapshot.price_unlimited_cents || 0)
             },
             revenue_cents: Number(snapshot.revenue_cents || 0),
-            currency: currentCurrency,
             is_snapshot: true
           });
         }
@@ -1084,8 +1083,6 @@ router.get('/financial', authenticateToken, async (req, res) => {
         v.prices.price_basic_cents = safeNum((d && d.price_basic_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_basic ? Math.round(Number(d.price_backup_decimal.price_basic) * 100) : 0));
         v.prices.price_unlimited_cents = safeNum((d && d.price_unlimited_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_unlimited ? Math.round(Number(d.price_backup_decimal.price_unlimited) * 100) : 0));
         v.revenue_cents = (v.counts.Mini * v.prices.price_mini_cents) + (v.counts.Basic * v.prices.price_basic_cents) + (v.counts.Unlimited * v.prices.price_unlimited_cents);
-        // Use current currency setting for all months
-        v.currency = currentCurrency;
         delete v.rawAudit;
         delete v.currentApp;
       }
@@ -1093,6 +1090,8 @@ router.get('/financial', authenticateToken, async (req, res) => {
 
     const results = Array.from(monthsMap.values());
     console.log('[DEBUG] Sending', results.length, 'months to frontend, snapshots used:', results.filter(m => m.is_snapshot).length);
+    console.log('[DEBUG] First month sample:', JSON.stringify(results[0]));
+    console.log('[DEBUG] Currency:', currentCurrency);
     // compute year totals for current year
     const now = new Date();
     const thisYear = now.getFullYear();
@@ -1106,7 +1105,7 @@ router.get('/financial', authenticateToken, async (req, res) => {
       yearTotals.revenue_cents += Number(m.revenue_cents || 0);
     }
 
-    return res.json({ months: results, year: thisYear, yearTotals });
+    return res.json({ months: results, year: thisYear, yearTotals, currency: currentCurrency });
   } catch (err) {
     console.error('GET /financial failed:', err && err.stack ? err.stack : err);
     return res.status(500).json({ msg: 'Server Error' });

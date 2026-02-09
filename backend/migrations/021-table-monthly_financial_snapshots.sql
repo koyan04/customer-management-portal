@@ -1,11 +1,13 @@
 -- Monthly Financial Snapshots
 -- Stores monthly revenue calculations as read-only snapshots based on user counts and prices at month end
 -- Once created, these snapshots are not affected by subsequent price or user data changes
+-- Supports both global (ADMIN) and per-server (SERVER_ADMIN) snapshots via server_id column
 
 CREATE TABLE IF NOT EXISTS monthly_financial_snapshots (
   id SERIAL PRIMARY KEY,
-  month_start DATE NOT NULL UNIQUE,
+  month_start DATE NOT NULL,
   month_end DATE NOT NULL,
+  server_id INT REFERENCES servers(id) ON DELETE CASCADE,
   
   -- User counts at end of month
   mini_count INT NOT NULL DEFAULT 0,
@@ -29,10 +31,17 @@ CREATE TABLE IF NOT EXISTS monthly_financial_snapshots (
   CONSTRAINT month_start_format CHECK (month_start = date_trunc('month', month_start)::date)
 );
 
-CREATE INDEX idx_monthly_snapshots_month ON monthly_financial_snapshots(month_start DESC);
+-- Create unique constraint on (month_start, server_id) to allow one snapshot per month per server
+-- NULL server_id for ADMIN global snapshots, non-NULL for SERVER_ADMIN per-server snapshots
+CREATE UNIQUE INDEX IF NOT EXISTS idx_monthly_snapshots_month_server 
+ON monthly_financial_snapshots(month_start, COALESCE(server_id, 0));
+
+CREATE INDEX IF NOT EXISTS idx_monthly_snapshots_server ON monthly_financial_snapshots(server_id);
+CREATE INDEX IF NOT EXISTS idx_monthly_snapshots_month ON monthly_financial_snapshots(month_start DESC);
 
 COMMENT ON TABLE monthly_financial_snapshots IS 'Stores monthly financial snapshots calculated at end of each month. These are permanent records not affected by subsequent data changes.';
 COMMENT ON COLUMN monthly_financial_snapshots.month_start IS 'First day of the month (YYYY-MM-01)';
 COMMENT ON COLUMN monthly_financial_snapshots.month_end IS 'Last day of the month';
+COMMENT ON COLUMN monthly_financial_snapshots.server_id IS 'NULL for ADMIN global snapshots (all servers), or specific server_id for SERVER_ADMIN per-server snapshots';
 COMMENT ON COLUMN monthly_financial_snapshots.revenue_cents IS 'Total revenue = (mini_count * price_mini_cents) + (basic_count * price_basic_cents) + (unlimited_count * price_unlimited_cents)';
 COMMENT ON COLUMN monthly_financial_snapshots.notes IS 'Optional notes about price changes or other relevant information for this month';

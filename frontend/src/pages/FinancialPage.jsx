@@ -250,8 +250,8 @@ export default function FinancialPage() {
   // derived chart arrays (currently unused independently; kept for potential summary chips)
   const labels = months.map(m => m.month); // eslint-disable-line no-unused-vars
   const revenues = months.map(m => Number(m.revenue_cents || 0) / 100); // eslint-disable-line no-unused-vars
-  // Extract currency from first available month data
-  const currency = (months[0] && months[0].currency) || 'USD';
+  // Extract currency from response root (general settings)
+  const currency = data.currency || 'USD';
 
   const chartData = {
     labels: filteredMonths.map(m => m.month),
