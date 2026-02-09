@@ -903,10 +903,15 @@ router.get('/financial', authenticateToken, async (req, res) => {
     
     console.log('[DEBUG] Final queryParams before SQL:', queryParams, 'serverIdsFilter:', serverIdsFilter);
 
-    // Fetch current currency setting
-    const currencyQuery = await pool.query(`SELECT data FROM app_settings WHERE settings_key = 'general'`);
-    const currentCurrency = (currencyQuery.rows && currencyQuery.rows[0] && currencyQuery.rows[0].data && currencyQuery.rows[0].data.currency) || 'USD';
-    console.log('[DEBUG] Current currency:', currentCurrency);
+    // Fetch current currency setting with error handling
+    let currentCurrency = 'USD';
+    try {
+      const currencyQuery = await pool.query(`SELECT data FROM app_settings WHERE settings_key = 'general'`);
+      currentCurrency = (currencyQuery.rows && currencyQuery.rows[0] && currencyQuery.rows[0].data && currencyQuery.rows[0].data.currency) || 'USD';
+      console.log('[DEBUG] Current currency:', currentCurrency);
+    } catch (currErr) {
+      console.warn('[WARN] Failed to fetch currency setting, using USD:', currErr.message);
+    }
 
     // Fetch snapshots for last 12 months
     // ADMIN: fetch global snapshots (server_id IS NULL)
