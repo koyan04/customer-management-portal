@@ -1073,6 +1073,8 @@ router.get('/financial', authenticateToken, async (req, res) => {
         v.prices.price_basic_cents = safeNum((d && d.price_basic_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_basic ? Math.round(Number(d.price_backup_decimal.price_basic) * 100) : 0));
         v.prices.price_unlimited_cents = safeNum((d && d.price_unlimited_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_unlimited ? Math.round(Number(d.price_backup_decimal.price_unlimited) * 100) : 0));
         v.revenue_cents = (v.counts.Mini * v.prices.price_mini_cents) + (v.counts.Basic * v.prices.price_basic_cents) + (v.counts.Unlimited * v.prices.price_unlimited_cents);
+        // Keep currency for frontend display
+        v.currency = d.currency || 'USD';
         delete v.rawAudit;
         delete v.currentApp;
       }
@@ -1089,7 +1091,8 @@ router.get('/financial', authenticateToken, async (req, res) => {
       yearTotals.counts.Mini += m.counts.Mini;
       yearTotals.counts.Basic += m.counts.Basic;
       yearTotals.counts.Unlimited += m.counts.Unlimited;
-      yearTotals.revenue_cents += m.revenue_cents;
+      // Convert to Number to avoid string concatenation
+      yearTotals.revenue_cents += Number(m.revenue_cents || 0);
     }
 
     return res.json({ months: results, year: thisYear, yearTotals });
@@ -1100,10 +1103,12 @@ router.get('/financial', authenticateToken, async (req, res) => {
 });
 
 // Generate monthly financial snapshot
-// POST /api/admin/financial/snapshot?month=YYYY-MM (optional, defaults to previous month)
+// POST /api/admin/financial/snapshot?month=YYYY-MM&userId=X (month optional, defaults to previous month)
 router.post('/financial/snapshot', authenticateToken, async (req, res) => {
   try {
     const role = req.user && req.user.role;
+    const targetUserId = req.query.userId ? Number(req.query.userId) : null;
+    
     if (role !== 'ADMIN' && role !== 'SERVER_ADMIN') {
       return res.status(403).json({ msg: 'Only ADMINs and SERVER_ADMINs can generate financial snapshots' });
     }
@@ -1134,9 +1139,26 @@ router.post('/financial/snapshot', authenticateToken, async (req, res) => {
     const monthStart = new Date(targetMonth.getFullYear(), targetMonth.getMonth(), 1);
     const monthEnd = new Date(targetMonth.getFullYear(), targetMonth.getMonth() + 1, 0, 23, 59, 59, 999);
     
-    // Determine server filtering for SERVER_ADMIN
+    // Determine server filtering
     let serverIdsFilter = null;
-    if (role === 'SERVER_ADMIN') {
+    
+    // If ADMIN is viewing as another user, apply that user's permissions
+    if (role === 'ADMIN' && targetUserId) {
+      const userRes = await pool.query('SELECT role FROM admins WHERE id = $1', [targetUserId]);
+      const targetRole = userRes.rows && userRes.rows[0] ? userRes.rows[0].role : null;
+      
+      if (targetRole === 'SERVER_ADMIN') {
+        // Create snapshot for target SERVER_ADMIN's servers
+        const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [targetUserId]);
+        serverIdsFilter = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
+        console.log('[DEBUG POST /financial/snapshot] ADMIN creating snapshot for SERVER_ADMIN', targetUserId, 'serverIdsFilter:', serverIdsFilter);
+        if (!serverIdsFilter.length) {
+          return res.status(403).json({ msg: 'Target user has no servers assigned' });
+        }
+      }
+      // If target is ADMIN, create global snapshot (serverIdsFilter stays null)
+    } else if (role === 'SERVER_ADMIN') {
+      // SERVER_ADMIN creating their own snapshot
       const r = await pool.query('SELECT server_id FROM server_admin_permissions WHERE admin_id = $1', [req.user.id]);
       serverIdsFilter = (r.rows || []).map(x => Number(x.server_id)).filter(x => !Number.isNaN(x));
       console.log('[DEBUG POST /financial/snapshot] SERVER_ADMIN user', req.user.id, 'has serverIdsFilter:', serverIdsFilter);

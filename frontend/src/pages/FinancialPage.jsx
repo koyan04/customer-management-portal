@@ -107,9 +107,11 @@ export default function FinancialPage() {
     setSnapshotMessage('');
     try {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      // Include userId param when ADMIN is viewing as another user
+      const userIdParam = selectedUserId ? `&userId=${selectedUserId}` : '';
       const url = monthStr 
-        ? `/api/admin/financial/snapshot?month=${monthStr}`
-        : '/api/admin/financial/snapshot';
+        ? `/api/admin/financial/snapshot?month=${monthStr}${userIdParam}`
+        : `/api/admin/financial/snapshot${userIdParam ? '?' + userIdParam.slice(1) : ''}`;
       const res = await axios.post(url, {}, { headers, validateStatus: () => true });
       if (res.status !== 200) throw new Error(res.data?.msg || `Status ${res.status}`);
       setSnapshotMessage(`✅ Snapshot generated for ${res.data.month || monthStr || 'previous month'}`);
@@ -248,7 +250,8 @@ export default function FinancialPage() {
   // derived chart arrays (currently unused independently; kept for potential summary chips)
   const labels = months.map(m => m.month); // eslint-disable-line no-unused-vars
   const revenues = months.map(m => Number(m.revenue_cents || 0) / 100); // eslint-disable-line no-unused-vars
-  const currency = (months[0] && months[0].rawAudit && months[0].rawAudit.currency) || (months[0] && months[0].currentApp && months[0].currentApp.currency) || 'USD';
+  // Extract currency from first available month data
+  const currency = (months[0] && months[0].currency) || 'USD';
 
   const chartData = {
     labels: filteredMonths.map(m => m.month),
