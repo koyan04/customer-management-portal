@@ -903,6 +903,11 @@ router.get('/financial', authenticateToken, async (req, res) => {
     
     console.log('[DEBUG] Final queryParams before SQL:', queryParams, 'serverIdsFilter:', serverIdsFilter);
 
+    // Fetch current currency setting
+    const currencyQuery = await pool.query(`SELECT data FROM app_settings WHERE settings_key = 'general'`);
+    const currentCurrency = (currencyQuery.rows && currencyQuery.rows[0] && currencyQuery.rows[0].data && currencyQuery.rows[0].data.currency) || 'USD';
+    console.log('[DEBUG] Current currency:', currentCurrency);
+
     // Fetch snapshots for last 12 months
     // ADMIN: fetch global snapshots (server_id IS NULL)
     // SERVER_ADMIN: fetch snapshots for their assigned servers (server_id IN (...))
@@ -1033,6 +1038,7 @@ router.get('/financial', authenticateToken, async (req, res) => {
               price_unlimited_cents: snapshot.price_unlimited_cents
             },
             revenue_cents: snapshot.revenue_cents,
+            currency: currentCurrency,
             is_snapshot: true
           });
         }
@@ -1073,8 +1079,8 @@ router.get('/financial', authenticateToken, async (req, res) => {
         v.prices.price_basic_cents = safeNum((d && d.price_basic_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_basic ? Math.round(Number(d.price_backup_decimal.price_basic) * 100) : 0));
         v.prices.price_unlimited_cents = safeNum((d && d.price_unlimited_cents) || (d && d.price_backup_decimal && d.price_backup_decimal.price_unlimited ? Math.round(Number(d.price_backup_decimal.price_unlimited) * 100) : 0));
         v.revenue_cents = (v.counts.Mini * v.prices.price_mini_cents) + (v.counts.Basic * v.prices.price_basic_cents) + (v.counts.Unlimited * v.prices.price_unlimited_cents);
-        // Keep currency for frontend display
-        v.currency = d.currency || 'USD';
+        // Use current currency setting for all months
+        v.currency = currentCurrency;
         delete v.rawAudit;
         delete v.currentApp;
       }
