@@ -1033,16 +1033,16 @@ router.get('/financial', authenticateToken, async (req, res) => {
             start: new Date(snapshot.month_start).toISOString(),
             end: new Date(snapshot.month_end).toISOString(),
             counts: {
-              Mini: snapshot.mini_count,
-              Basic: snapshot.basic_count,
-              Unlimited: snapshot.unlimited_count
+              Mini: Number(snapshot.mini_count || 0),
+              Basic: Number(snapshot.basic_count || 0),
+              Unlimited: Number(snapshot.unlimited_count || 0)
             },
             prices: {
-              price_mini_cents: snapshot.price_mini_cents,
-              price_basic_cents: snapshot.price_basic_cents,
-              price_unlimited_cents: snapshot.price_unlimited_cents
+              price_mini_cents: Number(snapshot.price_mini_cents || 0),
+              price_basic_cents: Number(snapshot.price_basic_cents || 0),
+              price_unlimited_cents: Number(snapshot.price_unlimited_cents || 0)
             },
-            revenue_cents: snapshot.revenue_cents,
+            revenue_cents: Number(snapshot.revenue_cents || 0),
             currency: currentCurrency,
             is_snapshot: true
           });
@@ -1099,9 +1099,9 @@ router.get('/financial', authenticateToken, async (req, res) => {
     const yearMonths = results.filter(r => Number(r.month.slice(0,4)) === thisYear);
     const yearTotals = { counts: { Mini: 0, Basic: 0, Unlimited: 0 }, revenue_cents: 0 };
     for (const m of yearMonths) {
-      yearTotals.counts.Mini += m.counts.Mini;
-      yearTotals.counts.Basic += m.counts.Basic;
-      yearTotals.counts.Unlimited += m.counts.Unlimited;
+      yearTotals.counts.Mini += Number(m.counts?.Mini || 0);
+      yearTotals.counts.Basic += Number(m.counts?.Basic || 0);
+      yearTotals.counts.Unlimited += Number(m.counts?.Unlimited || 0);
       // Convert to Number to avoid string concatenation
       yearTotals.revenue_cents += Number(m.revenue_cents || 0);
     }
