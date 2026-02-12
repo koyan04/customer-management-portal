@@ -323,9 +323,33 @@ color "Installing backend dependencies..."
 color "Installing frontend dependencies..."
 (cd "$FRONTEND_DIR" && npm install --no-audit --no-fund)
 
-# Build frontend
+# Check available memory and create swap if needed for frontend build
+SWAP_CREATED=0
+TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
+if [ "$TOTAL_MEM_GB" -lt 2 ]; then
+  warn "Low memory detected (${TOTAL_MEM_GB}GB). Creating temporary swap for build..."
+  SWAP_FILE="/tmp/cmp-build-swap"
+  dd if=/dev/zero of="$SWAP_FILE" bs=1M count=2048 status=progress 2>/dev/null || dd if=/dev/zero of="$SWAP_FILE" bs=1M count=2048
+  chmod 600 "$SWAP_FILE"
+  mkswap "$SWAP_FILE"
+  swapon "$SWAP_FILE"
+  SWAP_CREATED=1
+  color "Temporary 2GB swap file created"
+fi
+
+# Build frontend with memory limit for Node.js
 color "Building frontend..."
+export NODE_OPTIONS="--max-old-space-size=1536"
 (cd "$FRONTEND_DIR" && npm run build)
+unset NODE_OPTIONS
+
+# Remove temporary swap if we created it
+if [ "$SWAP_CREATED" -eq 1 ]; then
+  swapoff "$SWAP_FILE" 2>/dev/null || true
+  rm -f "$SWAP_FILE"
+  color "Temporary swap removed"
+fi
 
 # Generate .env if missing
 if [ ! -f "$ENV_FILE" ]; then

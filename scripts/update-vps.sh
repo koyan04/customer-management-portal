@@ -110,7 +110,32 @@ echo ""
 echo "→ Building frontend..."
 cd "$APP_DIR/frontend"
 npm install
+
+# Check available memory and create swap if needed
+SWAP_CREATED=0
+TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
+if [ "$TOTAL_MEM_GB" -lt 2 ]; then
+  echo "  ⚠ Low memory detected (${TOTAL_MEM_GB}GB). Creating temporary swap..."
+  SWAP_FILE="/tmp/cmp-build-swap"
+  dd if=/dev/zero of="$SWAP_FILE" bs=1M count=2048 status=none
+  chmod 600 "$SWAP_FILE"
+  mkswap "$SWAP_FILE" >/dev/null 2>&1
+  swapon "$SWAP_FILE"
+  SWAP_CREATED=1
+fi
+
+# Build with memory limit
+export NODE_OPTIONS="--max-old-space-size=1536"
 npm run build
+unset NODE_OPTIONS
+
+# Remove temporary swap if created
+if [ "$SWAP_CREATED" -eq 1 ]; then
+  swapoff "$SWAP_FILE" 2>/dev/null || true
+  rm -f "$SWAP_FILE"
+fi
+
 echo "  ✓ Frontend built"
 echo ""
 
