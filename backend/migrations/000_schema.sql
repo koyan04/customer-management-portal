@@ -182,6 +182,7 @@ CREATE TABLE public.admins (
     avatar_url text,
     avatar_data text,
     updated_at timestamp with time zone DEFAULT now(),
+    last_seen timestamp without time zone,
     CONSTRAINT admins_role_check CHECK (((role)::text = ANY ((ARRAY['ADMIN'::character varying, 'VIEWER'::character varying, 'SERVER_ADMIN'::character varying])::text[])))
 );
 
