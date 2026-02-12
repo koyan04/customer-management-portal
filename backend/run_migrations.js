@@ -139,6 +139,7 @@ async function run() {
       console.log(`Base ${fileName} applied successfully (sequential fallback)`);
     } catch (e2) {
       console.error('Error applying migrations (sequential mode):', e2 && e2.message ? e2.message : e2);
+      console.error('[migrate] WARNING: Base schema application failed. Continuing with individual migrations...');
       process.exitCode = 2;
     }
   }
@@ -221,6 +222,12 @@ async function run() {
   }
 
   await pool.end();
+  
+  // Explicitly exit with stored exit code to ensure install scripts catch failures
+  if (process.exitCode) {
+    console.error('[migrate] Migration completed with errors. Exit code:', process.exitCode);
+    process.exit(process.exitCode);
+  }
 }
 
 if (require.main === module) run();
