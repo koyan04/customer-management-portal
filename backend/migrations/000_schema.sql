@@ -552,7 +552,8 @@ CREATE TABLE public.servers (
     ip_address character varying(45),
     domain_name character varying(255),
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
-    display_pos integer
+    display_pos integer,
+    api_key character varying(500)
 );
 
 
@@ -689,7 +690,8 @@ CREATE TABLE public.users (
     server_id integer NOT NULL,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
     remark text,
-    display_pos integer
+    display_pos integer,
+    enabled boolean DEFAULT true NOT NULL
 );
 
 
@@ -1057,6 +1059,13 @@ ALTER TABLE ONLY public.viewer_server_permissions
 
 
 --
+-- Name: idx_admins_last_seen; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_admins_last_seen ON public.admins(last_seen DESC);
+
+
+--
 -- Name: idx_invalidated_tokens_jti; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -1152,6 +1161,13 @@ CREATE UNIQUE INDEX users_server_account_unique_idx ON public.users USING btree 
 --
 
 CREATE INDEX users_server_id_idx ON public.users USING btree (server_id);
+
+
+--
+-- Name: idx_users_enabled; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_users_enabled ON public.users USING btree (enabled);
 
 
 --
