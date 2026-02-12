@@ -102,7 +102,13 @@ echo ""
 # Run migrations
 echo "→ Running database migrations..."
 cd "$APP_DIR/backend"
-node run_migrations.js
+if ! node run_migrations.js; then
+    echo "  ✗ Migrations failed"
+    echo ""
+    echo "ERROR: Database migration failed. Rolling back..."
+    systemctl start cmp-backend cmp-telegram-bot || true
+    exit 1
+fi
 echo "  ✓ Migrations completed"
 echo ""
 

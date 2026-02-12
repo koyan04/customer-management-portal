@@ -85,62 +85,84 @@ function splitSqlStatements(sql) {
 }
 
 async function run() {
-  // Use consolidated schema file (000_schema.sql) instead of old migrations.sql
-  const schemaFile = path.join(__dirname, 'migrations', '000_schema.sql');
-  const legacyFile = path.join(__dirname, 'migrations.sql');
-  
-  let bootstrapFile;
-  if (fs.existsSync(schemaFile)) {
-    bootstrapFile = schemaFile;
-  } else if (fs.existsSync(legacyFile)) {
-    bootstrapFile = legacyFile;
-    console.warn('[migrate] Using legacy migrations.sql - consider upgrading to 000_schema.sql');
-  } else {
-    console.error('Schema file not found. Expected:', schemaFile, 'or', legacyFile);
-    process.exit(1);
+  // Check if this is an existing installation (core tables present)
+  let isExistingInstall = false;
+  try {
+    // Check if users table exists
+    const result = await pool.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'users'
+      );
+    `);
+    isExistingInstall = result.rows[0].exists;
+  } catch (e) {
+    console.warn('[migrate] Could not check for existing tables:', e.message);
   }
 
-  const sql = fs.readFileSync(bootstrapFile, 'utf8');
-  try {
-    console.log('Running migrations...');
-    // execute the whole file contents; pg supports multi-statement queries
-    await pool.query(sql);
-    const fileName = path.basename(bootstrapFile);
-    console.log(`Base ${fileName} applied successfully`);
-  } catch (err) {
-    console.error('Error applying migrations (batch mode):', err.message || err);
-    // Fallback: run sequentially and ignore specific undefined-table errors to recover mixed-state installs
+  // Skip base schema if tables already exist (update scenario)
+  if (isExistingInstall) {
+    console.log('[migrate] Existing installation detected - skipping base schema');
+  } else {
+    // Fresh install - apply base schema
+    // Use consolidated schema file (000_schema.sql) instead of old migrations.sql
+    const schemaFile = path.join(__dirname, 'migrations', '000_schema.sql');
+    const legacyFile = path.join(__dirname, 'migrations.sql');
+    
+    let bootstrapFile;
+    if (fs.existsSync(schemaFile)) {
+      bootstrapFile = schemaFile;
+    } else if (fs.existsSync(legacyFile)) {
+      bootstrapFile = legacyFile;
+      console.warn('[migrate] Using legacy migrations.sql - consider upgrading to 000_schema.sql');
+    } else {
+      console.error('Schema file not found. Expected:', schemaFile, 'or', legacyFile);
+      process.exit(1);
+    }
+
+    const sql = fs.readFileSync(bootstrapFile, 'utf8');
     try {
-      console.warn('[migrate] Falling back to sequential mode...');
-      const parts = splitSqlStatements(sql);
-      for (let i = 0; i < parts.length; i++) {
-        const stmt = parts[i];
-        try {
-          await pool.query(stmt);
-        } catch (e) {
-          const msg = e && e.message ? e.message : String(e);
-          const code = e && e.code ? e.code : null;
-          // tolerate undefined table/column to allow idempotent re-runs on partially initialized DBs
-          if (code === '42P01' || /relation\s+"?users"?\s+does not exist/i.test(msg)) {
-            console.warn(`[migrate] ignoring undefined_table at stmt ${i + 1}:`, msg.split('\n')[0]);
-            continue;
-          }
-          // tolerate duplicate objects (functions, constraints, etc.) for idempotent re-runs
-          if (code === '42710' || code === '42P07' || /already exists/i.test(msg)) {
-            console.warn(`[migrate] ignoring duplicate at stmt ${i + 1}:`, msg.split('\n')[0]);
-            continue;
-          }
-          // surface other errors
-          console.error(`[migrate] statement ${i + 1} failed:`, msg);
-          throw e;
-        }
-      }
+      console.log('Running migrations...');
+      // execute the whole file contents; pg supports multi-statement queries
+      await pool.query(sql);
       const fileName = path.basename(bootstrapFile);
-      console.log(`Base ${fileName} applied successfully (sequential fallback)`);
-    } catch (e2) {
-      console.error('Error applying migrations (sequential mode):', e2 && e2.message ? e2.message : e2);
-      console.error('[migrate] WARNING: Base schema application failed. Continuing with individual migrations...');
-      process.exitCode = 2;
+      console.log(`Base ${fileName} applied successfully`);
+    } catch (err) {
+      console.error('Error applying migrations (batch mode):', err.message || err);
+      // Fallback: run sequentially and ignore specific undefined-table errors to recover mixed-state installs
+      try {
+        console.warn('[migrate] Falling back to sequential mode...');
+        const parts = splitSqlStatements(sql);
+        for (let i = 0; i < parts.length; i++) {
+          const stmt = parts[i];
+          try {
+            await pool.query(stmt);
+          } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            const code = e && e.code ? e.code : null;
+            // tolerate undefined table/column to allow idempotent re-runs on partially initialized DBs
+            if (code === '42P01' || /relation\s+"?users"?\s+does not exist/i.test(msg)) {
+              console.warn(`[migrate] ignoring undefined_table at stmt ${i + 1}:`, msg.split('\n')[0]);
+              continue;
+            }
+            // tolerate duplicate objects (functions, constraints, etc.) for idempotent re-runs
+            if (code === '42710' || code === '42P07' || /already exists/i.test(msg)) {
+              console.warn(`[migrate] ignoring duplicate at stmt ${i + 1}:`, msg.split('\n')[0]);
+              continue;
+            }
+            // surface other errors
+            console.error(`[migrate] statement ${i + 1} failed:`, msg);
+            throw e;
+          }
+        }
+        const fileName = path.basename(bootstrapFile);
+        console.log(`Base ${fileName} applied successfully (sequential fallback)`);
+      } catch (e2) {
+        console.error('Error applying migrations (sequential mode):', e2 && e2.message ? e2.message : e2);
+        console.error('[migrate] WARNING: Base schema application failed. Continuing with individual migrations...');
+        process.exitCode = 2;
+      }
     }
   }
 
