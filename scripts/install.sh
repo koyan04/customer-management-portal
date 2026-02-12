@@ -7,27 +7,17 @@ set -euo pipefail
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
 #   - Builds frontend, runs migrations, seeds admin + sample data
 #   - Issues Let's Encrypt certificate (DNS-01 via Cloudflare) for one or more domains
-#   - Optional HTTP-01 fallback if DNS challenge fails (set CMP_CERT_HTTP_FALLBACK=1)
+#   - Automatic HTTP-01 fallback if DNS challenge fails (auto-detects third-party DNS like DynDNS)
 #   - Supports multiple domains via CMP_CERT_DOMAINS (comma or space separated)
 #   - Skip certificate issuance entirely with CMP_SKIP_CERT=1
 #   - Health probe after startup (/api/health) with summary
 #   - Integrity self-check if CMP_INSTALL_EXPECTED_SHA256 provided
 # Environment Flags (summary):
-#   CMP_CHECKOUT_REF=ref|tag|commit         Force checkout of specific ref
-#   CMP_SKIP_AUTO_CHECKOUT=1                Keep current repo checkout
-#   CMP_SKIP_NODE_AUTO_INSTALL=1            Require preinstalled Node
-#   CMP_INSTALL_EXPECTED_SHA256=<sha>       Verify installer integrity
-#   CMP_CERT_DOMAINS="example.com www.example.com"  Additional domains (primary still prompted)
-#   CMP_CERT_HTTP_FALLBACK=1                Attempt standalone HTTP-01 on DNS failure
-#   CMP_SKIP_CERT=1                         Do not issue certificates
-#   CMP_ENABLE_NGINX=1                      Install & configure Nginx reverse proxy for HTTPS (default: prompt)
-#   CF_AUTH_MODE=token|key                  Pre-select Cloudflare auth mode
-# Environment Flags (summary):
 #   CMP_CHECKOUT_REF=ref|tag|commit         Force download of specific release version
 #   CMP_SKIP_NODE_AUTO_INSTALL=1            Require preinstalled Node
 #   CMP_INSTALL_EXPECTED_SHA256=<sha>       Verify installer integrity
 #   CMP_CERT_DOMAINS="example.com www.example.com"  Additional domains (primary still prompted)
-#   CMP_CERT_HTTP_FALLBACK=1                Attempt standalone HTTP-01 on DNS failure
+#   CMP_CERT_HTTP_FALLBACK=auto|1|0         HTTP-01 fallback (auto=default, 1=force, 0=disable)
 #   CMP_SKIP_CERT=1                         Do not issue certificates
 #   CMP_ENABLE_NGINX=1                      Install & configure Nginx reverse proxy for HTTPS (default: prompt)
 #   CF_AUTH_MODE=token|key                  Pre-select Cloudflare auth mode
@@ -762,8 +752,16 @@ else
     set -e
     if [ $CERT_EXIT -ne 0 ]; then
       err "DNS-01 issuance failed (exit $CERT_EXIT)"
-      if [ "${CMP_CERT_HTTP_FALLBACK:-}" = "1" ]; then
+      # Check if domain can actually be in Cloudflare (not third-party DNS like dpdns.org)
+      if echo "$DOMAIN" | grep -qE '\.(dpdns|ddns|no-ip|duckdns)\.(org|net|com)$'; then
+        warn "Domain appears to be from a third-party dynamic DNS service (DynDNS, No-IP, etc.)"
+        warn "These domains cannot use Cloudflare DNS-01. Automatically trying HTTP-01..."
+        FORCE_HTTP_FALLBACK=1
+      fi
+      # Auto-enable HTTP-01 fallback unless explicitly disabled
+      if [ "${CMP_CERT_HTTP_FALLBACK:-auto}" != "0" ] || [ "${FORCE_HTTP_FALLBACK:-0}" = "1" ]; then
         warn "Attempting HTTP-01 fallback (standalone)..."
+        warn "Ensure port 80 is open and points to this server"
         # Stop backend to free :80 if running
         systemctl stop $BACKEND_SERVICE 2>/dev/null || true
         set +e
@@ -772,12 +770,14 @@ else
         set -e
         if [ $FB_EXIT -ne 0 ]; then
           warn "HTTP-01 fallback also failed (exit $FB_EXIT). Proceeding without TLS."
+          warn "You can access the portal via HTTP on port $BACKEND_PORT"
+          warn "Or manually configure certificates later"
         else
           color "HTTP-01 fallback succeeded"
           CERT_OK=1
         fi
       else
-        warn "Certificate issuance failed (DNS-01) and fallback disabled. Proceeding without TLS."
+        warn "Certificate issuance failed (DNS-01) and fallback disabled (CMP_CERT_HTTP_FALLBACK=0). Proceeding without TLS."
       fi
     else
       color "Certificate issuance succeeded"
