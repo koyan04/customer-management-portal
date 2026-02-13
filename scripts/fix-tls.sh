@@ -3,6 +3,7 @@ set -e
 
 # TLS Certificate Fix Script
 # Helps diagnose and fix TLS/SSL certificate issues
+# Usage: ./fix-tls.sh [domain]
 
 echo "=== TLS Certificate Fix Script ==="
 echo ""
@@ -14,8 +15,21 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Load environment variables if they exist
+DOMAIN=""
 if [ -f /srv/cmp/.env ]; then
-    export $(grep -v '^#' /srv/cmp/.env | xargs)
+    source /srv/cmp/.env 2>/dev/null || true
+    # Try to get domain from environment
+    DOMAIN="${DOMAIN_NAME:-}"
+fi
+
+# Check if domain provided as argument
+if [ -n "$1" ]; then
+    DOMAIN="$1"
+fi
+
+# Try to detect domain from nginx config
+if [ -z "$DOMAIN" ] && [ -f /etc/nginx/sites-available/cmp ]; then
+    DOMAIN=$(grep -oP 'server_name \K[^;]+' /etc/nginx/sites-available/cmp | head -1 | xargs)
 fi
 
 # Function to check port accessibility
@@ -95,12 +109,36 @@ echo ""
 echo "Step 2: Identify the issue"
 echo ""
 
-# Ask for domain
-read -p "Enter your domain name: " DOMAIN
+# Check if we have a domain
+if [ -z "$DOMAIN" ]; then
+    # Check if stdin is a terminal (not piped)
+    if [ -t 0 ]; then
+        read -p "Enter your domain name: " DOMAIN
+    else
+        echo "Error: Domain not detected and script is running in non-interactive mode"
+        echo ""
+        echo "Solutions:"
+        echo "  1. Download and run locally:"
+        echo "     wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/fix-tls.sh"
+        echo "     chmod +x fix-tls.sh"
+        echo "     sudo ./fix-tls.sh YOUR_DOMAIN"
+        echo ""
+        echo "  2. Pass domain as argument:"
+        echo "     curl -fsSL https://...fix-tls.sh | sudo bash -s YOUR_DOMAIN"
+        echo ""
+        echo "  3. Set DOMAIN_NAME in /srv/cmp/.env"
+        echo ""
+        exit 1
+    fi
+fi
+
 if [ -z "$DOMAIN" ]; then
     echo "Error: Domain name is required"
     exit 1
 fi
+
+echo "Using domain: ${DOMAIN}"
+echo ""
 
 # Check if it's a dynamic DNS domain
 if [[ "$DOMAIN" =~ \.(dpdns|no-ip|duckdns|dynu|freedns)\. ]]; then
@@ -134,7 +172,45 @@ echo "3) Use HTTP mode without TLS (not recommended for production)"
 echo "4) Manual certificate setup instructions"
 echo "5) Exit"
 echo ""
-read -p "Choose an option (1-5): " choice
+
+# Determine if we're interactive
+if [ -t 0 ]; then
+    read -p "Choose an option (1-5): " choice
+else
+    echo "Non-interactive mode detected."
+    echo ""
+    
+    # Check if certificates already exist
+    if [ -d "/etc/letsencrypt/live/${DOMAIN}" ]; then
+        echo "✓ Certificate already exists for ${DOMAIN}"
+        echo ""
+        read -p "Reconfigure nginx with existing certificate? (y/N): " reconfig </dev/tty || reconfig="y"
+        
+        if [[ "$reconfig" =~ ^[Yy]$ ]]; then
+            choice=1
+        else
+            echo "Exiting. Certificate exists but not reconfigured."
+            exit 0
+        fi
+    else
+        # Auto-select option based on situation
+        if [ "$port_80_external" -eq 0 ]; then
+            echo "Port 80 is accessible. Automatically attempting certificate generation (option 1)..."
+            choice=1
+        else
+            echo "Port 80 is not accessible. Firewall configuration needed (option 2)..."
+            echo ""
+            read -p "Configure firewall now? (Y/n): " answer </dev/tty || answer="y"
+            
+            if [[ "$answer" =~ ^[Nn]$ ]]; then
+                echo "Exiting. Please configure firewall manually."
+                exit 1
+            else
+                choice=2
+            fi
+        fi
+    fi
+fi
 
 case $choice in
     1)
@@ -242,17 +318,105 @@ EOF
         # Enable firewall (ask for confirmation)
         echo ""
         echo "⚠️  WARNING: Enabling firewall will block all other incoming connections"
-        read -p "Do you want to enable the firewall now? (y/N): " enable_fw
+        
+        if [ -t 0 ]; then
+            read -p "Do you want to enable the firewall now? (y/N): " enable_fw
+        else
+            # Use /dev/tty to read even when piped
+            read -p "Do you want to enable the firewall now? (y/N): " enable_fw </dev/tty || enable_fw="y"
+        fi
         
         if [[ "$enable_fw" =~ ^[Yy]$ ]]; then
             ufw --force enable
             echo "✓ Firewall enabled"
             ufw status
             echo ""
-            echo "Now retry option 1 to get the certificate"
+            echo "Firewall configured. Now attempting certificate generation..."
+            sleep 2
+            
+            # Automatically try to get certificate after firewall setup
+            echo ""
+            echo "Attempting certificate generation with HTTP-01..."
+            
+            # Stop nginx temporarily
+            if [ "$nginx_running" = true ]; then
+                echo "Stopping nginx temporarily..."
+                systemctl stop nginx
+            fi
+            
+            # Stop backend temporarily
+            systemctl stop cmp-backend 2>/dev/null || true
+            
+            # Try standalone HTTP-01
+            echo "Running certbot in standalone mode..."
+            certbot certonly --standalone --non-interactive --agree-tos \
+                --email "${EMAIL:-admin@${DOMAIN}}" \
+                -d "$DOMAIN" \
+                --preferred-challenges http
+            
+            cert_result=$?
+            
+            if [ $cert_result -eq 0 ]; then
+                echo ""
+                echo "✓ Certificate obtained successfully!"
+                
+                # Configure nginx
+                if [ "$nginx_running" = true ]; then
+                    echo "Configuring nginx with TLS..."
+                    cat > /etc/nginx/sites-available/cmp << EOF
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${DOMAIN};
+
+    ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+    return 301 https://\$server_name\$request_uri;
+}
+EOF
+                    
+                    ln -sf /etc/nginx/sites-available/cmp /etc/nginx/sites-enabled/
+                    nginx -t && systemctl restart nginx
+                    
+                    echo ""
+                    echo "✓ Nginx configured with TLS"
+                    echo ""
+                    echo "Your portal is now accessible at: https://${DOMAIN}"
+                fi
+            else
+                echo ""
+                echo "✗ Certificate generation failed"
+                echo ""
+                echo "Check the certbot logs: /var/log/letsencrypt/letsencrypt.log"
+            fi
+            
+            # Start services
+            systemctl start cmp-backend
+            [ "$nginx_running" = true ] && systemctl start nginx
         else
             echo "Firewall rules added but not enabled"
             echo "Enable manually with: sudo ufw enable"
+            echo "Then retry option 1 to get the certificate"
         fi
         ;;
         

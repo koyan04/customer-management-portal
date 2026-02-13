@@ -172,11 +172,28 @@ Use IANA timezone names (e.g., `Asia/Yangon`) not offsets (e.g., `GMT+6:30`) in 
 
 If certificate generation fails during installation (DNS-01 or HTTP-01):
 
-**Quick Fix:**
+**Quick Fix (Interactive):**
 ```bash
-# Run the TLS fix script
-sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/fix-tls.sh | bash"
+# Download and run interactively
+wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/fix-tls.sh
+chmod +x fix-tls.sh
+sudo ./fix-tls.sh
 ```
+
+**Quick Fix (One-liner with domain):**
+```bash
+# Pass domain as argument when piped
+curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/fix-tls.sh | sudo bash -s YOUR_DOMAIN
+```
+
+The script will:
+- Auto-detect domain from existing config if not provided
+- Check port accessibility and DNS resolution
+- Identify if you're using dynamic DNS (dpdns, no-ip, etc.)
+- Automatically choose the best fix method
+- Configure firewall if needed
+- Retry certificate generation
+- Configure nginx with TLS
 
 **Common Issues:**
 
