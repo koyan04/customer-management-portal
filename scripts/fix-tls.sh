@@ -68,31 +68,73 @@ test_external_port() {
         echo "Public IP: ${public_ip}"
     fi
     
-    # Check if domain resolves to this server
-    domain_ip=$(dig +short "${domain}" A 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' | tail -n1)
+    # Check ALL A records for the domain (not just the first one)
+    echo "Checking DNS A records..."
+    domain_ips=($(dig +short "${domain}" A 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'))
     
-    if [ -z "$domain_ip" ]; then
+    if [ ${#domain_ips[@]} -eq 0 ]; then
         echo "⚠️  WARNING: Could not resolve domain ${domain}"
         echo "   Ensure DNS is configured correctly"
         return 1
     fi
     
-    echo "Domain ${domain} resolves to: ${domain_ip}"
+    echo "Domain ${domain} has ${#domain_ips[@]} A record(s):"
+    for ip in "${domain_ips[@]}"; do
+        if [ "$ip" = "$public_ip" ]; then
+            echo "  ✓ ${ip} (matches this server)"
+        else
+            echo "  ✗ ${ip} (does NOT match this server)"
+        fi
+    done
     
-    if [ "$public_ip" != "$domain_ip" ]; then
-        echo "❌ ERROR: Domain does not point to this server!"
-        echo "   Domain IP: ${domain_ip}"
-        echo "   Server IP: ${public_ip}"
+    # Check if server IP is in the list
+    ip_found=false
+    for ip in "${domain_ips[@]}"; do
+        if [ "$ip" = "$public_ip" ]; then
+            ip_found=true
+            break
+        fi
+    done
+    
+    if [ "$ip_found" = false ]; then
         echo ""
-        echo "   Certificate generation will FAIL until DNS is fixed."
+        echo "❌ ERROR: This server's IP is NOT in the DNS records!"
+        echo "   Server IP: ${public_ip}"
+        echo "   DNS points to: ${domain_ips[*]}"
+        echo ""
+        echo "   Certificate generation will FAIL because Let's Encrypt will try"
+        echo "   to verify at one of the DNS IPs, not at this server."
         echo ""
         echo "   Required action:"
-        echo "   1. Update DNS A record for ${domain} to point to ${public_ip}"
+        if [ ${#domain_ips[@]} -gt 1 ]; then
+            echo "   - You have MULTIPLE A records (${#domain_ips[@]} records)"
+            echo "   - Option 1: DELETE the incorrect A record(s)"
+            echo "   - Option 2: UPDATE all records to point to: ${public_ip}"
+            echo "   - Recommended: Keep only ONE A record: ${public_ip}"
+        else
+            echo "   1. Update DNS A record for ${domain} to: ${public_ip}"
+        fi
         echo "   2. Wait 5-10 minutes for DNS propagation"
         echo "   3. Verify with: dig +short ${domain}"
         echo "   4. Run this script again"
         echo ""
         return 2  # Return special code for DNS mismatch
+    fi
+    
+    if [ ${#domain_ips[@]} -gt 1 ]; then
+        echo ""
+        echo "⚠️  WARNING: Multiple A records detected!"
+        echo "   While your server IP (${public_ip}) is in the list,"
+        echo "   having multiple A records can cause issues:"
+        echo "   - Round-robin DNS may direct Let's Encrypt to wrong server"
+        echo "   - Certificate validation may fail intermittently"
+        echo "   - ${#domain_ips[@]} records found: ${domain_ips[*]}"
+        echo ""
+        echo "   Recommendation: DELETE incorrect records, keep only: ${public_ip}"
+        echo ""
+    else
+        echo ""
+        echo "✓ DNS correctly points to this server"
     fi
     
     # Test port connectivity from inside (more reliable than external test)
