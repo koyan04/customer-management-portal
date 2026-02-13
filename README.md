@@ -168,6 +168,45 @@ node run_migrations.js
 ### Timezone issues
 Use IANA timezone names (e.g., `Asia/Yangon`) not offsets (e.g., `GMT+6:30`) in Settings → General.
 
+### TLS/Certificate issues
+
+If certificate generation fails during installation (DNS-01 or HTTP-01):
+
+**Quick Fix:**
+```bash
+# Run the TLS fix script
+sudo bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/fix-tls.sh | bash"
+```
+
+**Common Issues:**
+
+1. **Dynamic DNS Domains** (dpdns.org, no-ip.com, etc.)
+   - Cannot use Cloudflare DNS-01 challenge
+   - Must use HTTP-01 (requires port 80 open)
+   - Run fix script and choose option 1
+
+2. **Port 80 blocked**
+   - Configure firewall: `sudo ufw allow 80/tcp && sudo ufw allow 443/tcp`
+   - Check DigitalOcean/AWS firewall rules
+   - Test externally: `telnet YOUR_DOMAIN 80`
+
+3. **Domain not resolving**
+   - Verify DNS: `dig +short YOUR_DOMAIN`
+   - Check public IP: `curl ifconfig.me`
+   - Ensure they match
+
+4. **HTTP mode (temporary workaround)**
+   - Access via HTTP: `http://YOUR_DOMAIN:3001`
+   - Not recommended for production
+   - Fix certificates later with the script
+
+**Manual certificate retry:**
+```bash
+sudo systemctl stop nginx cmp-backend
+sudo certbot certonly --standalone -d YOUR_DOMAIN
+sudo systemctl start nginx cmp-backend
+```
+
 ### Health check
 ```bash
 # Verify backend is running
