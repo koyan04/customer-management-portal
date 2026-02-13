@@ -17,9 +17,29 @@ Fixed incomplete base schema that caused fresh installations to fail with "colum
 - `idx_admins_last_seen` - Optimizes last_seen queries
 - `idx_users_enabled` - Optimizes enabled flag lookups
 
-**Problem Solved:**
+### Migration Configuration Fix
+Fixed PostgreSQL search_path configuration in migrations 019 and 021.
+
+**Error Fixed:**
+```
+[migrate] (019-table-active_sessions.sql) statement 1 failed: no schema has been selected to create in
+```
+
+**Root Cause:**
+- Migrations 019 and 021 were missing `SET search_path='public'` configuration
+- All other migrations (000-018, 020) include this standard PostgreSQL setting
+- Without search_path, PostgreSQL doesn't know which schema to use
+
+**The Fix:**
+Added standard PostgreSQL configuration block to both migrations:
+- `SET statement_timeout`, `lock_timeout`, `client_encoding`, etc.
+- `SELECT pg_catalog.set_config('search_path', 'public', false)`
+- Matches pg_dump format used in all other migrations
+
+**Problems Solved:**
 - Fresh installations (v1.4.5) had incomplete table structures
 - Admin panel showed empty - `/api/admin/accounts` returned 500 errors
+- Fresh installations (v1.4.7 initial) failed at migration 019
 - Required manual `ALTER TABLE` commands to add missing columns
 - Now: **Fresh installations work perfectly without any manual intervention**
 
@@ -46,8 +66,11 @@ Base schema now includes ALL columns and indexes from migrations 001-016, making
 **Fresh Installation Now Includes:**
 - ✅ All required columns from the start
 - ✅ All required indexes for performance
+- ✅ Correct PostgreSQL search_path configuration in all migrations
 - ✅ Admin panel displays immediately after installation
 - ✅ Zero "column does not exist" errors
+- ✅ Zero "no schema has been selected" errors
+- ✅ Zero manual database fixes required
 - ✅ Zero manual database fixes required
 
 ## 🔄 Upgrade Notes
