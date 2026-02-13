@@ -80,16 +80,19 @@ test_external_port() {
     echo "Domain ${domain} resolves to: ${domain_ip}"
     
     if [ "$public_ip" != "$domain_ip" ]; then
-        echo "⚠️  WARNING: Domain does not point to this server!"
+        echo "❌ ERROR: Domain does not point to this server!"
         echo "   Domain IP: ${domain_ip}"
         echo "   Server IP: ${public_ip}"
         echo ""
-        echo "   Possible causes:"
-        echo "   - DNS not updated yet (can take up to 48 hours)"
-        echo "   - Wrong DNS A record configured"
-        echo "   - Server behind NAT/load balancer"
+        echo "   Certificate generation will FAIL until DNS is fixed."
         echo ""
-        # Don't fail, just warn - NAT/proxy scenarios might still work
+        echo "   Required action:"
+        echo "   1. Update DNS A record for ${domain} to point to ${public_ip}"
+        echo "   2. Wait 5-10 minutes for DNS propagation"
+        echo "   3. Verify with: dig +short ${domain}"
+        echo "   4. Run this script again"
+        echo ""
+        return 2  # Return special code for DNS mismatch
     fi
     
     # Test port connectivity from inside (more reliable than external test)
@@ -203,27 +206,61 @@ echo ""
 test_external_port "$DOMAIN" 80
 port_80_result=$?
 
-# Ask if user wants to continue if DNS doesn't match
-if [ $port_80_result -ne 0 ]; then
+# Handle DNS mismatch (return code 2)
+if [ $port_80_result -eq 2 ]; then
     echo ""
-    echo "⚠️  Port 80 check failed or DNS mismatch detected"
+    echo "❌ CRITICAL: DNS mismatch detected!"
+    echo ""
+    echo "Certificate generation will fail because Let's Encrypt will try to"
+    echo "verify the domain at the IP address it resolves to, not this server."
+    echo ""
+    
+    if [ -t 0 ]; then
+        read -p "Do you want to continue anyway? (not recommended) (y/N): " continue_anyway
+    else
+        # In non-interactive mode, check /dev/tty
+        if [ -c /dev/tty ]; then
+            read -p "Do you want to continue anyway? (not recommended) (y/N): " continue_anyway </dev/tty || continue_anyway="n"
+        else
+            # Truly non-interactive, don't continue with DNS mismatch
+            echo "Non-interactive mode: Cannot continue with DNS mismatch."
+            echo "Please fix DNS and run again."
+            continue_anyway="n"
+        fi
+    fi
+    
+    if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
+        echo ""
+        echo "Exiting. Please fix DNS first:"
+        echo ""
+        echo "  1. Go to your dynamic DNS provider (dpdns.org)"
+        echo "  2. Update A record for ${DOMAIN} to: $(hostname -I | awk '{print $1}')"
+        echo "  3. Wait 5-10 minutes"
+        echo "  4. Verify: dig +short ${DOMAIN}"
+        echo "  5. Run this script again"
+        exit 1
+    fi
+fi
+
+# Ask if user wants to continue if port check failed
+if [ $port_80_result -eq 1 ]; then
+    echo ""
+    echo "⚠️  Port 80 check failed"
     echo ""
     
     if [ -t 0 ]; then
         read -p "Do you want to continue anyway? (y/N): " continue_anyway
     else
-        read -p "Do you want to continue anyway? (y/N): " continue_anyway </dev/tty || continue_anyway="n"
+        if [ -c /dev/tty ]; then
+            read -p "Do you want to continue anyway? (y/N): " continue_anyway </dev/tty || continue_anyway="n"
+        else
+            continue_anyway="n"
+        fi
     fi
     
     if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
         echo ""
-        echo "Exiting. Please fix DNS/firewall issues first."
-        echo ""
-        echo "Steps to fix:"
-        echo "  1. Update DNS A record to point to this server's IP"
-        echo "  2. Wait for DNS propagation (up to 48 hours)"
-        echo "  3. Configure firewall to allow port 80"
-        echo "  4. Run this script again"
+        echo "Exiting. Please configure firewall to allow port 80."
         exit 1
     fi
 fi
@@ -236,13 +273,14 @@ echo ""
 echo "1) Retry certificate with HTTP-01 challenge (requires port 80 open)"
 echo "2) Configure firewall to allow ports 80 and 443"
 echo "3) Use HTTP mode without TLS (not recommended for production)"
-echo "4) Manual certificate setup instructions"
-echo "5) Exit"
+echo "4) Wait for DNS propagation and monitor (for recent DNS changes)"
+echo "5) Manual certificate setup instructions"
+echo "6) Exit"
 echo ""
 
 # Determine if we're interactive
 if [ -t 0 ]; then
-    read -p "Choose an option (1-5): " choice
+    read -p "Choose an option (1-6): " choice
 else
     echo "Non-interactive mode detected."
     echo ""
@@ -262,8 +300,12 @@ else
     else
         # Auto-select option based on situation
         if [ "$port_80_result" -eq 0 ]; then
-            echo "Port checks passed. Automatically attempting certificate generation (option 1)..."
+            echo "DNS and port checks passed. Automatically attempting certificate generation (option 1)..."
             choice=1
+        elif [ "$port_80_result" -eq 2 ]; then
+            echo "DNS mismatch detected. Cannot proceed with certificate generation."
+            echo "Please fix DNS and run again."
+            exit 1
         else
             echo "Port 80 check failed. Firewall configuration recommended (option 2)..."
             echo ""
@@ -526,6 +568,51 @@ EOF
         
     4)
         echo ""
+        echo "Waiting for DNS propagation..."
+        echo ""
+        
+        # Get current public IP
+        public_ip=""
+        for service in "ifconfig.me" "icanhazip.com" "api.ipify.org"; do
+            public_ip=$(timeout 5 curl -s -4 "$service" 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' || echo "")
+            if [ -n "$public_ip" ]; then
+                break
+            fi
+        done
+        
+        if [ -z "$public_ip" ]; then
+            public_ip=$(hostname -I | awk '{print $1}')
+        fi
+        
+        echo "Target IP: ${public_ip}"
+        echo "Checking ${DOMAIN} every 30 seconds..."
+        echo "Press Ctrl+C to stop"
+        echo ""
+        
+        attempt=1
+        while true; do
+            resolved_ip=$(dig +short "${DOMAIN}" A 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' | tail -n1)
+            
+            timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+            
+            if [ "$resolved_ip" = "$public_ip" ]; then
+                echo "[${timestamp}] ✓ DNS propagated! ${DOMAIN} → ${resolved_ip}"
+                echo ""
+                echo "DNS is now correct. You can run option 1 to get certificate."
+                break
+            elif [ -n "$resolved_ip" ]; then
+                echo "[${timestamp}] ⏳ Attempt ${attempt}: ${DOMAIN} → ${resolved_ip} (waiting for ${public_ip})"
+            else
+                echo "[${timestamp}] ⏳ Attempt ${attempt}: Domain not resolving"
+            fi
+            
+            attempt=$((attempt + 1))
+            sleep 30
+        done
+        ;;
+        
+    5)
+        echo ""
         echo "=== Manual Certificate Setup Instructions ==="
         echo ""
         echo "If automatic certificate generation fails, you can:"
@@ -554,7 +641,7 @@ EOF
         echo ""
         ;;
         
-    5)
+    6)
         echo "Exiting..."
         exit 0
         ;;
