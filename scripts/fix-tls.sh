@@ -50,27 +50,56 @@ test_external_port() {
     local port=$2
     echo "Testing external connectivity to ${domain}:${port}..."
     
-    # Try to get the public IP
-    public_ip=$(curl -s ifconfig.me || curl -s icanhazip.com || echo "unknown")
-    echo "Public IP: ${public_ip}"
+    # Try to get the public IP with multiple fallbacks
+    public_ip=""
+    for service in "ifconfig.me" "icanhazip.com" "api.ipify.org" "checkip.amazonaws.com"; do
+        public_ip=$(timeout 5 curl -s -4 "$service" 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' || echo "")
+        if [ -n "$public_ip" ]; then
+            break
+        fi
+    done
+    
+    if [ -z "$public_ip" ]; then
+        # Try using hostname -I as last resort
+        public_ip=$(hostname -I | awk '{print $1}')
+        echo "⚠️  Could not detect public IP via external services"
+        echo "   Using local IP: ${public_ip} (may be private/NAT IP)"
+    else
+        echo "Public IP: ${public_ip}"
+    fi
     
     # Check if domain resolves to this server
-    domain_ip=$(dig +short "${domain}" A | tail -n1)
-    echo "Domain ${domain} resolves to: ${domain_ip}"
+    domain_ip=$(dig +short "${domain}" A 2>/dev/null | grep -oE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' | tail -n1)
     
-    if [ "$public_ip" != "$domain_ip" ] && [ "$domain_ip" != "" ]; then
-        echo "⚠️  WARNING: Domain does not point to this server!"
-        echo "   Domain IP: ${domain_ip}"
-        echo "   Server IP: ${public_ip}"
+    if [ -z "$domain_ip" ]; then
+        echo "⚠️  WARNING: Could not resolve domain ${domain}"
+        echo "   Ensure DNS is configured correctly"
         return 1
     fi
     
-    # Test with timeout
-    if timeout 5 bash -c "echo > /dev/tcp/${domain}/${port}" 2>/dev/null; then
-        echo "✓ Port ${port} is accessible externally"
+    echo "Domain ${domain} resolves to: ${domain_ip}"
+    
+    if [ "$public_ip" != "$domain_ip" ]; then
+        echo "⚠️  WARNING: Domain does not point to this server!"
+        echo "   Domain IP: ${domain_ip}"
+        echo "   Server IP: ${public_ip}"
+        echo ""
+        echo "   Possible causes:"
+        echo "   - DNS not updated yet (can take up to 48 hours)"
+        echo "   - Wrong DNS A record configured"
+        echo "   - Server behind NAT/load balancer"
+        echo ""
+        # Don't fail, just warn - NAT/proxy scenarios might still work
+    fi
+    
+    # Test port connectivity from inside (more reliable than external test)
+    echo ""
+    echo "Testing local port ${port} listening..."
+    if ss -tulpn | grep -q ":${port} "; then
+        echo "✓ Port ${port} is listening locally"
         return 0
     else
-        echo "✗ Port ${port} is NOT accessible externally"
+        echo "✗ Port ${port} is NOT listening"
         return 1
     fi
 }
@@ -95,6 +124,12 @@ if command -v certbot &> /dev/null; then
 else
     echo "✗ Certbot is not installed"
     certbot_installed=false
+fi
+
+# Check if dig is installed
+if ! command -v dig &> /dev/null; then
+    echo "⚠️  dig not installed, installing dnsutils..."
+    apt-get update -qq && apt-get install -y dnsutils -qq 2>/dev/null || true
 fi
 
 # Check listening ports
@@ -151,6 +186,11 @@ if [[ "$DOMAIN" =~ \.(dpdns|no-ip|duckdns|dynu|freedns)\. ]]; then
     echo "  2. Domain must resolve to this server's public IP"
     echo "  3. No firewall blocking incoming connections on port 80"
     echo ""
+    echo "IMPORTANT: Verify your dynamic DNS service is:"
+    echo "  - Actively updating the domain to point to this server"
+    echo "  - Not rate-limited or expired"
+    echo "  - Configured with the correct update client/service"
+    echo ""
     is_dynamic_dns=true
 else
     is_dynamic_dns=false
@@ -158,11 +198,38 @@ fi
 
 # Test external connectivity
 echo ""
+echo "Step 3: DNS and Connectivity Check"
+echo ""
 test_external_port "$DOMAIN" 80
-port_80_external=$?
+port_80_result=$?
+
+# Ask if user wants to continue if DNS doesn't match
+if [ $port_80_result -ne 0 ]; then
+    echo ""
+    echo "⚠️  Port 80 check failed or DNS mismatch detected"
+    echo ""
+    
+    if [ -t 0 ]; then
+        read -p "Do you want to continue anyway? (y/N): " continue_anyway
+    else
+        read -p "Do you want to continue anyway? (y/N): " continue_anyway </dev/tty || continue_anyway="n"
+    fi
+    
+    if [[ ! "$continue_anyway" =~ ^[Yy]$ ]]; then
+        echo ""
+        echo "Exiting. Please fix DNS/firewall issues first."
+        echo ""
+        echo "Steps to fix:"
+        echo "  1. Update DNS A record to point to this server's IP"
+        echo "  2. Wait for DNS propagation (up to 48 hours)"
+        echo "  3. Configure firewall to allow port 80"
+        echo "  4. Run this script again"
+        exit 1
+    fi
+fi
 
 echo ""
-echo "Step 3: Choose a solution"
+echo "Step 4: Choose a solution"
 echo ""
 echo "Available options:"
 echo ""
@@ -194,11 +261,11 @@ else
         fi
     else
         # Auto-select option based on situation
-        if [ "$port_80_external" -eq 0 ]; then
-            echo "Port 80 is accessible. Automatically attempting certificate generation (option 1)..."
+        if [ "$port_80_result" -eq 0 ]; then
+            echo "Port checks passed. Automatically attempting certificate generation (option 1)..."
             choice=1
         else
-            echo "Port 80 is not accessible. Firewall configuration needed (option 2)..."
+            echo "Port 80 check failed. Firewall configuration recommended (option 2)..."
             echo ""
             read -p "Configure firewall now? (Y/n): " answer </dev/tty || answer="y"
             
