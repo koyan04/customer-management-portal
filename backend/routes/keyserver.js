@@ -163,6 +163,179 @@ const startKeyServer = (config) => {
         } catch (_) { return null; }
       };
 
+      // Convert sing-box outbound to V2Ray/Xray outbound format
+      const singboxToV2RayOutbound = (ob) => {
+        try {
+          const tag = ob.tag || 'proxy';
+          const server = ob.server;
+          const port = ob.server_port;
+          if (!server || !port) return null;
+
+          const v2rayOb = { protocol: ob.type, tag };
+
+          // Stream settings (transport + tls)
+          const streamSettings = { network: 'tcp', security: 'none' };
+          
+          if (ob.transport) {
+            streamSettings.network = ob.transport.type || 'tcp';
+            
+            if (ob.transport.type === 'ws') {
+              streamSettings.wsSettings = {
+                path: ob.transport.path || '/',
+                headers: ob.transport.headers || {}
+              };
+              if (ob.tls?.server_name) streamSettings.wsSettings.headers.Host = ob.tls.server_name;
+            } else if (ob.transport.type === 'grpc') {
+              streamSettings.grpcSettings = {
+                serviceName: ob.transport.service_name || ''
+              };
+            }
+          }
+
+          if (ob.tls && ob.tls.enabled) {
+            streamSettings.security = 'tls';
+            streamSettings.tlsSettings = {
+              serverName: ob.tls.server_name || server,
+              allowInsecure: ob.tls.insecure || false,
+              alpn: ob.tls.alpn || ['h2', 'http/1.1']
+            };
+            if (ob.tls.utls && ob.tls.utls.fingerprint) {
+              streamSettings.tlsSettings.fingerprint = ob.tls.utls.fingerprint;
+            }
+          }
+
+          v2rayOb.streamSettings = streamSettings;
+
+          // Protocol-specific settings
+          if (ob.type === 'vless') {
+            v2rayOb.settings = {
+              vnext: [{
+                address: server,
+                port: port,
+                users: [{
+                  id: ob.uuid,
+                  encryption: ob.packet_encoding || 'none',
+                  flow: ob.flow || ''
+                }]
+              }]
+            };
+          } else if (ob.type === 'vmess') {
+            v2rayOb.settings = {
+              vnext: [{
+                address: server,
+                port: port,
+                users: [{
+                  id: ob.uuid,
+                  alterId: ob.alter_id || 0,
+                  security: ob.security || 'auto'
+                }]
+              }]
+            };
+          } else if (ob.type === 'trojan') {
+            v2rayOb.settings = {
+              servers: [{
+                address: server,
+                port: port,
+                password: ob.password
+              }]
+            };
+          } else if (ob.type === 'shadowsocks') {
+            v2rayOb.settings = {
+              servers: [{
+                address: server,
+                port: port,
+                method: ob.method,
+                password: ob.password
+              }]
+            };
+          } else {
+            return null;
+          }
+
+          return v2rayOb;
+        } catch (_) { return null; }
+      };
+
+      // Convert sing-box JSON to V2Ray/Xray JSON format for V2Box compatibility
+      const convertSingboxToV2Ray = (content, filename) => {
+        try {
+          const config = JSON.parse(content);
+          if (!config.outbounds || !Array.isArray(config.outbounds)) return null;
+
+          const proxyTypes = ['vmess', 'vless', 'trojan', 'shadowsocks'];
+          const proxyOutbounds = config.outbounds
+            .filter(ob => proxyTypes.includes(ob.type))
+            .map(ob => singboxToV2RayOutbound(ob))
+            .filter(Boolean);
+
+          if (proxyOutbounds.length === 0) return null;
+
+          // Use first proxy outbound
+          const mainProxy = proxyOutbounds[0];
+          mainProxy.tag = 'proxy';
+
+          const v2rayConfig = {
+            log: { loglevel: 'warning' },
+            dns: {
+              servers: [{ address: '8.8.8.8', skipFallback: false }],
+              queryStrategy: 'UseIP',
+              tag: 'dns_out'
+            },
+            inbounds: [
+              {
+                tag: 'socks',
+                port: 10808,
+                protocol: 'socks',
+                settings: { auth: 'noauth', udp: true, userLevel: 8 }
+              },
+              {
+                tag: 'http',
+                port: 10809,
+                protocol: 'http',
+                settings: { userLevel: 8 }
+              }
+            ],
+            outbounds: [
+              mainProxy,
+              {
+                protocol: 'freedom',
+                tag: 'direct',
+                settings: { domainStrategy: 'AsIs' }
+              },
+              {
+                protocol: 'blackhole',
+                tag: 'block',
+                settings: { response: { type: 'http' } }
+              }
+            ],
+            routing: {
+              domainStrategy: 'AsIs',
+              rules: [
+                { type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }
+              ]
+            },
+            policy: {
+              levels: {
+                '8': {
+                  connIdle: 300,
+                  downlinkOnly: 1,
+                  handshake: 4,
+                  uplinkOnly: 1
+                }
+              },
+              system: {
+                statsOutboundDownlink: true,
+                statsOutboundUplink: true
+              }
+            },
+            stats: {},
+            remarks: filename.replace(/\.(json|yaml)$/, '')
+          };
+
+          return JSON.stringify(v2rayConfig, null, 2);
+        } catch (_) { return null; }
+      };
+
       keyServerApp.get('/sub/:filename', (req, res) => {
         const filename = req.params.filename;
         const userKey = req.query.key;
@@ -201,12 +374,36 @@ const startKeyServer = (config) => {
 
         res.setHeader('profile-update-interval', '24');
 
-        // For .json files: auto-detect sing-box config and convert to base64 proxy URIs
-        // so that Xray-based clients (V2Box, V2RayNG, etc.) can parse them.
-        // Use ?format=raw to get the original sing-box JSON (for sing-box clients).
-        if (sanitized.endsWith('.json') && req.query.format !== 'raw') {
+        // For .json files: handle format conversions
+        // - ?format=raw: original sing-box JSON (for sing-box clients)
+        // - ?format=v2ray: V2Ray/Xray JSON (for V2Box, V2RayNG, etc.)
+        // - default: base64 proxy URIs (for most subscription clients)
+        if (sanitized.endsWith('.json')) {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          
+          // V2Ray/Xray JSON format for V2Box
+          if (req.query.format === 'v2ray') {
+            try {
+              const v2rayJson = convertSingboxToV2Ray(content, sanitized);
+              if (v2rayJson) {
+                res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                res.send(v2rayJson);
+                console.log(`[KeyServer] [${new Date().toISOString()}] Served (V2Ray JSON): ${sanitized} to ${req.ip}`);
+                return;
+              }
+            } catch (_) {}
+          }
+          
+          // Raw sing-box format
+          if (req.query.format === 'raw') {
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.sendFile(filePath);
+            console.log(`[KeyServer] [${new Date().toISOString()}] Served (raw): ${sanitized} to ${req.ip}`);
+            return;
+          }
+          
+          // Default: base64 proxy URIs
           try {
-            const content = fs.readFileSync(filePath, 'utf-8');
             const base64 = convertSingboxToURIs(content);
             if (base64) {
               res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -217,7 +414,7 @@ const startKeyServer = (config) => {
           } catch (_) {}
         }
 
-        // Fallback: serve file as-is (YAML configs, non-singbox JSON, or ?format=raw)
+        // Fallback: serve file as-is (YAML configs, etc.)
         const contentType = sanitized.endsWith('.json')
           ? 'application/json; charset=utf-8'
           : 'text/plain; charset=utf-8';
