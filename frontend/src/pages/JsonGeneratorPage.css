@@ -1,0 +1,5 @@
+/* JSON Generator reuses yaml-generator-page styles via shared class name */
+/* Import is handled by the JSX importing YamlGeneratorPage.css classes */
+/* This file only contains JSON-specific overrides if needed */
+
+@import './YamlGeneratorPage.css';

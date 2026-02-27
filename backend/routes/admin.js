@@ -11,6 +11,56 @@ const net = require('net');
 const { Pool: PgPool } = require('pg');
 const sharp = require('sharp');
 
+// Helper: Convert expire_date ISO timestamp to correct local YYYY-MM-DD date string.
+// When PostgreSQL stores a DATE column, node-pg returns it as a JS Date at midnight LOCAL time,
+// which JSON.stringify converts to UTC ISO (e.g. midnight MMT = 17:30Z previous day).
+// On restore, inserting that ISO string into a DATE column would lose a day in positive-offset timezones.
+// This function detects ISO timestamps and converts them to the correct local date.
+function fixExpireDate(val) {
+  if (!val) return val;
+  const s = String(val).trim();
+  // Already a plain date (YYYY-MM-DD) — no conversion needed
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // ISO timestamp — convert to local date using app timezone
+  if (s.includes('T')) {
+    try {
+      const d = new Date(s);
+      if (isNaN(d.getTime())) return val;
+      // Try to use the app's configured timezone
+      let tz = 'UTC';
+      try {
+        const settingsCache = require('../lib/settingsCache');
+        const cached = settingsCache.getGeneralCached();
+        if (cached && cached.timezone) tz = cached.timezone;
+      } catch (_) {}
+      // Format as YYYY-MM-DD in the target timezone
+      const parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+      return parts; // en-CA locale gives YYYY-MM-DD format
+    } catch (_) {
+      return val;
+    }
+  }
+  return val;
+}
+
+// Key server config helpers (for including in main backups)
+const KEYSERVER_CONFIG_PATH = path.join(__dirname, '..', 'data', 'keyserver.json');
+function loadKeyserverConfig() {
+  try {
+    if (fs.existsSync(KEYSERVER_CONFIG_PATH)) {
+      return JSON.parse(fs.readFileSync(KEYSERVER_CONFIG_PATH, 'utf-8'));
+    }
+  } catch (_) {}
+  return null;
+}
+function saveKeyserverConfig(config) {
+  try {
+    const dataDir = path.join(__dirname, '..', 'data');
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(KEYSERVER_CONFIG_PATH, JSON.stringify(config, null, 2));
+  } catch (e) { console.warn('Failed to save keyserver config:', e && e.message ? e.message : e); }
+}
+
 const uploadsPath = path.join(__dirname, '..', 'public', 'uploads');
 const logosPath = path.join(__dirname, '..', 'public', 'logos'); // Persistent logo storage
 try { if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true }); } catch(e) { console.warn('mkdir uploads failed', e && e.message ? e.message : e); }
@@ -1955,16 +2005,24 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
     const settings = await pool.query('SELECT settings_key, data, updated_at FROM app_settings ORDER BY settings_key');
     const serverKeys = await pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys ORDER BY id');
     const users = await pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users ORDER BY id');
+    let domainsRows = [];
+    try { const dr = await pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains ORDER BY id'); domainsRows = dr.rows || []; } catch (_) {}
+    const keyserverConfig = loadKeyserverConfig();
     const payload = {
       type: 'db-backup-v1',
       createdAt: new Date().toISOString(),
       admins: admins.rows || [],
       servers: servers.rows || [],
       server_keys: serverKeys.rows || [],
-      users: users.rows || [],
+      users: (users.rows || []).map(u => ({
+        ...u,
+        expire_date: u.expire_date ? fixExpireDate(u.expire_date instanceof Date ? u.expire_date.toISOString() : String(u.expire_date)) : null
+      })),
       viewer_server_permissions: viewerPerms,
       server_admin_permissions: serverAdmins.rows || [],
       app_settings: (settings.rows || []).map(r => ({ settings_key: r.settings_key, data: maskSecrets(r.settings_key, r.data), updated_at: r.updated_at })),
+      domains: domainsRows,
+      keyserver_config: keyserverConfig || null,
     };
     const json = JSON.stringify(payload);
     res.setHeader('Content-Type', 'application/octet-stream');
@@ -1986,18 +2044,25 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
         await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, 'backup', 'BACKUP', null, null]);
       }
     } catch (_) {}
-    const [settingsRes, serversRes, serverKeysRes, usersRes] = await Promise.all([
+    const [settingsRes, serversRes, serverKeysRes, usersRes, domainsRes] = await Promise.all([
       pool.query('SELECT * FROM app_settings'),
       pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers'),
       pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys'),
-      pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users')
+      pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users'),
+      pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains').catch(() => ({ rows: [] }))
     ]);
+    const keyserverConfig = loadKeyserverConfig();
     const payload = {
       created_at: new Date().toISOString(),
       app_settings: settingsRes.rows || [],
       servers: serversRes.rows || [],
       server_keys: serverKeysRes.rows || [],
-      users: usersRes.rows || []
+      users: (usersRes.rows || []).map(u => ({
+        ...u,
+        expire_date: u.expire_date ? fixExpireDate(u.expire_date instanceof Date ? u.expire_date.toISOString() : String(u.expire_date)) : null
+      })),
+      domains: domainsRes.rows || [],
+      keyserver_config: keyserverConfig || null
     };
     const json = JSON.stringify(payload, null, 2);
     res.setHeader('Content-Type', 'application/json');
@@ -2131,7 +2196,7 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
         await client.query(
           `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11, COALESCE($12, now()))`,
-          [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
+          [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, fixExpireDate(u.expire_date) || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
         );
       }
     }
@@ -2152,6 +2217,34 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       }
     }
     
+    // domains: Overwrite existing domains with backup data
+    if (Array.isArray(data.domains) && data.domains.length > 0) {
+      try {
+        await client.query('DELETE FROM domains');
+        console.log('Deleted all domains');
+        for (const d of data.domains) {
+          if (!d.domain) continue;
+          await client.query(
+            `INSERT INTO domains (id, domain, server, service, unlimited, created_at, updated_at)
+             VALUES ($1,$2,$3,$4,$5, COALESCE($6, now()), COALESCE($7, now()))`,
+            [d.id || null, d.domain, d.server || '', d.service || 'Basic', typeof d.unlimited === 'boolean' ? d.unlimited : false, d.created_at || null, d.updated_at || null]
+          );
+        }
+      } catch (e) {
+        console.warn('Could not restore domains:', e.message);
+      }
+    }
+
+    // keyserver config: Restore from backup if present
+    if (data.keyserver_config && typeof data.keyserver_config === 'object') {
+      try {
+        saveKeyserverConfig(data.keyserver_config);
+        console.log('Restored keyserver config');
+      } catch (e) {
+        console.warn('Could not restore keyserver config:', e.message);
+      }
+    }
+    
     await client.query('COMMIT');
     // refresh general settings cache after snapshot restore
     try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
@@ -2161,6 +2254,8 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       server_keys: Array.isArray(data.server_keys) ? data.server_keys.length : 0,
       users: Array.isArray(data.users) ? data.users.length : 0,
       admins_avatars_restored: Array.isArray(data.admins) ? data.admins.length : 0,
+      domains: Array.isArray(data.domains) ? data.domains.length : 0,
+      keyserver_config: data.keyserver_config ? true : false,
     }});
     } catch (err) {
       await client.query('ROLLBACK');
@@ -2276,7 +2371,7 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           await client.query(
             `INSERT INTO users (id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,COALESCE($12, now()))`,
-            [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, u.expire_date || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
+            [u.id || null, u.server_id, u.account_name, u.service_type || null, u.contact || null, fixExpireDate(u.expire_date) || null, u.total_devices || null, u.data_limit_gb || null, u.remark || null, u.display_pos || null, typeof u.enabled === 'boolean' ? u.enabled : true, u.created_at || null]
           );
         }
       }
@@ -2328,6 +2423,32 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           );
         }
       }
+      // domains: Overwrite existing domains with backup data
+      if (Array.isArray(payload.domains) && payload.domains.length > 0) {
+        try {
+          await client.query('DELETE FROM domains');
+          console.log('Deleted all domains');
+          for (const d of payload.domains) {
+            if (!d.domain) continue;
+            await client.query(
+              `INSERT INTO domains (id, domain, server, service, unlimited, created_at, updated_at)
+               VALUES ($1,$2,$3,$4,$5, COALESCE($6, now()), COALESCE($7, now()))`,
+              [d.id || null, d.domain, d.server || '', d.service || 'Basic', typeof d.unlimited === 'boolean' ? d.unlimited : false, d.created_at || null, d.updated_at || null]
+            );
+          }
+        } catch (e) {
+          console.warn('Could not restore domains:', e.message);
+        }
+      }
+      // keyserver config: Restore from backup if present
+      if (payload.keyserver_config && typeof payload.keyserver_config === 'object') {
+        try {
+          saveKeyserverConfig(payload.keyserver_config);
+          console.log('Restored keyserver config');
+        } catch (e) {
+          console.warn('Could not restore keyserver config:', e.message);
+        }
+      }
       await client.query('COMMIT');
       // refresh general settings cache after DB restore
       try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
@@ -2340,6 +2461,8 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           viewer_perms: payload.viewer_server_permissions ? payload.viewer_server_permissions.length : 0,
           server_admin_perms: payload.server_admin_permissions ? payload.server_admin_permissions.length : 0,
           settings: payload.app_settings ? payload.app_settings.length : 0,
+          domains: payload.domains ? payload.domains.length : 0,
+          keyserver_config: payload.keyserver_config ? true : false,
         }
       });
     } catch (err) {
@@ -2849,4 +2972,182 @@ router.get('/control/update/status', authenticateToken, isAdmin, async (req, res
   }
 });
 
+// ── Admin-specific backup (full admin data + permissions + audit logs) ────────
+router.get('/backup/admins', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const [adminsRes, adminsAuditRes, loginAuditRes, pwResetAuditRes] = await Promise.all([
+      pool.query('SELECT id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen FROM admins ORDER BY id'),
+      pool.query('SELECT id, admin_id, changed_by, change_type, "old", "new", created_at, changed_fields, password_changed FROM admins_audit ORDER BY id'),
+      pool.query('SELECT id, admin_id, role, ip, user_agent, geo_city, geo_country, created_at FROM login_audit ORDER BY id'),
+      pool.query('SELECT id, admin_id, target_account_id, created_at, note FROM password_reset_audit ORDER BY id'),
+    ]);
+    // Also include permission tables
+    let viewerPerms = [];
+    try { const r = await pool.query('SELECT editor_id, server_id FROM viewer_server_permissions'); viewerPerms = r.rows || []; }
+    catch (_) { try { const r2 = await pool.query('SELECT editor_id, server_id FROM editor_server_permissions'); viewerPerms = r2.rows || []; } catch (__) {} }
+    let serverAdminPerms = [];
+    try { const r = await pool.query('SELECT admin_id, server_id FROM server_admin_permissions'); serverAdminPerms = r.rows || []; } catch (_) {}
 
+    const payload = {
+      type: 'admin-backup-v1',
+      createdAt: new Date().toISOString(),
+      admins: adminsRes.rows || [],
+      admins_audit: adminsAuditRes.rows || [],
+      login_audit: loginAuditRes.rows || [],
+      password_reset_audit: pwResetAuditRes.rows || [],
+      viewer_server_permissions: viewerPerms,
+      server_admin_permissions: serverAdminPerms,
+    };
+    const json = JSON.stringify(payload);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${tsName('admin-backup', 'json')}"`);
+    return res.send(json);
+  } catch (err) {
+    console.error('admin backup failed:', err);
+    return res.status(500).json({ msg: 'Failed to create admin backup' });
+  }
+});
+
+// ── Admin-specific restore ────────────────────────────────────────────────────
+router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
+  const tmpUploadPath = req.file && req.file.path ? req.file.path : null;
+  const client = await pool.connect();
+  try {
+    if (!req.file) return res.status(400).json({ msg: 'No file uploaded' });
+    let data;
+    try {
+      if (req.file.buffer) data = JSON.parse(req.file.buffer.toString('utf8'));
+      else if (req.file.path) data = JSON.parse(fs.readFileSync(req.file.path).toString('utf8'));
+    } catch (_) { return res.status(400).json({ msg: 'Invalid JSON' }); }
+    if (!data || data.type !== 'admin-backup-v1') return res.status(400).json({ msg: 'Not a valid admin backup file (expected type admin-backup-v1)' });
+
+    const mode = req.body.mode || 'merge'; // merge or overwrite
+
+    await client.query('BEGIN');
+
+    const admins = Array.isArray(data.admins) ? data.admins : [];
+    const adminsAudit = Array.isArray(data.admins_audit) ? data.admins_audit : [];
+    const loginAudit = Array.isArray(data.login_audit) ? data.login_audit : [];
+    const pwResetAudit = Array.isArray(data.password_reset_audit) ? data.password_reset_audit : [];
+    const viewerPerms = Array.isArray(data.viewer_server_permissions) ? data.viewer_server_permissions : [];
+    const serverAdminPerms = Array.isArray(data.server_admin_permissions) ? data.server_admin_permissions : [];
+
+    if (mode === 'overwrite') {
+      // Clear all tables (order matters due to potential FK references)
+      await client.query('DELETE FROM password_reset_audit');
+      await client.query('DELETE FROM login_audit');
+      await client.query('DELETE FROM admins_audit');
+      try { await client.query('DELETE FROM viewer_server_permissions'); } catch (_) { try { await client.query('DELETE FROM editor_server_permissions'); } catch (__) {} }
+      try { await client.query('DELETE FROM server_admin_permissions'); } catch (_) {}
+      // Don't delete the current admin doing the restore
+      const currentAdminId = req.user && req.user.id ? req.user.id : null;
+      if (currentAdminId) {
+        await client.query('DELETE FROM admins WHERE id != $1', [currentAdminId]);
+      }
+    }
+
+    // Restore admins
+    let adminCount = 0;
+    for (const a of admins) {
+      if (!a.username) continue;
+      // Never overwrite the currently-logged-in admin's password or role
+      const isCurrentAdmin = req.user && req.user.id && a.id === req.user.id;
+      if (mode === 'overwrite') {
+        if (isCurrentAdmin) {
+          // Update everything except password_hash and role for current admin
+          await client.query(
+            `INSERT INTO admins (id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             ON CONFLICT (username) DO UPDATE SET display_name=EXCLUDED.display_name, avatar_url=EXCLUDED.avatar_url, avatar_data=EXCLUDED.avatar_data, updated_at=EXCLUDED.updated_at`,
+            [a.id, a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', a.avatar_url || null, a.avatar_data || null, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
+          );
+        } else {
+          await client.query(
+            `INSERT INTO admins (id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+             ON CONFLICT (username) DO UPDATE SET display_name=EXCLUDED.display_name, password_hash=EXCLUDED.password_hash, role=EXCLUDED.role, avatar_url=EXCLUDED.avatar_url, avatar_data=EXCLUDED.avatar_data, updated_at=EXCLUDED.updated_at, last_seen=EXCLUDED.last_seen`,
+            [a.id, a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', a.avatar_url || null, a.avatar_data || null, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
+          );
+        }
+      } else {
+        // merge: upsert by username, update display_name/role/avatar but keep existing password
+        await client.query(
+          `INSERT INTO admins (id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           ON CONFLICT (username) DO UPDATE SET display_name=EXCLUDED.display_name, role=EXCLUDED.role, avatar_url=EXCLUDED.avatar_url, avatar_data=EXCLUDED.avatar_data, updated_at=EXCLUDED.updated_at`,
+          [a.id, a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', a.avatar_url || null, a.avatar_data || null, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
+        );
+      }
+      adminCount++;
+    }
+
+    // Restore audit logs (always insert — skip existing IDs)
+    let auditCount = 0;
+    for (const r of adminsAudit) {
+      try {
+        await client.query(
+          `INSERT INTO admins_audit (id, admin_id, changed_by, change_type, "old", "new", created_at, changed_fields, password_changed)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO NOTHING`,
+          [r.id, r.admin_id, r.changed_by, r.change_type, r.old ? JSON.stringify(r.old) : null, r.new ? JSON.stringify(r.new) : null, r.created_at, r.changed_fields || null, r.password_changed || false]
+        );
+        auditCount++;
+      } catch (_) { /* skip row on error */ }
+    }
+
+    let loginCount = 0;
+    for (const r of loginAudit) {
+      try {
+        await client.query(
+          `INSERT INTO login_audit (id, admin_id, role, ip, user_agent, geo_city, geo_country, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`,
+          [r.id, r.admin_id, r.role, r.ip, r.user_agent, r.geo_city, r.geo_country, r.created_at]
+        );
+        loginCount++;
+      } catch (_) { /* skip row on error */ }
+    }
+
+    let pwResetCount = 0;
+    for (const r of pwResetAudit) {
+      try {
+        await client.query(
+          `INSERT INTO password_reset_audit (id, admin_id, target_account_id, created_at, note)
+           VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING`,
+          [r.id, r.admin_id, r.target_account_id, r.created_at, r.note]
+        );
+        pwResetCount++;
+      } catch (_) { /* skip row on error */ }
+    }
+
+    // Restore permissions
+    let permCount = 0;
+    for (const p of viewerPerms) {
+      try {
+        await client.query('INSERT INTO viewer_server_permissions (editor_id, server_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [p.editor_id, p.server_id]);
+        permCount++;
+      } catch (_) { try { await client.query('INSERT INTO editor_server_permissions (editor_id, server_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [p.editor_id, p.server_id]); permCount++; } catch (__) {} }
+    }
+    for (const p of serverAdminPerms) {
+      try {
+        await client.query('INSERT INTO server_admin_permissions (admin_id, server_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [p.admin_id, p.server_id]);
+        permCount++;
+      } catch (_) { /* skip */ }
+    }
+
+    // Fix sequences so next INSERT gets a valid ID
+    try { await client.query("SELECT setval('admins_id_seq', COALESCE((SELECT MAX(id) FROM admins), 1))"); } catch (_) {}
+    try { await client.query("SELECT setval('admins_audit_id_seq', COALESCE((SELECT MAX(id) FROM admins_audit), 1))"); } catch (_) {}
+    try { await client.query("SELECT setval('login_audit_id_seq', COALESCE((SELECT MAX(id) FROM login_audit), 1))"); } catch (_) {}
+    try { await client.query("SELECT setval('password_reset_audit_id_seq', COALESCE((SELECT MAX(id) FROM password_reset_audit), 1))"); } catch (_) {}
+
+    await client.query('COMMIT');
+    return res.json({ ok: true, counts: { admins: adminCount, admins_audit: auditCount, login_audit: loginCount, password_reset_audit: pwResetCount, permissions: permCount } });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('admin restore failed:', err);
+    return res.status(500).json({ msg: 'Failed to restore admin backup' });
+  } finally {
+    client.release();
+    // cleanup uploaded temp file
+    if (tmpUploadPath) { try { fs.unlinkSync(tmpUploadPath); } catch (_) {} }
+  }
+});

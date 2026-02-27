@@ -228,6 +228,7 @@ warn "Primary domain: $DOMAIN"; warn "Additional domains: ${EXTRA_DOMAINS[*]:-(n
 
 # Create directories
 mkdir -p "$APP_DIR"
+mkdir -p "$APP_DIR/configs"
 
 # Optional integrity verification if script saved locally and expected hash provided.
 if [ -n "${CMP_INSTALL_EXPECTED_SHA256:-}" ]; then

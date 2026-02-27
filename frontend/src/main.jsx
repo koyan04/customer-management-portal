@@ -15,6 +15,10 @@ import FinancialPage from './pages/FinancialPage.jsx';
 import SearchPage from './pages/SearchPage.jsx';
 import AdminOnlyRoute from './components/AdminOnlyRoute.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
+import YamlGeneratorPage from './pages/YamlGeneratorPage.jsx';
+import JsonGeneratorPage from './pages/JsonGeneratorPage.jsx';
+import DomainManagerPage from './pages/DomainManagerPage.jsx';
+import KeyManagerPage from './pages/KeyManagerPage.jsx';
 import './index.css';
 
 // This new Root component will provide the AuthContext to all other routes
@@ -54,8 +58,30 @@ const router = createBrowserRouter([
                 element: <SearchPage />,
               },
               {
+                path: 'yaml-generator',
+                element: <YamlGeneratorPage />,
+              },
+              {
+                path: 'json-generator',
+                element: <JsonGeneratorPage />,
+              },
+              {
                 path: 'server-list',
                 element: <ServerListPage />,
+              },
+              {
+                path: 'key-manager',
+                element: <AdminOnlyRoute />,
+                children: [
+                  { index: true, element: <KeyManagerPage /> },
+                ]
+              },
+              {
+                path: 'domain-manager',
+                element: <AdminOnlyRoute />,
+                children: [
+                  { index: true, element: <DomainManagerPage /> },
+                ]
               },
               // Admin-only Settings section
               {

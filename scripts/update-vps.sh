@@ -145,6 +145,9 @@ fi
 echo "  ✓ Frontend built"
 echo ""
 
+# Ensure key server configs directory exists
+mkdir -p "$APP_DIR/configs"
+
 # Start services
 echo "→ Starting services..."
 systemctl start cmp-backend

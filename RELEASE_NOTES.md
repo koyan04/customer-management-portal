@@ -1,4 +1,20 @@
-﻿cmp ver 1.4.1
+﻿cmp ver 1.5.0
+
+What's new
+- Domain Manager: Full CRUD management for proxy domains with CDN and Anti-DPI flags
+- Key Manager: Subscription key management with search, pagination, batch delete, and import
+- YAML Generator: Clash/Meta proxy config generator with multi-node support and text export
+- JSON Generator: sing-box proxy config generator with multi-node support and text export
+- Key Server: Subscription config serving with auto sing-box to base64 URI conversion for V2Box/Xray
+- Admin Backup & Restore: Full admin account backup including profiles, audit logs, and permissions
+- Export Nodes as Text: Download active nodes as plain text proxy URI file from both generators
+- Navbar positioning improved for desktop layout
+
+See release-notes-1.5.0.md for full details.
+
+---
+
+cmp ver 1.4.1
 
 What's new
 - Activity Logs: Comprehensive audit logging for account and user operations with filtering and clear logs functionality

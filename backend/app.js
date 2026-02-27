@@ -39,7 +39,7 @@ try {
 	}
 } catch (_) { /* ignore */ }
 
-let serverRoutes, userRoutes, authRoutes, adminRoutes;
+let serverRoutes, userRoutes, authRoutes, adminRoutes, domainsRoutes;
 try {
 	serverRoutes = require('./routes/servers');
 } catch (e) {
@@ -59,6 +59,17 @@ try {
 	adminRoutes = require('./routes/admin');
 } catch (e) {
 	console.error('Failed to load ./routes/admin:', e && e.message ? e.message : e);
+}
+try {
+	domainsRoutes = require('./routes/domains');
+} catch (e) {
+	console.error('Failed to load ./routes/domains:', e && e.message ? e.message : e);
+}
+let keyserverRoutes;
+try {
+	keyserverRoutes = require('./routes/keyserver');
+} catch (e) {
+	console.error('Failed to load ./routes/keyserver:', e && e.message ? e.message : e);
 }
 
 const getRawBody = require('raw-body');
@@ -391,6 +402,8 @@ if (serverRoutes) { app.use('/api/servers', serverRoutes); registeredRoutes.push
 if (userRoutes) { app.use('/api/users', userRoutes); registeredRoutes.push({ mount: '/api/users', loaded: true }); } else { console.warn('Skipping /api/users mount because userRoutes failed to load'); registeredRoutes.push({ mount: '/api/users', loaded: false }); }
 if (authRoutes) { app.use('/api/auth', authRoutes); registeredRoutes.push({ mount: '/api/auth', loaded: true }); } else { console.warn('Skipping /api/auth mount because authRoutes failed to load'); registeredRoutes.push({ mount: '/api/auth', loaded: false }); }
 if (adminRoutes) { app.use('/api/admin', adminRoutes); registeredRoutes.push({ mount: '/api/admin', loaded: true }); } else { console.warn('Skipping /api/admin mount because adminRoutes failed to load'); registeredRoutes.push({ mount: '/api/admin', loaded: false }); }
+if (domainsRoutes) { app.use('/api/domains', domainsRoutes); registeredRoutes.push({ mount: '/api/domains', loaded: true }); } else { console.warn('Skipping /api/domains mount because domainsRoutes failed to load'); registeredRoutes.push({ mount: '/api/domains', loaded: false }); }
+if (keyserverRoutes) { app.use('/api/keyserver', keyserverRoutes); registeredRoutes.push({ mount: '/api/keyserver', loaded: true }); } else { console.warn('Skipping /api/keyserver mount because keyserverRoutes failed to load'); registeredRoutes.push({ mount: '/api/keyserver', loaded: false }); }
 
 // Fallback route: expose a lightweight endpoint for frontend to query current user's server-admin assignments
 // This duplicates the logic in routes/admin.js but ensures the endpoint is available even if router internals differ

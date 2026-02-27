@@ -1056,27 +1056,62 @@ async function applyBotEnabledState() {
   }
 }
 
+// Helper: Convert expire_date ISO timestamp to correct local YYYY-MM-DD date string
+function _fixExpireDate(val) {
+  if (!val) return val;
+  const s = String(val).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (s.includes('T')) {
+    try {
+      const d = new Date(s);
+      if (isNaN(d.getTime())) return val;
+      let tz = 'UTC';
+      try {
+        const settingsCache = require('./lib/settingsCache');
+        const cached = settingsCache.getGeneralCached();
+        if (cached && cached.timezone) tz = cached.timezone;
+      } catch (_) {}
+      return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    } catch (_) { return val; }
+  }
+  return val;
+}
+
 // Create a JSON snapshot of key tables (config + small dataset) and return path to temp file
 async function createBackupSnapshot() {
   try {
     const now = new Date().toISOString().replace(/[:.]/g, '-');
     const tmpdir = os.tmpdir();
     const outPath = path.join(tmpdir, `cmp-backup-${now}.json`);
-    // Fetch app settings, servers, server_keys, users, and admins (with avatars)
-    const [settingsRes, serversRes, serverKeysRes, usersRes, adminsRes] = await Promise.all([
+    // Fetch app settings, servers, server_keys, users, admins (with avatars), and domains
+    const [settingsRes, serversRes, serverKeysRes, usersRes, adminsRes, domainsRes] = await Promise.all([
       pool.query('SELECT * FROM app_settings'),
       pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers'),
       pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys'),
       pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users'),
-      pool.query('SELECT id, display_name, username, role, avatar_url, avatar_data, created_at FROM admins')
+      pool.query('SELECT id, display_name, username, role, avatar_url, avatar_data, created_at FROM admins'),
+      pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains').catch(() => ({ rows: [] }))
     ]);
+    // Load keyserver config from file
+    let keyserverConfig = null;
+    try {
+      const ksConfigPath = path.join(__dirname, 'data', 'keyserver.json');
+      if (fs.existsSync(ksConfigPath)) {
+        keyserverConfig = JSON.parse(fs.readFileSync(ksConfigPath, 'utf-8'));
+      }
+    } catch (_) {}
     const payload = { 
       created_at: new Date().toISOString(), 
       app_settings: settingsRes.rows || [], 
       servers: serversRes.rows || [], 
       server_keys: serverKeysRes.rows || [], 
-      users: usersRes.rows || [],
+      users: (usersRes.rows || []).map(u => ({
+        ...u,
+        expire_date: u.expire_date ? _fixExpireDate(u.expire_date instanceof Date ? u.expire_date.toISOString() : String(u.expire_date)) : null
+      })),
       admins: adminsRes.rows || [],
+      domains: domainsRes.rows || [],
+      keyserver_config: keyserverConfig || null,
       note: 'Avatar files in public/uploads/ are not included - backup that directory separately'
     };
     await fs.promises.writeFile(outPath, JSON.stringify(payload, null, 2), 'utf8');

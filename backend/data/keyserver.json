@@ -1,0 +1,6 @@
+{
+  "port": 8088,
+  "secretKey": "1ffa1b29fdd1dbd7313a154f558f88f3",
+  "configDir": "/srv/cmp/configs",
+  "autoStart": true
+}

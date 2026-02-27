@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import AdminEditorForm from '../components/AdminEditorForm.jsx';
-import { FaTrashAlt, FaUserPlus, FaTools, FaSearch, FaInfoCircle, FaHistory } from 'react-icons/fa';
+import { FaTrashAlt, FaUserPlus, FaTools, FaSearch, FaInfoCircle, FaHistory, FaDownload, FaUpload } from 'react-icons/fa';
 import MatviewStatus from '../components/MatviewStatus.jsx';
 import Modal from '../components/Modal.jsx';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -266,6 +266,61 @@ function AdminPanelPage() {
     }
   };
 
+  // ── Admin Backup / Restore ───────────────────────────────────────────
+  const [restoreModalOpen, setRestoreModalOpen] = useState(false);
+  const [restoreFile, setRestoreFile] = useState(null);
+  const [restoreMode, setRestoreMode] = useState('merge');
+  const [restoreBusy, setRestoreBusy] = useState(false);
+  const [restoreResult, setRestoreResult] = useState(null);
+  const [restoreError, setRestoreError] = useState(null);
+
+  const handleAdminBackup = async () => {
+    try {
+      const backendOrigin = getBackendOrigin();
+      const res = await axios.get(backendOrigin + '/api/admin/backup/admins', {
+        headers: { Authorization: `Bearer ${token}` },
+        responseType: 'blob',
+      });
+      const disposition = res.headers['content-disposition'] || '';
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const filename = match ? match[1] : 'admin-backup.json';
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Admin backup failed:', err);
+      alert('Failed to download admin backup');
+    }
+  };
+
+  const handleAdminRestore = async () => {
+    if (!restoreFile) return;
+    setRestoreBusy(true);
+    setRestoreResult(null);
+    setRestoreError(null);
+    try {
+      const formData = new FormData();
+      formData.append('file', restoreFile);
+      formData.append('mode', restoreMode);
+      const backendOrigin = getBackendOrigin();
+      const res = await axios.post(backendOrigin + '/api/admin/restore/admins', formData, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' },
+      });
+      setRestoreResult(res.data);
+      reload();
+    } catch (err) {
+      console.error('Admin restore failed:', err);
+      setRestoreError(err.response?.data?.msg || err.message || 'Restore failed');
+    } finally {
+      setRestoreBusy(false);
+    }
+  };
+
   return (
     <div className="admin-panel">
       <TopProgressBar active={loading} />
@@ -285,9 +340,17 @@ function AdminPanelPage() {
         </div>
         <div className="admin-header-actions">
           { (user && (user.user?.role || user.role) === 'ADMIN') && (
-            <button className="icon-btn add-viewer-btn" title="Add viewer" aria-label="Add viewer" onClick={() => { setEditing(null); setFormOpen(true); }}>
-              <FaUserPlus />
-            </button>
+            <>
+              <button className="icon-btn admin-backup-btn" title="Backup admins" aria-label="Backup admins" onClick={handleAdminBackup}>
+                <FaDownload />
+              </button>
+              <button className="icon-btn admin-restore-btn" title="Restore admins" aria-label="Restore admins" onClick={() => { setRestoreFile(null); setRestoreResult(null); setRestoreError(null); setRestoreMode('merge'); setRestoreModalOpen(true); }}>
+                <FaUpload />
+              </button>
+              <button className="icon-btn add-viewer-btn" title="Add viewer" aria-label="Add viewer" onClick={() => { setEditing(null); setFormOpen(true); }}>
+                <FaUserPlus />
+              </button>
+            </>
           ) }
           <div className="admin-search">
             <FaSearch className="search-icon" aria-hidden="true" />
@@ -657,9 +720,63 @@ function AdminPanelPage() {
           </div>
         )}
       </Modal>
+
+      {/* Admin Backup / Restore Modal */}
+      <Modal
+        isOpen={restoreModalOpen}
+        onClose={() => { if (!restoreBusy) setRestoreModalOpen(false); }}
+        title="Restore Admin Backup"
+        className="restore-admin-modal"
+        compact
+        busy={restoreBusy}
+        actions={(
+          <>
+            <button className="btn-secondary" onClick={() => setRestoreModalOpen(false)} disabled={restoreBusy}>Cancel</button>
+            <button className="btn-primary" onClick={handleAdminRestore} disabled={restoreBusy || !restoreFile}>
+              {restoreBusy ? 'Restoring...' : 'Restore'}
+            </button>
+          </>
+        )}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+          <p style={{ margin: 0, fontSize: '0.9rem', opacity: 0.8 }}>
+            Upload an admin backup file (<code>admin-backup-*.json</code>) to restore admin accounts, profiles, and audit logs.
+          </p>
+          <input
+            type="file"
+            accept=".json"
+            onChange={e => { setRestoreFile(e.target.files?.[0] || null); setRestoreResult(null); setRestoreError(null); }}
+            disabled={restoreBusy}
+          />
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <label style={{ fontWeight: 600, fontSize: '0.9rem' }}>Mode:</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+              <input type="radio" name="restoreMode" value="merge" checked={restoreMode === 'merge'} onChange={() => setRestoreMode('merge')} disabled={restoreBusy} />
+              Merge
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}>
+              <input type="radio" name="restoreMode" value="overwrite" checked={restoreMode === 'overwrite'} onChange={() => setRestoreMode('overwrite')} disabled={restoreBusy} />
+              Overwrite
+            </label>
+          </div>
+          <p style={{ margin: 0, fontSize: '0.82rem', opacity: 0.65 }}>
+            <strong>Merge</strong>: adds new accounts & logs, updates existing profiles (keeps existing passwords).<br/>
+            <strong>Overwrite</strong>: replaces all accounts & logs (your own account is protected).
+          </p>
+          {restoreResult && (
+            <div className="success-toast" role="status" style={{ padding: '0.6rem 1rem', borderRadius: '6px', background: '#d4edda', color: '#155724', fontSize: '0.9rem' }}>
+              Restore complete — {restoreResult.counts?.admins || 0} admin(s), {restoreResult.counts?.permissions || 0} permission(s), {restoreResult.counts?.admins_audit || 0} audit, {restoreResult.counts?.login_audit || 0} login, {restoreResult.counts?.password_reset_audit || 0} pw-reset log(s).
+            </div>
+          )}
+          {restoreError && (
+            <div className="error-toast" role="alert" style={{ padding: '0.6rem 1rem', borderRadius: '6px', background: '#f8d7da', color: '#721c24', fontSize: '0.9rem' }}>
+              {restoreError}
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }
 
 export default AdminPanelPage;
- 

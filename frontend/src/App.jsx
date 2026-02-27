@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from './context/AuthContext';
 import './App.css';
 import { ToastProvider } from './context/ToastContext.jsx';
-import { FaArrowUp, FaTachometerAlt, FaChartBar, FaListUl, FaTools, FaCog, FaSearch } from 'react-icons/fa';
+import { FaArrowUp, FaTachometerAlt, FaChartBar, FaListUl, FaTools, FaCog, FaSearch, FaKey } from 'react-icons/fa';
 import AdminEditorForm from './components/AdminEditorForm';
 import { FaUser, FaSignOutAlt, FaLeaf, FaMoon, FaSun, FaDesktop, FaCheck, FaTelegramPlane } from 'react-icons/fa';
 import axios from 'axios';
@@ -281,6 +281,7 @@ function App() {
     } catch (e) { /* ignore */ }
   }
   const [menuOpen, setMenuOpen] = useState(false);
+  const [keyMenuOpen, setKeyMenuOpen] = useState(false);
   const [accountProfile, setAccountProfile] = useState(null);
   // idle warning modal state
   const [idleWarning, setIdleWarning] = useState({ show: false, remainingMs: 0 });
@@ -539,6 +540,11 @@ function App() {
   const hoverTimerRef = useRef(null);
   const leaveTimerRef = useRef(null);
   const isTouchRef = useRef(false);
+  
+  // ref used to detect clicks outside the key icon/menu
+  const keyRef = useRef(null);
+  const keyHoverTimerRef = useRef(null);
+  const keyLeaveTimerRef = useRef(null);
 
   // Detect touch-capable device to avoid hover behavior on touch
   useEffect(() => {
@@ -567,6 +573,27 @@ function App() {
       clearTimeout(leaveTimerRef.current);
     };
   }, []);
+  
+  // Close key menu when clicking outside or on Escape
+  useEffect(() => {
+    const onDocClick = (e) => {
+      if (!keyRef.current) return;
+      if (!keyRef.current.contains(e.target)) {
+        setKeyMenuOpen(false);
+      }
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setKeyMenuOpen(false);
+    };
+    document.addEventListener('click', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('keydown', onKey);
+      clearTimeout(keyHoverTimerRef.current);
+      clearTimeout(keyLeaveTimerRef.current);
+    };
+  }, []);
 
   // Hover handlers (desktop): small delay before opening/closing to avoid flicker
   const handleMouseEnter = () => {
@@ -578,6 +605,18 @@ function App() {
     if (isTouchRef.current) return;
     clearTimeout(hoverTimerRef.current);
     leaveTimerRef.current = setTimeout(() => setMenuOpen(false), 220);
+  };
+  
+  // Key menu hover handlers
+  const handleKeyMouseEnter = () => {
+    if (isTouchRef.current) return;
+    clearTimeout(keyLeaveTimerRef.current);
+    keyHoverTimerRef.current = setTimeout(() => setKeyMenuOpen(true), 180);
+  };
+  const handleKeyMouseLeave = () => {
+    if (isTouchRef.current) return;
+    clearTimeout(keyHoverTimerRef.current);
+    keyLeaveTimerRef.current = setTimeout(() => setKeyMenuOpen(false), 220);
   };
 
   // Theme selection helpers
@@ -611,6 +650,62 @@ function App() {
           <NavLink to="/server-list" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaListUl aria-hidden className="nav-icon" /> <span className="nav-text">Server List</span></NavLink>
           {role === 'ADMIN' && <NavLink to="/admin" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaTools aria-hidden className="nav-icon" /> <span className="nav-text">Admin</span></NavLink>}
           {role === 'ADMIN' && <NavLink to="/settings" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaCog aria-hidden className="nav-icon" /> <span className="nav-text">Settings</span></NavLink>}
+          
+          {/* Key icon with dropdown for generators */}
+          <div
+            ref={keyRef}
+            onMouseEnter={handleKeyMouseEnter}
+            onMouseLeave={handleKeyMouseLeave}
+            className="nav-link nav-link-key"
+            aria-label="Generators"
+            title="Generators"
+          >
+            <button
+              type="button"
+              className="key-icon-btn"
+              aria-haspopup="true"
+              aria-expanded={keyMenuOpen}
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setKeyMenuOpen(prev => !prev);
+              }}
+            >
+              <FaKey aria-hidden className="nav-icon" />
+            </button>
+            
+            {keyMenuOpen && (
+              <div className="key-menu" role="menu" aria-label="Generators menu">
+                {role === 'ADMIN' && (
+                  <Link
+                    to="/key-manager"
+                    className="key-menu-item"
+                    role="menuitem"
+                    onClick={() => setKeyMenuOpen(false)}
+                  >
+                    Key Manager
+                  </Link>
+                )}
+                <Link
+                  to="/yaml-generator"
+                  className="key-menu-item"
+                  role="menuitem"
+                  onClick={() => setKeyMenuOpen(false)}
+                >
+                  YAML Generator
+                </Link>
+                <Link
+                  to="/json-generator"
+                  className="key-menu-item"
+                  role="menuitem"
+                  onClick={() => setKeyMenuOpen(false)}
+                >
+                  JSON Generator
+                </Link>
+              </div>
+            )}
+          </div>
+          
           <NavLink to="/search" aria-label="Search" title="Search" className={({ isActive }) => `nav-link${isActive ? ' active' : ''}`}> <FaSearch aria-hidden className="nav-icon" /></NavLink>
         </nav>
         {/* Logout moved into avatar menu */}

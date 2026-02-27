@@ -4,7 +4,8 @@ import AddServerForm from '../components/AddServerForm.jsx';
 import { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { FaPlus, FaServer } from 'react-icons/fa';
+import { FaPlus, FaServer, FaGlobe } from 'react-icons/fa';
+import { Link } from 'react-router-dom';
 import { getBackendOrigin } from '../lib/backendOrigin';
 
 export default function ServerListPage() {
@@ -39,10 +40,16 @@ export default function ServerListPage() {
       <div className="header">
         <h2><span className="title-icon" aria-hidden="true"><FaServer /></span>Server List</h2>
         {!isFormVisible && role === 'ADMIN' && (
-          <button onClick={() => setIsFormVisible(true)} className="add-server-btn">
-            <span className="btn-icon" aria-hidden="true"><FaPlus /></span>
-            <span className="btn-label">Add New Server</span>
-          </button>
+          <div className="header-actions">
+            <Link to="/domain-manager" className="domain-manager-btn">
+              <span className="btn-icon" aria-hidden="true"><FaGlobe /></span>
+              <span className="btn-label">Domain Manager</span>
+            </Link>
+            <button onClick={() => setIsFormVisible(true)} className="add-server-btn">
+              <span className="btn-icon" aria-hidden="true"><FaPlus /></span>
+              <span className="btn-label">Add New Server</span>
+            </button>
+          </div>
         )}
       </div>
 
