@@ -2052,7 +2052,7 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
       pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys'),
       pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users'),
       pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains').catch(() => ({ rows: [] })),
-      pool.query('SELECT id, month_start, month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC').catch(() => ({ rows: [] }))
+      pool.query('SELECT id, month_start::text as month_start, month_end::text as month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC').catch(() => ({ rows: [] }))
     ]);
     const keyserverConfig = loadKeyserverConfig();
     const payload = {
@@ -2249,17 +2249,44 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       }
     }
 
-    // financial_snapshots: DELETE existing for each month/server in backup, then INSERT
-    // This guarantees backup data fully overwrites whatever was on the target machine.
+    // financial_snapshots: DELETE existing for each month/server in backup, then INSERT.
+    // Uses SAVEPOINT per row so one failure never aborts the whole transaction.
+    // Dates in backup may be 'YYYY-MM-DD' (new) or full ISO timestamp (old) — handle both.
+    const parseDateToFirstOfMonth = (raw) => {
+      if (!raw) return null;
+      const s = String(raw);
+      // Already plain date string YYYY-MM-DD
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        // Ensure it is the first of the month (column CHECK constraint requires this)
+        return s.slice(0, 7) + '-01';
+      }
+      // Full ISO timestamp like '2025-09-30T17:30:00.000Z' — timezone shifted.
+      // Extract year-month from the UTC string and reconstruct first-of-month.
+      // But the stored date was originally first-of-month in local time (+6:30),
+      // so UTC shows the previous day. Add 7 hours to recover local date reliably.
+      const d = new Date(new Date(s).getTime() + 7 * 60 * 60 * 1000);
+      const year = d.getUTCFullYear();
+      const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+      return `${year}-${month}-01`;
+    };
     let snapshotCount = 0;
     if (Array.isArray(data.financial_snapshots)) {
       for (const s of data.financial_snapshots) {
         if (!s.month_start) continue;
+        const monthStartVal = parseDateToFirstOfMonth(s.month_start);
+        if (!monthStartVal) continue;
+        const monthEndVal = (() => {
+          if (!s.month_end) return null;
+          const raw = String(s.month_end);
+          if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+          // ISO timestamp for month_end — last day of month; just extract date portion + 7h shift
+          const d = new Date(new Date(raw).getTime() + 7 * 60 * 60 * 1000);
+          return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+        })();
+        const serverId = s.server_id != null && s.server_id !== '' ? Number(s.server_id) : null;
         try {
-          const monthStartVal = s.month_start instanceof Date ? s.month_start.toISOString().slice(0, 10) : String(s.month_start).slice(0, 10);
-          const monthEndVal = s.month_end instanceof Date ? s.month_end.toISOString().slice(0, 10) : String(s.month_end || '').slice(0, 10) || monthStartVal;
-          const serverId = s.server_id != null ? Number(s.server_id) : null;
-          // Delete any existing snapshot for this month/server so backup data always wins
+          await client.query(`SAVEPOINT snap_restore`);
+          // Delete existing so backup data always wins
           if (serverId != null) {
             await client.query(
               'DELETE FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id = $2',
@@ -2287,9 +2314,11 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
               s.notes || null
             ]
           );
+          await client.query(`RELEASE SAVEPOINT snap_restore`);
           snapshotCount++;
         } catch (e) {
-          console.warn('Could not restore financial snapshot for', s.month_start, ':', e.message);
+          await client.query(`ROLLBACK TO SAVEPOINT snap_restore`).catch(() => {});
+          console.warn('Could not restore financial snapshot for', monthStartVal, ':', e.message);
         }
       }
       console.log(`Restored ${snapshotCount} financial snapshots (backup data overwrote target)`);
