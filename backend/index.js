@@ -56,6 +56,13 @@ async function start() {
   } catch (e) {
     console.warn('[index] failed to start session cleanup scheduler:', e && e.message ? e.message : e);
   }
+  // Start monthly financial snapshot scheduler
+  try {
+    const { startSnapshotScheduler } = require('./lib/snapshotScheduler');
+    startSnapshotScheduler();
+  } catch (e) {
+    console.warn('[index] failed to start snapshot scheduler:', e && e.message ? e.message : e);
+  }
   // Start telegram bot alongside the backend unless explicitly disabled or running tests
   if (process.env.START_TELEGRAM_BOT !== 'false' && process.env.NODE_ENV !== 'test') {
     try {
@@ -88,6 +95,11 @@ async function shutdown(code = 0) {
   } catch (e) {
     console.warn('[index] error stopping session cleanup:', e && e.message ? e.message : e);
   }
+  // Stop monthly financial snapshot scheduler
+  try {
+    const { stopSnapshotScheduler } = require('./lib/snapshotScheduler');
+    stopSnapshotScheduler();
+  } catch (e) {}
   try {
     const bot = require.cache[require.resolve('./telegram_bot')];
     if (bot) {

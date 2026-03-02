@@ -401,14 +401,30 @@ function AdminPanelPage() {
                 transition={ highlightId === a.id ? { type: 'tween', duration: 0.8, ease: 'easeInOut' } : { type: 'spring', stiffness: 300, damping: 24 } }
             >
               <div className="account-avatar" aria-hidden style={{ backgroundColor: bgColor }}>
-                {a.avatar_url ? (
-                  (function(){
-                    const base = a.avatar_url.startsWith('http') ? a.avatar_url : `${getBackendOrigin()}${a.avatar_url}`;
-                    const sep = base.includes('?') ? '&' : '?';
-                    return <img src={`${base}${sep}v=${refreshTick}`} alt="avatar" />;
+                {(a.avatar_url || a.avatar_data) ? (
+                  (() => {
+                    const src = a.avatar_url
+                      ? (() => {
+                          const base = a.avatar_url.startsWith('http') ? a.avatar_url : `${getBackendOrigin()}${a.avatar_url}`;
+                          const sep = base.includes('?') ? '&' : '?';
+                          return `${base}${sep}v=${refreshTick}`;
+                        })()
+                      : a.avatar_data;
+                    return (
+                      <>
+                        <img
+                          src={src}
+                          alt="avatar"
+                          onError={e => {
+                            e.currentTarget.style.display = 'none';
+                            const sib = e.currentTarget.nextSibling;
+                            if (sib) sib.style.display = '';
+                          }}
+                        />
+                        <span className="avatar-initials" style={{ display: 'none' }}>{initials}</span>
+                      </>
+                    );
                   })()
-                ) : a.avatar_data ? (
-                  <img src={a.avatar_data} alt="avatar" />
                 ) : (
                   <span className="avatar-initials">{initials}</span>
                 )}

@@ -107,21 +107,58 @@ export default function FinancialPage() {
     setSnapshotMessage('');
     try {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      // Include userId param when ADMIN is viewing as another user
       const userIdParam = selectedUserId ? `&userId=${selectedUserId}` : '';
       const url = monthStr 
         ? `/api/admin/financial/snapshot?month=${monthStr}${userIdParam}`
         : `/api/admin/financial/snapshot${userIdParam ? '?' + userIdParam.slice(1) : ''}`;
       const res = await axios.post(url, {}, { headers, validateStatus: () => true });
+      if (res.status === 409 || (res.data && res.data.already_exists)) {
+        setSnapshotMessage(`ℹ️ Snapshot for ${monthStr || 'previous month'} already exists and is permanent.`);
+        return;
+      }
       if (res.status !== 200) throw new Error(res.data?.msg || `Status ${res.status}`);
-      setSnapshotMessage(`✅ Snapshot generated for ${res.data.month || monthStr || 'previous month'}`);
-      // Refresh the financial data to show new snapshot
-      setTimeout(() => window.location.reload(), 2000);
+
+      const snap = res.data && res.data.snapshot;
+      if (snap) {
+        // Use monthStr directly when provided (avoids timezone parsing issues with snap.month_start).
+        // When monthStr is absent (Generate Previous Month button), derive it client-side.
+        let snapLabel = monthStr;
+        if (!snapLabel) {
+          const now = new Date();
+          const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          snapLabel = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+        }
+        setData(prev => {
+          if (!prev || !prev.months) return prev;
+          const updatedMonths = prev.months.map(m => {
+            if (m.month !== snapLabel) return m;
+            return {
+              ...m,
+              is_snapshot: true,
+              counts: {
+                Mini:      Number(snap.mini_count      ?? m.counts?.Mini      ?? 0),
+                Basic:     Number(snap.basic_count     ?? m.counts?.Basic     ?? 0),
+                Unlimited: Number(snap.unlimited_count ?? m.counts?.Unlimited ?? 0),
+              },
+              prices: {
+                price_mini_cents:      Number(snap.price_mini_cents      ?? m.prices?.price_mini_cents      ?? 0),
+                price_basic_cents:     Number(snap.price_basic_cents     ?? m.prices?.price_basic_cents     ?? 0),
+                price_unlimited_cents: Number(snap.price_unlimited_cents ?? m.prices?.price_unlimited_cents ?? 0),
+              },
+              revenue_cents: Number(snap.revenue_cents ?? m.revenue_cents ?? 0),
+            };
+          });
+          return { ...prev, months: updatedMonths };
+        });
+      }
+
+      setSnapshotMessage(`✅ Snapshot generated for ${monthStr || 'previous month'}`);
+      setTimeout(() => setSnapshotMessage(''), 4000);
     } catch (err) {
       setSnapshotMessage(`❌ Failed: ${err.message}`);
+      setTimeout(() => setSnapshotMessage(''), 5000);
     } finally {
       setGeneratingSnapshot(false);
-      setTimeout(() => setSnapshotMessage(''), 5000);
     }
   };
 

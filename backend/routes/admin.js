@@ -301,8 +301,20 @@ router.put('/accounts/:id', authenticateToken, isAdmin, upload.single('avatar'),
     const q = `UPDATE admins SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, display_name, username, role, avatar_url`;
   console.log('[PUT /accounts/:id] SQL:', q);
   console.log('[PUT /accounts/:id] params:', params);
+    // Fetch old avatar_url before update so we can delete the old file
+    let oldAvatarUrl = null;
+    if (req.file || clearRequested) {
+      try { const r = await pool.query('SELECT avatar_url FROM admins WHERE id = $1', [id]); oldAvatarUrl = (r.rows[0] && r.rows[0].avatar_url) || null; } catch (_) {}
+    }
     try {
       const { rows } = await pool.query(q, params);
+      // Delete old avatar file if it was in /uploads/
+      if (oldAvatarUrl && oldAvatarUrl.startsWith('/uploads/')) {
+        try {
+          const oldFile = path.join(uploadsPath, path.basename(oldAvatarUrl));
+          if (fs.existsSync(oldFile)) fs.unlinkSync(oldFile);
+        } catch (_) {}
+      }
       
       // Log to control_panel_audit
       const adminId = req.user && req.user.id;
@@ -1314,66 +1326,44 @@ router.post('/financial/snapshot', authenticateToken, async (req, res) => {
     // For ADMIN: server_id stays NULL (global snapshot)
     const server_id_marker = serverIdsFilter && serverIdsFilter.length > 0 ? serverIdsFilter[0] : null;
 
-    // Check if snapshot already exists (match on month_start + server marker)
+    // Check if snapshot already exists (snapshots are permanent — never overwrite)
     let existingCheck;
     if (server_id_marker) {
       existingCheck = await pool.query(
-        'SELECT id FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id = $2',
+        'SELECT * FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id = $2',
         [monthStart, server_id_marker]
       );
     } else {
       existingCheck = await pool.query(
-        'SELECT id FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id IS NULL',
+        'SELECT * FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id IS NULL',
         [monthStart]
       );
     }
 
-    let snapshot;
     if (existingCheck.rows.length > 0) {
-      // Update existing snapshot
-      const updateQuery = `
-        UPDATE monthly_financial_snapshots
-        SET month_end = $2,
-            mini_count = $3,
-            basic_count = $4,
-            unlimited_count = $5,
-            price_mini_cents = $6,
-            price_basic_cents = $7,
-            price_unlimited_cents = $8,
-            revenue_cents = $9,
-            updated_at = NOW(),
-            created_by = $10
-        WHERE month_start = $1 AND ${server_id_marker ? 'server_id = $11' : 'server_id IS NULL'}
-        RETURNING *
-      `;
-      const updateParams = server_id_marker 
-        ? [monthStart, monthEnd, counts.Mini, counts.Basic, counts.Unlimited,
-           prices.price_mini_cents, prices.price_basic_cents, prices.price_unlimited_cents,
-           revenue_cents, req.user.id, server_id_marker]
-        : [monthStart, monthEnd, counts.Mini, counts.Basic, counts.Unlimited,
-           prices.price_mini_cents, prices.price_basic_cents, prices.price_unlimited_cents,
-           revenue_cents, req.user.id];
-      const result = await pool.query(updateQuery, updateParams);
-      snapshot = result.rows[0];
-    } else {
-      // Insert new snapshot
-      const insertQuery = `
-        INSERT INTO monthly_financial_snapshots (
-          month_start, month_end, mini_count, basic_count, unlimited_count,
-          price_mini_cents, price_basic_cents, price_unlimited_cents,
-          revenue_cents, created_by, server_id
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        RETURNING *
-      `;
-      const result = await pool.query(insertQuery, [
-        monthStart, monthEnd, counts.Mini, counts.Basic, counts.Unlimited,
-        prices.price_mini_cents, prices.price_basic_cents, prices.price_unlimited_cents,
-        revenue_cents, req.user.id, server_id_marker
-      ]);
-      snapshot = result.rows[0];
+      // Snapshot already exists — return it unchanged (snapshots are permanent records)
+      console.log('Financial snapshot already exists for', targetMonth, '— returning existing (immutable).');
+      return res.status(409).json({ msg: 'Snapshot already exists for this month', snapshot: existingCheck.rows[0], already_exists: true });
     }
 
-    console.log('Financial snapshot created/updated:', snapshot.month_start, 'server_id:', server_id_marker || 'GLOBAL', 'snapshot object:', snapshot);
+    // Insert new snapshot
+    let snapshot;
+    const insertQuery = `
+      INSERT INTO monthly_financial_snapshots (
+        month_start, month_end, mini_count, basic_count, unlimited_count,
+        price_mini_cents, price_basic_cents, price_unlimited_cents,
+        revenue_cents, created_by, server_id
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      RETURNING *
+    `;
+    const result = await pool.query(insertQuery, [
+      monthStart, monthEnd, counts.Mini, counts.Basic, counts.Unlimited,
+      prices.price_mini_cents, prices.price_basic_cents, prices.price_unlimited_cents,
+      revenue_cents, req.user.id, server_id_marker
+    ]);
+    snapshot = result.rows[0];
+
+    console.log('Financial snapshot created:', snapshot.month_start, 'server_id:', server_id_marker || 'GLOBAL');
     return res.json({ msg: 'Snapshot created successfully', snapshot });
   } catch (err) {
     console.error('POST /financial/snapshot failed:', err);
@@ -1600,7 +1590,13 @@ router.post('/settings/general/logo', authenticateToken, isAdmin, upload.single(
       );
     } catch (_) {}
 
-    // Note: We keep old logo files as backup - they're small and using consistent naming now
+    // Delete old logo/favicon files if they were differently-named (non-standard names)
+    for (const oldKey of ['logo_url', 'logo_url_2x']) {
+      const oldUrl = current[oldKey];
+      if (oldUrl && oldUrl.startsWith('/logos/') && !['logo-70x70.png','logo-140x140.png'].includes(path.basename(oldUrl))) {
+        try { const p = path.join(logosPath, path.basename(oldUrl)); if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+      }
+    }
 
   const origin = req.protocol + '://' + req.get('host');
   const absolute = logoUrl.startsWith('http') ? logoUrl : (origin + logoUrl);
@@ -1670,7 +1666,13 @@ router.post('/settings/general/favicon', authenticateToken, isAdmin, upload.sing
       );
     } catch (_) {}
 
-    // Note: We keep old favicon files as backup - they're small and using consistent naming now
+    // Delete old favicon files if they were differently-named (non-standard names)
+    for (const oldKey of ['favicon_url', 'apple_touch_icon_url']) {
+      const oldUrl = current[oldKey];
+      if (oldUrl && oldUrl.startsWith('/logos/') && !['favicon-32x32.png','favicon-180x180.png'].includes(path.basename(oldUrl))) {
+        try { const p = path.join(logosPath, path.basename(oldUrl)); if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
+      }
+    }
 
     const origin = req.protocol + '://' + req.get('host');
     const absolute = faviconUrl.startsWith('http') ? faviconUrl : (origin + faviconUrl);
@@ -2044,12 +2046,13 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
         await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, 'backup', 'BACKUP', null, null]);
       }
     } catch (_) {}
-    const [settingsRes, serversRes, serverKeysRes, usersRes, domainsRes] = await Promise.all([
+    const [settingsRes, serversRes, serverKeysRes, usersRes, domainsRes, snapshotsRes] = await Promise.all([
       pool.query('SELECT * FROM app_settings'),
       pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers'),
       pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys'),
       pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users'),
-      pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains').catch(() => ({ rows: [] }))
+      pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains').catch(() => ({ rows: [] })),
+      pool.query('SELECT id, month_start, month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC').catch(() => ({ rows: [] }))
     ]);
     const keyserverConfig = loadKeyserverConfig();
     const payload = {
@@ -2062,6 +2065,7 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
         expire_date: u.expire_date ? fixExpireDate(u.expire_date instanceof Date ? u.expire_date.toISOString() : String(u.expire_date)) : null
       })),
       domains: domainsRes.rows || [],
+      financial_snapshots: snapshotsRes.rows || [],
       keyserver_config: keyserverConfig || null
     };
     const json = JSON.stringify(payload, null, 2);
@@ -2244,6 +2248,49 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
         console.warn('Could not restore keyserver config:', e.message);
       }
     }
+
+    // financial_snapshots: Insert only — never overwrite existing snapshots on the target machine
+    // This preserves any snapshots that were already taken on the target.
+    let snapshotCount = 0;
+    if (Array.isArray(data.financial_snapshots)) {
+      for (const s of data.financial_snapshots) {
+        if (!s.month_start) continue;
+        try {
+          const monthStartVal = s.month_start instanceof Date ? s.month_start.toISOString().slice(0, 10) : String(s.month_start).slice(0, 10);
+          const monthEndVal = s.month_end instanceof Date ? s.month_end.toISOString().slice(0, 10) : String(s.month_end || monthStartVal);
+          // Restore snapshot — overwrite existing target snapshots so all backup data is applied
+          await client.query(
+            `INSERT INTO monthly_financial_snapshots
+               (month_start, month_end, server_id, mini_count, basic_count, unlimited_count,
+                price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, notes)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11,NOW()),$12)
+             ON CONFLICT (month_start, COALESCE(server_id, 0)) DO UPDATE SET
+               month_end             = EXCLUDED.month_end,
+               mini_count            = EXCLUDED.mini_count,
+               basic_count           = EXCLUDED.basic_count,
+               unlimited_count       = EXCLUDED.unlimited_count,
+               price_mini_cents      = EXCLUDED.price_mini_cents,
+               price_basic_cents     = EXCLUDED.price_basic_cents,
+               price_unlimited_cents = EXCLUDED.price_unlimited_cents,
+               revenue_cents         = EXCLUDED.revenue_cents,
+               notes                 = COALESCE(EXCLUDED.notes, monthly_financial_snapshots.notes)`,
+            [
+              monthStartVal, monthEndVal,
+              s.server_id || null,
+              Number(s.mini_count || 0), Number(s.basic_count || 0), Number(s.unlimited_count || 0),
+              Number(s.price_mini_cents || 0), Number(s.price_basic_cents || 0), Number(s.price_unlimited_cents || 0),
+              Number(s.revenue_cents || 0),
+              s.created_at || null,
+              s.notes || null
+            ]
+          );
+          snapshotCount++;
+        } catch (e) {
+          console.warn('Could not restore financial snapshot for', s.month_start, ':', e.message);
+        }
+      }
+      console.log(`Restored ${snapshotCount} financial snapshots (existing overwritten with backup data)`);
+    }
     
     await client.query('COMMIT');
     // refresh general settings cache after snapshot restore
@@ -2255,6 +2302,7 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       users: Array.isArray(data.users) ? data.users.length : 0,
       admins_avatars_restored: Array.isArray(data.admins) ? data.admins.length : 0,
       domains: Array.isArray(data.domains) ? data.domains.length : 0,
+      financial_snapshots: snapshotCount,
       keyserver_config: data.keyserver_config ? true : false,
     }});
     } catch (err) {
@@ -2975,11 +3023,13 @@ router.get('/control/update/status', authenticateToken, isAdmin, async (req, res
 // ── Admin-specific backup (full admin data + permissions + audit logs) ────────
 router.get('/backup/admins', authenticateToken, isAdmin, async (req, res) => {
   try {
-    const [adminsRes, adminsAuditRes, loginAuditRes, pwResetAuditRes] = await Promise.all([
+    const [adminsRes, adminsAuditRes, loginAuditRes, pwResetAuditRes, ctrlAuditRes, settingsAuditRes] = await Promise.all([
       pool.query('SELECT id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen FROM admins ORDER BY id'),
       pool.query('SELECT id, admin_id, changed_by, change_type, "old", "new", created_at, changed_fields, password_changed FROM admins_audit ORDER BY id'),
       pool.query('SELECT id, admin_id, role, ip, user_agent, geo_city, geo_country, created_at FROM login_audit ORDER BY id'),
       pool.query('SELECT id, admin_id, target_account_id, created_at, note FROM password_reset_audit ORDER BY id'),
+      pool.query('SELECT id, admin_id, action, payload, created_at FROM control_panel_audit ORDER BY id'),
+      pool.query('SELECT id, admin_id, settings_key, action, before_data, after_data, created_at FROM settings_audit ORDER BY id'),
     ]);
     // Also include permission tables
     let viewerPerms = [];
@@ -2987,14 +3037,35 @@ router.get('/backup/admins', authenticateToken, isAdmin, async (req, res) => {
     catch (_) { try { const r2 = await pool.query('SELECT editor_id, server_id FROM editor_server_permissions'); viewerPerms = r2.rows || []; } catch (__) {} }
     let serverAdminPerms = [];
     try { const r = await pool.query('SELECT admin_id, server_id FROM server_admin_permissions'); serverAdminPerms = r.rows || []; } catch (_) {}
+    let serverKeysAudit = [];
+    try { const r = await pool.query('SELECT id, admin_id, server_id, key_id, action, key_username, key_description, created_at FROM server_keys_audit ORDER BY id'); serverKeysAudit = r.rows || []; } catch (_) {}
+
+    // Embed avatar files as base64 so they survive across server migrations
+    const admins = (adminsRes.rows || []).map(a => {
+      const result = { ...a };
+      if (a.avatar_url && a.avatar_url.startsWith('/uploads/') && !a.avatar_data) {
+        try {
+          const filePath = path.join(uploadsPath, path.basename(a.avatar_url));
+          if (fs.existsSync(filePath)) {
+            const ext = path.extname(a.avatar_url).toLowerCase().replace('.', '');
+            const mime = ext === 'jpg' ? 'image/jpeg' : ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : `image/${ext}`;
+            result.avatar_data = `data:${mime};base64,${fs.readFileSync(filePath).toString('base64')}`;
+          }
+        } catch (_) { /* skip if file unreadable */ }
+      }
+      return result;
+    });
 
     const payload = {
       type: 'admin-backup-v1',
       createdAt: new Date().toISOString(),
-      admins: adminsRes.rows || [],
+      admins,
       admins_audit: adminsAuditRes.rows || [],
       login_audit: loginAuditRes.rows || [],
       password_reset_audit: pwResetAuditRes.rows || [],
+      control_panel_audit: ctrlAuditRes.rows || [],
+      settings_audit: settingsAuditRes.rows || [],
+      server_keys_audit: serverKeysAudit,
       viewer_server_permissions: viewerPerms,
       server_admin_permissions: serverAdminPerms,
     };
@@ -3029,20 +3100,34 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
     const adminsAudit = Array.isArray(data.admins_audit) ? data.admins_audit : [];
     const loginAudit = Array.isArray(data.login_audit) ? data.login_audit : [];
     const pwResetAudit = Array.isArray(data.password_reset_audit) ? data.password_reset_audit : [];
+    const ctrlAudit = Array.isArray(data.control_panel_audit) ? data.control_panel_audit : [];
+    const settingsAudit = Array.isArray(data.settings_audit) ? data.settings_audit : [];
+    const serverKeysAudit = Array.isArray(data.server_keys_audit) ? data.server_keys_audit : [];
     const viewerPerms = Array.isArray(data.viewer_server_permissions) ? data.viewer_server_permissions : [];
     const serverAdminPerms = Array.isArray(data.server_admin_permissions) ? data.server_admin_permissions : [];
 
     if (mode === 'overwrite') {
+      // Disable the app_settings validation trigger so FK cascade SET NULL on updated_by doesn't fail
+      try { await client.query('ALTER TABLE app_settings DISABLE TRIGGER trg_app_settings_enforce_general_updated_by'); } catch (_) {}
+      // Nullify updated_by references before deleting admins (prevents FK cascade trigger conflict)
+      try { await client.query('UPDATE app_settings SET updated_by = NULL WHERE updated_by IS NOT NULL'); } catch (_) {}
       // Clear all tables (order matters due to potential FK references)
       await client.query('DELETE FROM password_reset_audit');
       await client.query('DELETE FROM login_audit');
       await client.query('DELETE FROM admins_audit');
+      try { await client.query('DELETE FROM control_panel_audit'); } catch (_) {}
+      try { await client.query('DELETE FROM settings_audit'); } catch (_) {}
+      try { await client.query('DELETE FROM server_keys_audit'); } catch (_) {}
       try { await client.query('DELETE FROM viewer_server_permissions'); } catch (_) { try { await client.query('DELETE FROM editor_server_permissions'); } catch (__) {} }
       try { await client.query('DELETE FROM server_admin_permissions'); } catch (_) {}
+      // Disable audit trigger during bulk admin delete/insert to avoid double entries
+      try { await client.query('ALTER TABLE admins DISABLE TRIGGER admins_audit_trigger'); } catch (_) {}
       // Don't delete the current admin doing the restore
       const currentAdminId = req.user && req.user.id ? req.user.id : null;
       if (currentAdminId) {
         await client.query('DELETE FROM admins WHERE id != $1', [currentAdminId]);
+      } else {
+        await client.query('DELETE FROM admins');
       }
     }
 
@@ -3050,35 +3135,86 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
     let adminCount = 0;
     for (const a of admins) {
       if (!a.username) continue;
-      // Never overwrite the currently-logged-in admin's password or role
-      const isCurrentAdmin = req.user && req.user.id && a.id === req.user.id;
-      if (mode === 'overwrite') {
-        if (isCurrentAdmin) {
-          // Update everything except password_hash and role for current admin
+      const currentAdminId = req.user && req.user.id ? req.user.id : null;
+
+      // Check if username already exists in DB (find by username to avoid PK conflicts)
+      const existingByUsername = await client.query('SELECT id FROM admins WHERE username=$1', [a.username]);
+
+      if (existingByUsername.rows.length > 0) {
+        // Username exists — UPDATE in place (preserve existing id to keep session/FK integrity)
+        const existingId = existingByUsername.rows[0].id;
+        const isCurrentAdmin = currentAdminId && existingId === currentAdminId;
+        // Resolve avatar: if backup has avatar_data (base64), write file and set avatar_url
+        let resolvedAvatarUrl = a.avatar_url || null;
+        let resolvedAvatarData = a.avatar_data || null;
+        if (a.avatar_data && a.avatar_data.startsWith('data:image/')) {
+          try {
+            const m = a.avatar_data.match(/^data:(image\/[\w+]+);base64,(.+)$/);
+            if (m) {
+              const ext = m[1].replace('image/', '').replace('jpeg', 'jpg');
+              const fname = `restored-${a.username}-${Date.now()}.${ext}`;
+              fs.writeFileSync(path.join(uploadsPath, fname), Buffer.from(m[2], 'base64'));
+              resolvedAvatarUrl = `/uploads/${fname}`;
+              resolvedAvatarData = null; // file is now on disk, no need for inline data
+            }
+          } catch (_) { /* keep original values on error */ }
+        }
+        if (mode === 'merge' || isCurrentAdmin) {
+          // merge or current admin: keep password_hash and role untouched
           await client.query(
-            `INSERT INTO admins (id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-             ON CONFLICT (username) DO UPDATE SET display_name=EXCLUDED.display_name, avatar_url=EXCLUDED.avatar_url, avatar_data=EXCLUDED.avatar_data, updated_at=EXCLUDED.updated_at`,
-            [a.id, a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', a.avatar_url || null, a.avatar_data || null, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
+            `UPDATE admins SET display_name=$1, role=$2, avatar_url=$3, avatar_data=$4, updated_at=NOW() WHERE id=$5`,
+            [a.display_name || null, a.role || 'VIEWER', resolvedAvatarUrl, resolvedAvatarData, existingId]
           );
         } else {
+          // overwrite non-current: update everything including password
           await client.query(
-            `INSERT INTO admins (id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-             ON CONFLICT (username) DO UPDATE SET display_name=EXCLUDED.display_name, password_hash=EXCLUDED.password_hash, role=EXCLUDED.role, avatar_url=EXCLUDED.avatar_url, avatar_data=EXCLUDED.avatar_data, updated_at=EXCLUDED.updated_at, last_seen=EXCLUDED.last_seen`,
-            [a.id, a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', a.avatar_url || null, a.avatar_data || null, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
+            `UPDATE admins SET display_name=$1, password_hash=$2, role=$3, avatar_url=$4, avatar_data=$5, last_seen=$6, updated_at=NOW() WHERE id=$7`,
+            [a.display_name || null, a.password_hash || 'placeholder', a.role || 'VIEWER', resolvedAvatarUrl, resolvedAvatarData, a.last_seen || null, existingId]
           );
         }
       } else {
-        // merge: upsert by username, update display_name/role/avatar but keep existing password
-        await client.query(
-          `INSERT INTO admins (id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-           ON CONFLICT (username) DO UPDATE SET display_name=EXCLUDED.display_name, role=EXCLUDED.role, avatar_url=EXCLUDED.avatar_url, avatar_data=EXCLUDED.avatar_data, updated_at=EXCLUDED.updated_at`,
-          [a.id, a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', a.avatar_url || null, a.avatar_data || null, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
-        );
+        // Username doesn't exist — try INSERT with backup's original id
+        // Resolve avatar for new insert: write base64 data to disk if present
+        let insertAvatarUrl = a.avatar_url || null;
+        let insertAvatarData = a.avatar_data || null;
+        if (a.avatar_data && a.avatar_data.startsWith('data:image/')) {
+          try {
+            const m = a.avatar_data.match(/^data:(image\/[\w+]+);base64,(.+)$/);
+            if (m) {
+              const ext = m[1].replace('image/', '').replace('jpeg', 'jpg');
+              const fname = `restored-${a.username}-${Date.now()}.${ext}`;
+              fs.writeFileSync(path.join(uploadsPath, fname), Buffer.from(m[2], 'base64'));
+              insertAvatarUrl = `/uploads/${fname}`;
+              insertAvatarData = null;
+            }
+          } catch (_) { /* keep original on error */ }
+        }
+        try {
+          await client.query(
+            `INSERT INTO admins (id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [a.id, a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', insertAvatarUrl, insertAvatarData, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
+          );
+        } catch (insertErr) {
+          if (insertErr.code === '23505') {
+            // PK conflict on id (different user holds that id) — insert without explicit id, let DB assign
+            await client.query(
+              `INSERT INTO admins (display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+              [a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', insertAvatarUrl, insertAvatarData, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
+            );
+          } else {
+            throw insertErr;
+          }
+        }
       }
       adminCount++;
+    }
+
+    // Re-enable triggers after admin operations
+    if (mode === 'overwrite') {
+      try { await client.query('ALTER TABLE admins ENABLE TRIGGER admins_audit_trigger'); } catch (_) {}
+      try { await client.query('ALTER TABLE app_settings ENABLE TRIGGER trg_app_settings_enforce_general_updated_by'); } catch (_) {}
     }
 
     // Restore audit logs (always insert — skip existing IDs)
@@ -3133,18 +3269,60 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
       } catch (_) { /* skip */ }
     }
 
+    // Restore control_panel_audit
+    let ctrlCount = 0;
+    for (const r of ctrlAudit) {
+      try {
+        await client.query(
+          `INSERT INTO control_panel_audit (id, admin_id, action, payload, created_at) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING`,
+          [r.id, r.admin_id, r.action, r.payload ? JSON.stringify(r.payload) : null, r.created_at]
+        );
+        ctrlCount++;
+      } catch (_) { /* skip */ }
+    }
+
+    // Restore settings_audit
+    let settingsAuditCount = 0;
+    for (const r of settingsAudit) {
+      try {
+        await client.query(
+          `INSERT INTO settings_audit (id, admin_id, settings_key, action, before_data, after_data, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (id) DO NOTHING`,
+          [r.id, r.admin_id, r.settings_key, r.action, r.before_data ? JSON.stringify(r.before_data) : null, r.after_data ? JSON.stringify(r.after_data) : null, r.created_at]
+        );
+        settingsAuditCount++;
+      } catch (_) { /* skip */ }
+    }
+
+    // Restore server_keys_audit
+    let serverKeysAuditCount = 0;
+    for (const r of serverKeysAudit) {
+      try {
+        await client.query(
+          `INSERT INTO server_keys_audit (id, admin_id, server_id, key_id, action, key_username, key_description, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT (id) DO NOTHING`,
+          [r.id, r.admin_id, r.server_id, r.key_id || null, r.action, r.key_username || null, r.key_description || null, r.created_at]
+        );
+        serverKeysAuditCount++;
+      } catch (_) { /* skip */ }
+    }
+
     // Fix sequences so next INSERT gets a valid ID
     try { await client.query("SELECT setval('admins_id_seq', COALESCE((SELECT MAX(id) FROM admins), 1))"); } catch (_) {}
     try { await client.query("SELECT setval('admins_audit_id_seq', COALESCE((SELECT MAX(id) FROM admins_audit), 1))"); } catch (_) {}
     try { await client.query("SELECT setval('login_audit_id_seq', COALESCE((SELECT MAX(id) FROM login_audit), 1))"); } catch (_) {}
     try { await client.query("SELECT setval('password_reset_audit_id_seq', COALESCE((SELECT MAX(id) FROM password_reset_audit), 1))"); } catch (_) {}
+    try { await client.query("SELECT setval('control_panel_audit_id_seq', COALESCE((SELECT MAX(id) FROM control_panel_audit), 1))"); } catch (_) {}
+    try { await client.query("SELECT setval('settings_audit_id_seq', COALESCE((SELECT MAX(id) FROM settings_audit), 1))"); } catch (_) {}
+    try { await client.query("SELECT setval('server_keys_audit_id_seq', COALESCE((SELECT MAX(id) FROM server_keys_audit), 1))"); } catch (_) {}
 
     await client.query('COMMIT');
-    return res.json({ ok: true, counts: { admins: adminCount, admins_audit: auditCount, login_audit: loginCount, password_reset_audit: pwResetCount, permissions: permCount } });
+    return res.json({ ok: true, counts: { admins: adminCount, admins_audit: auditCount, login_audit: loginCount, password_reset_audit: pwResetCount, control_panel_audit: ctrlCount, settings_audit: settingsAuditCount, server_keys_audit: serverKeysAuditCount, permissions: permCount } });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('admin restore failed:', err);
-    return res.status(500).json({ msg: 'Failed to restore admin backup' });
+    // Re-enable triggers in case of failure
+    try { await client.query('ALTER TABLE admins ENABLE TRIGGER admins_audit_trigger'); } catch (_) {}
+    try { await client.query('ALTER TABLE app_settings ENABLE TRIGGER trg_app_settings_enforce_general_updated_by'); } catch (_) {}
+    console.error('admin restore failed:', err && err.stack ? err.stack : err);
+    return res.status(500).json({ msg: 'Failed to restore admin backup', detail: err && err.message ? err.message : String(err) });
   } finally {
     client.release();
     // cleanup uploaded temp file
