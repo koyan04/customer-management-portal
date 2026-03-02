@@ -1312,7 +1312,7 @@ router.post('/financial/snapshot', authenticateToken, async (req, res) => {
         const data = currentPricesResult.rows[0].data || {};
         const safeNum = (x) => { const n = Number(x); return Number.isFinite(n) ? n : 0; };
         prices.price_mini_cents = safeNum(data.price_mini_cents || (data.price_backup_decimal?.price_mini ? Math.round(Number(data.price_backup_decimal.price_mini) * 100) : 0));
-        prices.price_basic_cents = safeNum(data.price_basic_cents || (data.price_backup_decimal?.price_basic ? Math.round(Number(data.price_basic_decimal.price_basic) * 100) : 0));
+        prices.price_basic_cents = safeNum(data.price_basic_cents || (data.price_backup_decimal?.price_basic ? Math.round(Number(data.price_backup_decimal.price_basic) * 100) : 0));
         prices.price_unlimited_cents = safeNum(data.price_unlimited_cents || (data.price_backup_decimal?.price_unlimited ? Math.round(Number(data.price_backup_decimal.price_unlimited) * 100) : 0));
       }
     }
@@ -2249,34 +2249,37 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       }
     }
 
-    // financial_snapshots: Insert only — never overwrite existing snapshots on the target machine
-    // This preserves any snapshots that were already taken on the target.
+    // financial_snapshots: DELETE existing for each month/server in backup, then INSERT
+    // This guarantees backup data fully overwrites whatever was on the target machine.
     let snapshotCount = 0;
     if (Array.isArray(data.financial_snapshots)) {
       for (const s of data.financial_snapshots) {
         if (!s.month_start) continue;
         try {
           const monthStartVal = s.month_start instanceof Date ? s.month_start.toISOString().slice(0, 10) : String(s.month_start).slice(0, 10);
-          const monthEndVal = s.month_end instanceof Date ? s.month_end.toISOString().slice(0, 10) : String(s.month_end || monthStartVal);
-          // Restore snapshot — overwrite existing target snapshots so all backup data is applied
+          const monthEndVal = s.month_end instanceof Date ? s.month_end.toISOString().slice(0, 10) : String(s.month_end || '').slice(0, 10) || monthStartVal;
+          const serverId = s.server_id != null ? Number(s.server_id) : null;
+          // Delete any existing snapshot for this month/server so backup data always wins
+          if (serverId != null) {
+            await client.query(
+              'DELETE FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id = $2',
+              [monthStartVal, serverId]
+            );
+          } else {
+            await client.query(
+              'DELETE FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id IS NULL',
+              [monthStartVal]
+            );
+          }
+          // Plain INSERT — no conflict possible after DELETE
           await client.query(
             `INSERT INTO monthly_financial_snapshots
                (month_start, month_end, server_id, mini_count, basic_count, unlimited_count,
                 price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, notes)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11,NOW()),$12)
-             ON CONFLICT (month_start, COALESCE(server_id, 0)) DO UPDATE SET
-               month_end             = EXCLUDED.month_end,
-               mini_count            = EXCLUDED.mini_count,
-               basic_count           = EXCLUDED.basic_count,
-               unlimited_count       = EXCLUDED.unlimited_count,
-               price_mini_cents      = EXCLUDED.price_mini_cents,
-               price_basic_cents     = EXCLUDED.price_basic_cents,
-               price_unlimited_cents = EXCLUDED.price_unlimited_cents,
-               revenue_cents         = EXCLUDED.revenue_cents,
-               notes                 = COALESCE(EXCLUDED.notes, monthly_financial_snapshots.notes)`,
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11,NOW()),$12)`,
             [
               monthStartVal, monthEndVal,
-              s.server_id || null,
+              serverId,
               Number(s.mini_count || 0), Number(s.basic_count || 0), Number(s.unlimited_count || 0),
               Number(s.price_mini_cents || 0), Number(s.price_basic_cents || 0), Number(s.price_unlimited_cents || 0),
               Number(s.revenue_cents || 0),
@@ -2289,7 +2292,7 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
           console.warn('Could not restore financial snapshot for', s.month_start, ':', e.message);
         }
       }
-      console.log(`Restored ${snapshotCount} financial snapshots (existing overwritten with backup data)`);
+      console.log(`Restored ${snapshotCount} financial snapshots (backup data overwrote target)`);
     }
     
     await client.query('COMMIT');
