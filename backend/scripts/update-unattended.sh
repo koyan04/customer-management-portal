@@ -71,6 +71,18 @@ echo ""
 echo "→ Preserving critical files..."
 [ -f "$APP_DIR/backend/.env" ] && cp "$APP_DIR/backend/.env" "$TMP_DIR/backend/.env"
 
+# Preserve keyserver data (public domain, secret key, port settings)
+if [ -d "$APP_DIR/backend/data" ]; then
+    mkdir -p "$TMP_DIR/backend/data"
+    cp -r "$APP_DIR/backend/data/"* "$TMP_DIR/backend/data/" 2>/dev/null || true
+fi
+
+# Preserve user-generated key/config files
+if [ -d "$APP_DIR/configs" ]; then
+    mkdir -p "$BACKUP_DIR/configs"
+    cp -r "$APP_DIR/configs/"* "$BACKUP_DIR/configs/" 2>/dev/null || true
+fi
+
 if [ -d "$APP_DIR/backend/public/logos" ]; then
     mkdir -p "$TMP_DIR/backend/public/logos"
     cp -r "$APP_DIR/backend/public/logos/"* "$TMP_DIR/backend/public/logos/" 2>/dev/null || true
@@ -88,6 +100,8 @@ rsync -a "$TMP_DIR/" "$APP_DIR/" \
     --exclude='backend/public' \
     --exclude='backend/node_modules' \
     --exclude='frontend/node_modules' \
+    --exclude='configs' \
+    --exclude='backend/data' \
     --delete
 echo "  ✓ Files synced"
 echo ""
@@ -150,12 +164,11 @@ rsync -a --delete "$APP_DIR/frontend/dist/" "$APP_DIR/backend/public/"
 echo "  ✓ Frontend deployed"
 echo ""
 
-# ── Preserve logos/uploads that may have been overwritten by rsync ─────────
-if [ -d "$BACKUP_DIR" ]; then
-    if [ -d "$BACKUP_DIR/cmp/backend/public/logos" ] 2>/dev/null; then
-        mkdir -p "$APP_DIR/backend/public/logos"
-        cp -r "$BACKUP_DIR/cmp/backend/public/logos/"* "$APP_DIR/backend/public/logos/" 2>/dev/null || true
-    fi
+# ── Restore configs (key files) backed up before rsync ────────────────────
+if [ -d "$BACKUP_DIR/configs" ]; then
+    mkdir -p "$APP_DIR/configs"
+    cp -r "$BACKUP_DIR/configs/"* "$APP_DIR/configs/" 2>/dev/null || true
+    echo "  ✓ Key configs restored"
 fi
 
 echo "=== Update complete! ==="
