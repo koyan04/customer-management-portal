@@ -111,7 +111,8 @@ echo ""
 # ── Build frontend ─────────────────────────────────────────────────────────
 echo "→ Installing frontend dependencies..."
 cd "$APP_DIR/frontend"
-npm install 2>&1
+# Force development mode so npm installs devDependencies (vite, etc.)
+NODE_ENV=development npm install 2>&1
 echo "  ✓ Frontend dependencies installed"
 echo ""
 
@@ -132,7 +133,7 @@ if [ -f /proc/meminfo ]; then
 fi
 
 export NODE_OPTIONS="--max-old-space-size=1536"
-npm run build 2>&1
+NODE_ENV=development npm run build 2>&1
 unset NODE_OPTIONS
 
 if [ "$SWAP_CREATED" -eq 1 ]; then
