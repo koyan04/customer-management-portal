@@ -29,7 +29,7 @@ export default function SettingsPage() {
   const [dbForm, setDbForm] = useState({ host: '', port: 5432, user: '', password: '', database: '', ssl: false });
   const [generalForm, setGeneralForm] = useState({
     title: 'VChannel',
-    theme: 'system',
+    theme: (() => { try { return localStorage.getItem('themeOverride') || 'system'; } catch (_) { return 'system'; } })(),
     showTooltips: true,
     logo_url: '',
     logo_url_2x: '',
@@ -549,7 +549,15 @@ export default function SettingsPage() {
     setTesting(true);
     try {
       const key = tab === 'database' ? 'database' : tab === 'telegram' ? 'telegram' : 'general';
-      const res = await axios.post(backendOrigin + `/api/admin/settings/${key}/test`, currentForm, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
+      let payload = { ...currentForm };
+      // For telegram: omit masked sentinel so backend uses the stored token for testing
+      if (key === 'telegram') {
+        const copy = { ...payload };
+        if (tgTokenMasked && (!copy.botToken || copy.botToken === TOKEN_MASK)) delete copy.botToken;
+        if (!tgTokenMasked && copy.botToken === TOKEN_MASK) delete copy.botToken;
+        payload = copy;
+      }
+      const res = await axios.post(backendOrigin + `/api/admin/settings/${key}/test`, payload, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
       const d = res.data || {};
       if (d.ok) showMsg('Test OK: ' + (d.details || 'Success'));
       else showMsg('Test failed: ' + (d.error || d.details || 'Unknown error'));
@@ -1156,10 +1164,10 @@ export default function SettingsPage() {
                   <FaCloudDownloadAlt style={{ opacity: 0.8 }} /> Backups
                   <FaInfoCircle title="Download your current data as backup files. config.json contains app settings; database.db is the full PostgreSQL dump; the Telegram snapshot is the same JSON the bot uses." style={{ opacity: 0.6, cursor: 'help', marginLeft: 'auto' }} />
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/config?record=1', 'config.json')} style={{ justifyContent: 'flex-start' }}><FaCloudDownloadAlt /> config.json</button>
-                  <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/db?record=1', 'database.db')} style={{ justifyContent: 'flex-start' }}><FaCloudDownloadAlt /> database.db</button>
-                  <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/snapshot?record=1', 'cmp-backup.json')} style={{ justifyContent: 'flex-start' }} title="Same JSON format as Telegram bot backup"><FaCloudDownloadAlt /> Telegram snapshot</button>
+                <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'flex-start' }}>
+                  <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/config?record=1', 'config.json')}><FaCloudDownloadAlt /> config.json</button>
+                  <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/db?record=1', 'database.db')}><FaCloudDownloadAlt /> database.db</button>
+                  <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/snapshot?record=1', 'cmp-backup.json')} title="Same JSON format as Telegram bot backup"><FaCloudDownloadAlt /> Telegram snapshot</button>
                   <button className="btn primary" disabled={busy} onClick={async () => {
                     try {
                       setBusy(true);
@@ -1364,6 +1372,22 @@ export default function SettingsPage() {
                   >
                     {showTgToken ? <FaEyeSlash /> : <FaEye />}
                   </button>
+                  {(tgForm.botToken || tgTokenMasked) && (
+                    <button
+                      type="button"
+                      className="btn"
+                      title="Clear token"
+                      onClick={() => {
+                        setTgForm({ ...tgForm, botToken: '' });
+                        setTgTokenMasked(false);
+                        setPreserveTgPlainToken(null);
+                        setShowTgToken(false);
+                      }}
+                      style={{ padding: '0.25rem 0.5rem' }}
+                    >
+                      ×
+                    </button>
+                  )}
                 </div>
                 {tgTokenMasked && !canToggleTgShow ? (
                   <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>Token is stored securely and cannot be retrieved — paste a new token to replace it.</small>

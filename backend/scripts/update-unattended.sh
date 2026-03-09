@@ -264,7 +264,11 @@ echo ""
 # ── Deploy frontend build to backend/public ────────────────────────────────
 echo "→ Deploying frontend to backend/public..."
 mkdir -p "$APP_DIR/backend/public"
-rsync -a --delete "$APP_DIR/frontend/dist/" "$APP_DIR/backend/public/"
+# Exclude user-generated directories so uploads/logos are never deleted by --delete
+rsync -a --delete \
+    --exclude='uploads' \
+    --exclude='logos' \
+    "$APP_DIR/frontend/dist/" "$APP_DIR/backend/public/"
 echo "  ✓ Frontend deployed"
 echo ""
 

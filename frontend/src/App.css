@@ -5328,6 +5328,7 @@ body.theme-light .infographic-card .legend .legend-color { border-color: rgba(6,
 .db-status .db-status-row { color: #d2f8ee; }
 .db-status .db-status-row strong { color: #9edbd0; margin-right: 0.35rem; }
 @media (max-width: 720px) { .db-status { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+@media (max-width: 480px) { .db-status { grid-template-columns: 1fr; } }
 
 /* Larger status block for largest tables (auto-fit) */
 .db-status.largest { grid-template-columns: repeat( auto-fit, minmax(200px, 1fr) ); }

@@ -1502,6 +1502,15 @@ router.put('/settings/:key', authenticateToken, isAdmin, async (req, res) => {
       // detect unexpected key drops and record a warning audit (best-effort)
       try { await warnIfKeyDrop(pool, 'general', before || {}, after || {}); } catch (_) {}
     }
+    // If telegram settings were updated, immediately apply to the bot (stop/start polling, reschedule)
+    if (key === 'telegram') {
+      setImmediate(async () => {
+        try {
+          const bot = require('../telegram_bot');
+          if (bot && typeof bot.applySettingsNow === 'function') await bot.applySettingsNow();
+        } catch (_) {}
+      });
+    }
     return res.json({ key, data: maskSecrets(key, after) });
   } catch (err) {
     console.error('PUT settings failed:', err && err.stack ? err.stack : err);
@@ -1808,6 +1817,14 @@ router.post('/settings/:key/test', authenticateToken, isAdmin, async (req, res) 
         try { await testPool.end(); } catch (_) {}
       }
     } else if (key === 'telegram') {
+      // If botToken not in request (omitted/masked by frontend), load stored token from DB for testing
+      if (!cfg.botToken || cfg.botToken === '********') {
+        try {
+          const stored = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'telegram'");
+          const storedData = stored.rows && stored.rows[0] ? stored.rows[0].data : {};
+          if (storedData.botToken) cfg = { ...cfg, botToken: storedData.botToken };
+        } catch (_) {}
+      }
       const { ok, errors, cleaned } = validateSettings('telegram', cfg);
       if (!ok) return res.status(400).json({ msg: 'Validation failed', errors });
       // For safety, we do not call external Telegram API here. Validate token shape only.
