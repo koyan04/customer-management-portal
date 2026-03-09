@@ -294,4 +294,19 @@ fi
 
 echo "=== Update complete! ==="
 echo ""
+
+# ── Schedule a clean service restart independent of this process tree ──────
+# Using systemctl restart directly (rather than SIGTERM self-kill) ensures
+# systemd fully controls the restart with proper ordering, dependency
+# resolution, and no risk of hitting StartLimitBurst from failed self-kills.
+echo "→ Scheduling service restart..."
+if systemd-run --on-active=4 --collect /bin/systemctl restart cmp-backend >/dev/null 2>&1; then
+    echo "  ✓ Restart scheduled via systemd-run (fires in 4s)"
+else
+    # Fallback: disowned background subshell (survives this script exiting)
+    (sleep 4 && exec /bin/systemctl restart cmp-backend) </dev/null >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    echo "  ✓ Restart scheduled via background job (fires in 4s)"
+fi
+echo ""
 echo "RESTART_SIGNAL"

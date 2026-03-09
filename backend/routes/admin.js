@@ -3395,9 +3395,10 @@ router.post('/control/update/run', authenticateToken, isAdmin, async (req, res) 
     res.end();
 
     if (shouldRestart && code === 0) {
-      setTimeout(() => {
-        try { process.kill(process.pid, 'SIGTERM'); } catch (_) { process.exit(0); }
-      }, 1200);
+      // The update script schedules a clean `systemctl restart cmp-backend` via
+      // systemd-run (4s delay), so we do NOT need to self-kill here.
+      // Self-killing via SIGTERM was unreliable: it could hit StartLimitBurst and
+      // leave the service permanently down after repeated fast failures.
     }
   });
 
