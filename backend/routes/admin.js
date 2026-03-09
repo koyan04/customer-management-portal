@@ -2773,8 +2773,6 @@ function readCertInfo(domain) {
     const live = `/etc/letsencrypt/live/${domain}`;
     const certPath = path.join(live, 'cert.pem');
     if (!fs.existsSync(certPath)) return null;
-    const pem = fs.readFileSync(certPath, 'utf8');
-    // Parse dates using openssl x509 if available
     let notBefore = null, notAfter = null, issuer = null;
     try {
       const nb = require('child_process').execSync(`openssl x509 -in '${certPath}' -noout -startdate`).toString().trim();
@@ -2795,18 +2793,95 @@ function readCertInfo(domain) {
   } catch (e) { return null; }
 }
 
+// Scan /etc/letsencrypt/live/ for all installed cert domains
+function scanInstalledCertDomains() {
+  try {
+    const liveDir = '/etc/letsencrypt/live';
+    if (!fs.existsSync(liveDir)) return [];
+    return fs.readdirSync(liveDir).filter(d => {
+      try { return fs.statSync(path.join(liveDir, d)).isDirectory() && fs.existsSync(path.join(liveDir, d, 'cert.pem')); } catch(_) { return false; }
+    });
+  } catch (_) { return []; }
+}
+
+// Extract domain from nginx cmp config (install.sh writes /etc/nginx/sites-available/cmp;
+// GUI cert install writes /etc/nginx/sites-available/cmp-${domain}.conf)
+function getNginxConfigDomain() {
+  try {
+    const candidates = ['/etc/nginx/sites-available/cmp', '/etc/nginx/sites-enabled/cmp'];
+    // Also check cmp-*.conf which GUI cert install creates
+    try {
+      const sitesDir = '/etc/nginx/sites-available';
+      if (fs.existsSync(sitesDir)) {
+        fs.readdirSync(sitesDir).filter(f => f.startsWith('cmp-') && f.endsWith('.conf'))
+          .forEach(f => candidates.push(path.join(sitesDir, f)));
+      }
+    } catch(_) {}
+    for (const p of candidates) {
+      try {
+        if (!fs.existsSync(p)) continue;
+        const content = fs.readFileSync(p, 'utf8');
+        const m = content.match(/server_name\s+([^;]+);/);
+        if (m) {
+          const domains = m[1].trim().split(/\s+/).filter(d => d && d !== '_');
+          if (domains.length > 0) return domains[0];
+        }
+      } catch(_) {}
+    }
+  } catch(_) {}
+  return null;
+}
+
+// Read Cloudflare API token from /root/.cloudflare.ini if it exists
+function readCloudflareIni() {
+  try {
+    const content = fs.readFileSync('/root/.cloudflare.ini', 'utf8');
+    const m = content.match(/dns_cloudflare_api_token\s*=\s*(.+)/);
+    return m ? m[1].trim() : null;
+  } catch(_) { return null; }
+}
+
 router.get('/control/cert/status', authenticateToken, isAdmin, async (req, res) => {
   try {
-    // Pull domain from stored config first, fallback to env
+    // 1. Try domain from DB cert config
     let domain = null;
     try {
       const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'cert'");
       const data = r.rows && r.rows[0] ? (r.rows[0].data || {}) : {};
       if (data && typeof data.domain === 'string' && data.domain.trim()) domain = data.domain.trim();
     } catch (_) {}
-    if (!domain) domain = process.env.DOMAIN_NAME || null;
-    if (!domain) return res.json({ ok: true, domain: null, status: null });
-    const info = readCertInfo(domain);
+
+    // Try to find cert — cascade through all available sources until found
+    let info = domain ? readCertInfo(domain) : null;
+
+    if (!info) {
+      // 2. Try DOMAIN_NAME env var (written by install.sh)
+      const envDomain = process.env.DOMAIN_NAME || null;
+      if (envDomain && envDomain !== domain) {
+        info = readCertInfo(envDomain);
+        if (info) domain = envDomain;
+      }
+    }
+
+    if (!info) {
+      // 3. Try domain from nginx config (install.sh + fix-tls.sh write /etc/nginx/sites-available/cmp)
+      const nginxDomain = getNginxConfigDomain();
+      if (nginxDomain && nginxDomain !== domain) {
+        info = readCertInfo(nginxDomain);
+        if (info) domain = nginxDomain;
+      }
+    }
+
+    if (!info) {
+      // 4. Last resort: scan /etc/letsencrypt/live/ for any installed cert
+      const installed = scanInstalledCertDomains();
+      for (const d of installed) {
+        const candidate = readCertInfo(d);
+        if (candidate) { info = candidate; domain = d; break; }
+      }
+    }
+
+    if (!domain) return res.json({ ok: true, domain: null, cert: null });
     await writeControlAudit(req.user && req.user.id, 'cert_status', { domain, found: !!info });
     return res.json({ ok: true, domain, cert: info });
   } catch (e) { return res.status(500).json({ ok: false, error: e && e.message ? e.message : 'cert status failed' }); }
@@ -2899,11 +2974,25 @@ router.get('/control/cert/config', authenticateToken, isAdmin, async (req, res) 
   try {
     const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'cert'");
     const data = r.rows && r.rows[0] ? (r.rows[0].data || {}) : {};
+
+    // If no domain in DB, detect from env → nginx config
+    let domain = data.domain || process.env.DOMAIN_NAME || getNginxConfigDomain() || '';
+    let email = data.email || process.env.LETSENCRYPT_EMAIL || '';
+
+    // Detect challenge_type: DB → if cloudflare.ini exists → default dns-cloudflare
+    let challengeType = data.challenge_type;
+    if (!challengeType) {
+      challengeType = fs.existsSync('/root/.cloudflare.ini') ? 'dns-cloudflare' : 'http';
+    }
+
+    // Detect whether an API token exists: DB → CLOUDFLARE_API_TOKEN env → cloudflare.ini file
+    const hasToken = !!(data.api_token || process.env.CLOUDFLARE_API_TOKEN || readCloudflareIni());
+
     const out = {
-      domain: data.domain || process.env.DOMAIN_NAME || '',
-      email: data.email || process.env.LETSENCRYPT_EMAIL || '',
-      api_token: data.api_token ? '********' : (process.env.CLOUDFLARE_API_TOKEN ? '********' : ''),
-      challenge_type: data.challenge_type || 'dns-cloudflare'
+      domain,
+      email,
+      api_token: hasToken ? '********' : '',
+      challenge_type: challengeType
     };
     return res.json({ ok: true, config: out });
   } catch (e) {
@@ -2984,7 +3073,16 @@ router.post('/control/cert/install', authenticateToken, isAdmin, async (req, res
       if ((!apiToken || apiToken === '********') && (data.api_token || data.cloudflare_api_token)) apiToken = data.api_token || data.cloudflare_api_token;
       if (!challengeType && data.challenge_type) challengeType = data.challenge_type;
     } catch (_) {}
-    if (!challengeType) challengeType = 'dns-cloudflare';
+    // Env var fallbacks (written by install.sh)
+    if (!domain) domain = process.env.DOMAIN_NAME || '';
+    if (!email) email = process.env.LETSENCRYPT_EMAIL || '';
+    if (!apiToken || apiToken === '********') {
+      if (process.env.CLOUDFLARE_API_TOKEN) apiToken = process.env.CLOUDFLARE_API_TOKEN;
+      // Last resort: read from /root/.cloudflare.ini (written by install.sh / fix-tls.sh)
+      else { const fromIni = readCloudflareIni(); if (fromIni) apiToken = fromIni; }
+    }
+    // Detect challenge type from environment if not set
+    if (!challengeType) challengeType = fs.existsSync('/root/.cloudflare.ini') ? 'dns-cloudflare' : 'dns-cloudflare';
 
     if (!domain) { send('error', 'ERROR: Domain is required'); finish(1); return; }
     if (!email) { send('error', 'ERROR: Email is required'); finish(1); return; }
