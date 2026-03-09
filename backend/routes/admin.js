@@ -3241,21 +3241,14 @@ router.post('/control/update/run', authenticateToken, isAdmin, async (req, res) 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
   const send = (obj) => {
     try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch (_) {}
   };
 
-  if (!fs.existsSync(scriptPath)) {
-    send({ type: 'error', text: 'Update script not found on server' });
-    res.end();
-    return;
-  }
-
-  // Pre-resolve the latest GitHub release tag using Node's https (reliable JSON parsing)
-  // and pass it as LATEST_TAG env var so the shell script never needs to parse JSON.
+  // ── Step 1: Resolve latest tag via Node https (no shell JSON parsing) ─────
   let resolvedTag = '';
   try {
     send({ type: 'log', text: '→ Resolving latest release tag...\n' });
@@ -3272,7 +3265,7 @@ router.post('/control/update/run', authenticateToken, isAdmin, async (req, res) 
           try {
             const tag = JSON.parse(raw).tag_name || '';
             if (/^v?[0-9]+\.[0-9]/.test(tag)) resolve(tag);
-            else reject(new Error('Unexpected tag: ' + tag.slice(0, 80)));
+            else reject(new Error('Unexpected tag value: ' + String(tag).slice(0, 80)));
           } catch (e) { reject(e); }
         });
       }).on('error', reject);
@@ -3285,13 +3278,45 @@ router.post('/control/update/run', authenticateToken, isAdmin, async (req, res) 
     return;
   }
 
+  // ── Step 2: Download the update script for THAT tag from GitHub ───────────
+  // This ensures the VPS always runs the latest script without manual SSH/SCP.
+  // Even if the on-disk script is old/broken, the downloaded one is used.
+  try {
+    send({ type: 'log', text: `→ Downloading update script for ${resolvedTag}...\n` });
+    const scriptContent = await new Promise((resolve, reject) => {
+      const url = `https://raw.githubusercontent.com/koyan04/customer-management-portal/${resolvedTag}/backend/scripts/update-unattended.sh`;
+      const opts = new URL(url);
+      https.get({ hostname: opts.hostname, path: opts.pathname, headers: { 'User-Agent': 'cmp-updater/1.0' } }, (r) => {
+        if (r.statusCode !== 200) { reject(new Error(`HTTP ${r.statusCode} fetching script`)); return; }
+        let data = '';
+        r.on('data', d => { data += d; });
+        r.on('end', () => resolve(data));
+      }).on('error', reject);
+    });
+    // Write script to disk (replacing whatever version is there) and make executable
+    const dir = path.dirname(scriptPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(scriptPath, scriptContent, { encoding: 'utf8', mode: 0o755 });
+    send({ type: 'log', text: `  ✓ Script updated on disk\n` });
+  } catch (e) {
+    // Not fatal — fall back to the on-disk script if download fails
+    send({ type: 'log', text: `  ⚠ Could not download latest script (${e.message}), using on-disk version\n` });
+    if (!fs.existsSync(scriptPath)) {
+      send({ type: 'error', text: '  ERROR: No update script available. Aborting.' });
+      send({ type: 'done', code: 1, restarting: false });
+      res.end();
+      return;
+    }
+  }
+
   writeControlAudit(adminId, 'update_run_start', { tag: resolvedTag }).catch(() => {});
   send({ type: 'log', text: '=== Starting unattended update ===\n' });
 
+  // Pass CMP_SELF_UPDATED=1 so the script skips its own self-update (backend already did it)
   const child = spawn('bash', [scriptPath], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false,
-    env: { ...process.env, LATEST_TAG: resolvedTag }
+    env: { ...process.env, LATEST_TAG: resolvedTag, CMP_SELF_UPDATED: '1' }
   });
 
   let shouldRestart = false;
