@@ -272,6 +272,31 @@ rsync -a --delete \
 echo "  ✓ Frontend deployed"
 echo ""
 
+# ── Explicitly restore logos and uploads from pre-update backup ────────────
+# This is belt-and-suspenders: the rsync --exclude above should preserve these
+# directories in-place, but the explicit copy here guarantees no data loss
+# even if rsync exclude behavior differs across versions/environments.
+echo "→ Restoring logos and uploads from backup..."
+LOGO_RESTORE=0
+UPLOAD_RESTORE=0
+if [ -d "$TMP_DIR/backend/public/logos" ]; then
+    mkdir -p "$APP_DIR/backend/public/logos"
+    # Copy every file that isn't a .gitkeep placeholder
+    find "$TMP_DIR/backend/public/logos" -maxdepth 1 -type f ! -name '.gitkeep' -exec cp -p {} "$APP_DIR/backend/public/logos/" \;
+    LOGO_RESTORE=1
+fi
+if [ -d "$TMP_DIR/backend/public/uploads" ]; then
+    mkdir -p "$APP_DIR/backend/public/uploads"
+    find "$TMP_DIR/backend/public/uploads" -maxdepth 1 -type f ! -name '.gitkeep' -exec cp -p {} "$APP_DIR/backend/public/uploads/" \;
+    UPLOAD_RESTORE=1
+fi
+if [ "$LOGO_RESTORE" -eq 1 ] || [ "$UPLOAD_RESTORE" -eq 1 ]; then
+    echo "  ✓ Logos/uploads restored"
+else
+    echo "  ✓ No logos/uploads to restore"
+fi
+echo ""
+
 # ── Restore configs (key files) backed up before rsync ────────────────────
 if [ -d "$BACKUP_DIR/configs" ]; then
     mkdir -p "$APP_DIR/configs"

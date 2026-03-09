@@ -33,3 +33,7 @@ temp/
 backend/public/uploads/*
 !backend/public/uploads/.gitkeep
 !backend/public/uploads/README.md
+
+# Ignore custom logos (user-uploaded, persisted outside git)
+backend/public/logos/*
+!backend/public/logos/.gitkeep
