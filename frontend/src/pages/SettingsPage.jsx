@@ -1541,15 +1541,15 @@ export default function SettingsPage() {
           <div role="tabpanel" id="panel-control" aria-labelledby="tab-control" className="tab-panel">
             <h3>Control Panel</h3>
             {/* Top status bar */}
-            <div className="cp-statusbar" style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', padding: '0.5rem 0.75rem', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '0.75rem', marginBottom: '0.75rem', background: 'rgba(255,255,255,0.04)' }}>
+            <div className="cp-statusbar" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', padding: '0.5rem 0.75rem', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '0.75rem', marginBottom: '0.75rem', background: 'rgba(255,255,255,0.04)', overflow: 'hidden' }}>
               {/* Service status removed */}
-              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }} title="Certificate status">
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap', minWidth: 0, overflow: 'hidden' }} title="Certificate status">
                 <FaShieldAlt />
                 <span>Cert</span>
                 <span aria-hidden style={{ opacity: 0.5 }}>•</span>
-                <span>{certStatus?.domain || certConfig?.domain || '—'}</span>
+                <span style={{ wordBreak: 'break-all', minWidth: 0 }}>{certStatus?.domain || certConfig?.domain || '—'}</span>
                 <span aria-hidden style={{ opacity: 0.5 }}>•</span>
-                <span>{(certStatus && certStatus.cert && (typeof certStatus.cert.daysRemaining === 'number')) ? `${certStatus.cert.daysRemaining}d left` : 'no cert'}</span>
+                <span style={{ whiteSpace: 'nowrap' }}>{(certStatus && certStatus.cert && (typeof certStatus.cert.daysRemaining === 'number')) ? `${certStatus.cert.daysRemaining}d left` : 'no cert'}</span>
               </div>
             </div>
             <div className="cp-sections" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
@@ -1559,12 +1559,12 @@ export default function SettingsPage() {
                 <h4 style={{ margin: '0 0 0.75rem 0' }}>Certificate</h4>
                 {/* Current cert status */}
                 {certStatus && certStatus.cert ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '0.5rem', marginBottom: '0.75rem', padding: '0.6rem', background: 'rgba(76,175,130,0.08)', borderRadius: '0.5rem', border: '1px solid rgba(76,175,130,0.2)' }}>
-                    <div><strong>Domain</strong><br />{certStatus.domain}</div>
-                    <div><strong>Issuer</strong><br />{certStatus.cert.issuer || '—'}</div>
-                    <div><strong>Expires</strong><br />{certStatus.cert.notAfter || '—'}</div>
-                    <div><strong>Days Left</strong><br /><span style={{ color: (certStatus.cert.daysRemaining ?? 0) > 14 ? '#4caf82' : '#f88' }}>{certStatus.cert.daysRemaining ?? '—'}</span></div>
-                    <div><strong>Method</strong><br /><span style={{ opacity: 0.8 }}>{certConfig.challenge_type === 'http' ? 'HTTP-01' : 'DNS-01'}</span></div>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: '0.5rem', marginBottom: '0.75rem', padding: '0.6rem', background: 'rgba(76,175,130,0.08)', borderRadius: '0.5rem', border: '1px solid rgba(76,175,130,0.2)', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
+                    <div style={{ minWidth: 0 }}><strong>Domain</strong><br />{certStatus.domain}</div>
+                    <div style={{ minWidth: 0 }}><strong>Issuer</strong><br />{certStatus.cert.issuer || '—'}</div>
+                    <div style={{ minWidth: 0 }}><strong>Expires</strong><br />{certStatus.cert.notAfter || '—'}</div>
+                    <div style={{ minWidth: 0 }}><strong>Days Left</strong><br /><span style={{ color: (certStatus.cert.daysRemaining ?? 0) > 14 ? '#4caf82' : '#f88' }}>{certStatus.cert.daysRemaining ?? '—'}</span></div>
+                    <div style={{ minWidth: 0 }}><strong>Method</strong><br /><span style={{ opacity: 0.8 }}>{certConfig.challenge_type === 'http' ? 'HTTP-01' : 'DNS-01'}</span></div>
                   </div>
                 ) : (
                   <div style={{ opacity: 0.7, marginBottom: '0.75rem', padding: '0.5rem', background: 'rgba(255,255,255,0.04)', borderRadius: '0.5rem' }}>
@@ -1619,7 +1619,7 @@ export default function SettingsPage() {
                 </h4>
 
                 {/* Version info grid */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '0.6rem', marginBottom: '0.75rem' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(130px,1fr))', gap: '0.6rem', marginBottom: '0.75rem', minWidth: 0 }}>
                   <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '8px', padding: '0.5rem 0.75rem' }}>
                     <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.6, marginBottom: '0.2rem' }}>Current Version</div>
                     <div style={{ fontWeight: 600, fontSize: '0.9rem', fontFamily: 'monospace' }}>{versionInfo?.current ?? '—'}</div>
