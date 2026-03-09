@@ -13,13 +13,22 @@ echo ""
 
 # ── Fetch latest release tag ───────────────────────────────────────────────
 echo "→ Fetching latest release from GitHub..."
-LATEST_TAG=$(curl -fsSL \
+API_RESPONSE=$(curl -fsSL \
   -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" \
-  | grep '"tag_name":' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
+  "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest")
+
+# Parse tag_name: prefer jq (exact), fall back to python3, then sed (first-line grep)
+if command -v jq >/dev/null 2>&1; then
+  LATEST_TAG=$(printf '%s' "$API_RESPONSE" | jq -r '.tag_name // empty')
+elif command -v python3 >/dev/null 2>&1; then
+  LATEST_TAG=$(printf '%s' "$API_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))")
+else
+  LATEST_TAG=$(printf '%s' "$API_RESPONSE" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+fi
 
 if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
     echo "  ERROR: Could not fetch latest release tag from GitHub"
+    echo "  API response preview: $(printf '%s' "$API_RESPONSE" | head -c 200)"
     exit 1
 fi
 echo "  Latest release: $LATEST_TAG"
