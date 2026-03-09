@@ -3,7 +3,7 @@ import InfoModal from '../components/InfoModal.jsx';
 import { FaInfoCircle, FaCog } from 'react-icons/fa';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext.jsx';
-import { FaSave, FaFlask, FaSyncAlt, FaDatabase, FaRobot, FaServer, FaCloudDownloadAlt, FaEye, FaEyeSlash, FaPowerOff, FaClock, FaCalendarAlt, FaCheckCircle, FaExclamationTriangle, FaHistory, FaShieldAlt } from 'react-icons/fa';
+import { FaSave, FaFlask, FaSyncAlt, FaDatabase, FaRobot, FaServer, FaCloudDownloadAlt, FaEye, FaEyeSlash, FaPowerOff, FaClock, FaCalendarAlt, FaCheckCircle, FaExclamationTriangle, FaHistory, FaShieldAlt, FaTrash } from 'react-icons/fa';
 import { MdTune } from 'react-icons/md';
 import { getBackendOrigin } from '../lib/backendOrigin';
 
@@ -95,6 +95,10 @@ export default function SettingsPage() {
   const [updateLines, setUpdateLines] = useState([]);
   const [updateRunning, setUpdateRunning] = useState(false);
   const [updateDone, setUpdateDone] = useState(null); // {code, restarting}
+  const [showCleanupModal, setShowCleanupModal] = useState(false);
+  const [cleanupLines, setCleanupLines] = useState([]);
+  const [cleanupRunning, setCleanupRunning] = useState(false);
+  const [cleanupDone, setCleanupDone] = useState(null); // {code, deleted}
   // Frontend dev server (Vite) port control — removed per request
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -371,6 +375,47 @@ export default function SettingsPage() {
       setUpdateDone({ code: -1, restarting: false });
     } finally {
       setUpdateRunning(false);
+    }
+  };
+
+  // ── Clean up leftover /tmp update backup dirs (SSE streaming) ──────────────
+  const runCleanup = async () => {
+    setCleanupLines([]);
+    setCleanupDone(null);
+    setCleanupRunning(true);
+    setShowCleanupModal(true);
+    try {
+      const res = await fetch(backendOrigin + '/api/admin/control/cleanup', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop();
+        for (const part of parts) {
+          const line = part.replace(/^data:\s*/, '').trim();
+          if (!line) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.type === 'done') {
+              setCleanupDone({ code: msg.code, deleted: msg.deleted ?? 0 });
+            } else {
+              setCleanupLines(prev => [...prev, { type: msg.type, text: msg.text || '' }]);
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (err) {
+      setCleanupLines(prev => [...prev, { type: 'error', text: `Connection error: ${err.message}` }]);
+      setCleanupDone({ code: -1, deleted: 0 });
+    } finally {
+      setCleanupRunning(false);
     }
   };
 
@@ -1177,7 +1222,7 @@ export default function SettingsPage() {
                   <FaCloudDownloadAlt style={{ opacity: 0.8 }} /> Backups
                   <FaInfoCircle title="Download your current data as backup files. config.json contains app settings; database.db is the full PostgreSQL dump; the Telegram snapshot is the same JSON the bot uses." style={{ opacity: 0.6, cursor: 'help', marginLeft: 'auto' }} />
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'flex-start' }}>
+                <div className="backup-btn-row" style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'flex-start' }}>
                   <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/config?record=1', 'config.json')}><FaCloudDownloadAlt /> config.json</button>
                   <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/db?record=1', 'database.db')}><FaCloudDownloadAlt /> database.db</button>
                   <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/snapshot?record=1', 'cmp-backup.json')} title="Same JSON format as Telegram bot backup"><FaCloudDownloadAlt /> Telegram snapshot</button>
@@ -1620,6 +1665,14 @@ export default function SettingsPage() {
                       <FaCloudDownloadAlt /> Update
                     </button>
                   )}
+                  <button
+                    className="btn"
+                    disabled={cleanupRunning || updateRunning}
+                    onClick={runCleanup}
+                    title="Delete leftover /tmp/cmp_update_* backup directories from previous updates"
+                  >
+                    <FaTrash /> Clean Up
+                  </button>
                 </div>
 
                 {/* Auto-check row */}
@@ -1722,6 +1775,79 @@ export default function SettingsPage() {
                           className="btn"
                           onClick={() => { setShowUpdateModal(false); checkVersionInfo(); }}
                         >Close</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+              {/* Cleanup Progress Modal */}
+              {showCleanupModal && (
+                <div style={{
+                  position: 'fixed', inset: 0, zIndex: 9999,
+                  background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
+                }}>
+                  <div style={{
+                    background: '#1a2433', border: '1px solid rgba(255,100,100,0.25)', borderRadius: '12px',
+                    width: '100%', maxWidth: '560px', display: 'flex', flexDirection: 'column', maxHeight: '75vh'
+                  }}>
+                    <div style={{ padding: '0.9rem 1.1rem', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                      <FaTrash style={{ color: '#e57373' }} />
+                      <strong style={{ flex: 1 }}>Cleanup Leftover Backups</strong>
+                      {!cleanupRunning && (
+                        <button
+                          onClick={() => setShowCleanupModal(false)}
+                          style={{ background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '1.1rem' }}
+                        >✕</button>
+                      )}
+                    </div>
+
+                    {/* Progress bar */}
+                    <div style={{ height: 4, background: 'rgba(255,255,255,0.07)', position: 'relative', overflow: 'hidden' }}>
+                      {cleanupRunning && (
+                        <div style={{
+                          height: '100%', width: '30%', background: '#e57373',
+                          animation: 'progressSlide 1.5s ease-in-out infinite',
+                          position: 'absolute'
+                        }} />
+                      )}
+                      {!cleanupRunning && cleanupDone?.code === 0 && (
+                        <div style={{ height: '100%', width: '100%', background: '#4caf82', transition: 'width 0.4s' }} />
+                      )}
+                      {!cleanupRunning && cleanupDone?.code !== 0 && cleanupDone != null && (
+                        <div style={{ height: '100%', width: '100%', background: '#e05555' }} />
+                      )}
+                    </div>
+
+                    {/* Log output */}
+                    <div style={{
+                      flex: 1, overflowY: 'auto', padding: '0.75rem 1rem',
+                      fontFamily: 'monospace', fontSize: '0.82rem', lineHeight: 1.5,
+                      background: '#111820', whiteSpace: 'pre-wrap', wordBreak: 'break-all'
+                    }} ref={el => { if (el) el.scrollTop = el.scrollHeight; }}>
+                      {cleanupLines.map((l, i) => (
+                        <div key={i} style={{ color: l.type === 'error' ? '#f88' : l.type === 'warn' ? '#ffb06b' : '#c8e6c9' }}>
+                          {l.text}
+                        </div>
+                      ))}
+                      {cleanupRunning && <div style={{ opacity: 0.5, marginTop: '0.5rem' }}>Working…</div>}
+                    </div>
+
+                    {/* Footer */}
+                    {!cleanupRunning && cleanupDone != null && (
+                      <div style={{ padding: '0.75rem 1.1rem', borderTop: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        {cleanupDone.code === 0 ? (
+                          <>
+                            <FaCheckCircle style={{ color: '#4caf82' }} />
+                            <span style={{ color: '#4caf82', flex: 1 }}>Done — {cleanupDone.deleted ?? 0} item(s) deleted.</span>
+                          </>
+                        ) : (
+                          <>
+                            <FaExclamationTriangle style={{ color: '#f88' }} />
+                            <span style={{ color: '#f88', flex: 1 }}>Cleanup failed. Check output above.</span>
+                          </>
+                        )}
+                        <button className="btn" onClick={() => setShowCleanupModal(false)}>Close</button>
                       </div>
                     )}
                   </div>

@@ -3510,6 +3510,56 @@ router.post('/control/update/run', authenticateToken, isAdmin, async (req, res) 
   });
 });
 
+// ── Clean up leftover /tmp update backup dirs & scripts (SSE) ────────────────
+router.post('/control/cleanup', authenticateToken, isAdmin, async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const send = (type, text) => { try { res.write(`data: ${JSON.stringify({ type, text })}\n\n`); } catch (_) {} };
+  const finish = (code, deleted) => { try { res.write(`data: ${JSON.stringify({ type: 'done', code, deleted })}\n\n`); res.end(); } catch (_) {} };
+
+  try {
+    send('info', '→ Scanning for leftover update backup files in /tmp...');
+    const tmpDir = '/tmp';
+    let entries;
+    try { entries = fs.readdirSync(tmpDir); } catch (e) { send('error', `Cannot read /tmp: ${e.message}`); finish(1, 0); return; }
+
+    const targets = entries.filter(f => f.startsWith('cmp_update_') || /^cmp-updater-.+\.sh$/.test(f));
+    if (targets.length === 0) {
+      send('info', '  ✓ Nothing to clean up.');
+      finish(0, 0);
+      return;
+    }
+
+    let deleted = 0;
+    for (const name of targets) {
+      const full = path.join(tmpDir, name);
+      try {
+        const stat = fs.statSync(full);
+        if (stat.isDirectory()) {
+          fs.rmSync(full, { recursive: true, force: true });
+        } else {
+          fs.unlinkSync(full);
+        }
+        send('info', `  ✓ Deleted: ${full}`);
+        deleted++;
+      } catch (e) {
+        send('warn', `  ⚠ Could not delete ${full}: ${e.message}`);
+      }
+    }
+
+    send('info', `\n=== Cleanup complete — ${deleted} item(s) deleted ===`);
+    await writeControlAudit(req.user && req.user.id, 'cleanup_backups', { deleted }).catch(() => {});
+    finish(0, deleted);
+  } catch (e) {
+    send('error', `Error: ${e.message}`);
+    finish(1, 0);
+  }
+});
+
 // ── Admin-specific backup (full admin data + permissions + audit logs) ────────
 router.get('/backup/admins', authenticateToken, isAdmin, async (req, res) => {
   try {

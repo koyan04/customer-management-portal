@@ -5332,6 +5332,13 @@ body.theme-light .infographic-card .legend .legend-color { border-color: rgba(6,
 
 /* Larger status block for largest tables (auto-fit) */
 .db-status.largest { grid-template-columns: repeat( auto-fit, minmax(200px, 1fr) ); }
+@media (max-width: 480px) { .db-status.largest { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+
+/* DB tab: backup section button row — ensure wrapping on small screens */
+#panel-database .backup-btn-row { display: flex; flex-direction: row; flex-wrap: wrap; gap: 0.5rem; }
+@media (max-width: 480px) {
+  #panel-database .backup-btn-row .btn { flex: 1 1 calc(50% - 0.5rem); justify-content: center; min-width: 0; }
+}
 .chart-tooltip .tt-label { font-weight: 700; color: #e7fffb; }
 .chart-tooltip .tt-values { color: #cbdfe0; }
 .chart-tooltip .tt-values strong { color: #eafffb; margin-right: 0.25rem; }
