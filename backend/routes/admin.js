@@ -3231,8 +3231,9 @@ router.get('/control/update/version', authenticateToken, isAdmin, async (req, re
 });
 
 // ── Streaming update via GitHub release tarball (SSE) ─────────────────────
-router.post('/control/update/run', authenticateToken, isAdmin, (req, res) => {
+router.post('/control/update/run', authenticateToken, isAdmin, async (req, res) => {
   const { spawn } = require('child_process');
+  const https = require('https');
   const adminId = req.user && req.user.id;
   const scriptPath = path.join(__dirname, '..', 'scripts', 'update-unattended.sh');
 
@@ -3253,12 +3254,44 @@ router.post('/control/update/run', authenticateToken, isAdmin, (req, res) => {
     return;
   }
 
-  writeControlAudit(adminId, 'update_run_start', {}).catch(() => {});
+  // Pre-resolve the latest GitHub release tag using Node's https (reliable JSON parsing)
+  // and pass it as LATEST_TAG env var so the shell script never needs to parse JSON.
+  let resolvedTag = '';
+  try {
+    send({ type: 'log', text: '→ Resolving latest release tag...\n' });
+    resolvedTag = await new Promise((resolve, reject) => {
+      const opts = {
+        hostname: 'api.github.com',
+        path: '/repos/koyan04/customer-management-portal/releases/latest',
+        headers: { 'User-Agent': 'cmp-updater/1.0', 'Accept': 'application/vnd.github+json' }
+      };
+      https.get(opts, (r) => {
+        let raw = '';
+        r.on('data', d => { raw += d; });
+        r.on('end', () => {
+          try {
+            const tag = JSON.parse(raw).tag_name || '';
+            if (/^v?[0-9]+\.[0-9]/.test(tag)) resolve(tag);
+            else reject(new Error('Unexpected tag: ' + tag.slice(0, 80)));
+          } catch (e) { reject(e); }
+        });
+      }).on('error', reject);
+    });
+    send({ type: 'log', text: `  Latest release: ${resolvedTag}\n` });
+  } catch (e) {
+    send({ type: 'error', text: `  ERROR resolving tag: ${e.message}\n  Update aborted.` });
+    send({ type: 'done', code: 1, restarting: false });
+    res.end();
+    return;
+  }
+
+  writeControlAudit(adminId, 'update_run_start', { tag: resolvedTag }).catch(() => {});
   send({ type: 'log', text: '=== Starting unattended update ===\n' });
 
   const child = spawn('bash', [scriptPath], {
     stdio: ['ignore', 'pipe', 'pipe'],
-    detached: false
+    detached: false,
+    env: { ...process.env, LATEST_TAG: resolvedTag }
   });
 
   let shouldRestart = false;
