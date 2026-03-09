@@ -1,6 +1,7 @@
 #!/bin/bash
 # Unattended update for Customer Management Portal (GUI-triggered, no service stop)
 # Signals the Node.js process to restart at the very end via RESTART_SIGNAL.
+# Self-healing: auto-installs missing prerequisites, retries on build failure.
 
 set -euo pipefail
 
@@ -8,13 +9,60 @@ OWNER="koyan04"
 REPO="customer-management-portal"
 APP_DIR="/srv/cmp"
 
+# ────────────────────────────────────────────────────────────────────────────
+# Helper: true when $1 looks like a version tag (v1.2.3 or 1.2.3)
+# ────────────────────────────────────────────────────────────────────────────
+is_valid_tag() { echo "${1:-}" | grep -qE '^v?[0-9]+\.[0-9]'; }
+
+# ────────────────────────────────────────────────────────────────────────────
+# Self-update: download the script that matches LATEST_TAG and exec it.
+# This guarantees the running script is always current, regardless of what
+# version is on the VPS disk. Skipped when already self-updated or when
+# LATEST_TAG is not yet known (fallback path resolves it further below).
+# ────────────────────────────────────────────────────────────────────────────
+if [ -z "${CMP_SELF_UPDATED:-}" ] && is_valid_tag "${LATEST_TAG:-}"; then
+  SCRIPT_URL="https://raw.githubusercontent.com/${OWNER}/${REPO}/${LATEST_TAG}/backend/scripts/update-unattended.sh"
+  SELF_TMP=$(mktemp /tmp/cmp-updater-XXXXXX.sh)
+  if curl -fsSL "$SCRIPT_URL" -o "$SELF_TMP" 2>/dev/null && [ -s "$SELF_TMP" ]; then
+    chmod +x "$SELF_TMP"
+    echo "→ Self-updating to ${LATEST_TAG} update script..."
+    # exec replaces this process; CMP_SELF_UPDATED prevents an infinite loop.
+    exec env CMP_SELF_UPDATED=1 LATEST_TAG="$LATEST_TAG" bash "$SELF_TMP"
+  fi
+fi
+
+# ────────────────────────────────────────────────────────────────────────────
+# Prerequisites: ensure required tools are installed, auto-fix if missing
+# ────────────────────────────────────────────────────────────────────────────
+ensure_tool() {
+  local tool="$1" pkg="${2:-$1}"
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "  ⚠ '$tool' not found — installing $pkg..."
+    if command -v apt-get >/dev/null 2>&1; then
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$pkg" 2>&1 | grep -v '^$' | tail -5 || true
+    elif command -v yum >/dev/null 2>&1; then
+      yum install -y -q "$pkg" 2>&1 | tail -5 || true
+    fi
+    if command -v "$tool" >/dev/null 2>&1; then
+      echo "  ✓ $tool installed"
+    else
+      echo "  ✗ Could not install $tool (will proceed, some fallbacks may not work)"
+    fi
+  fi
+}
+
 echo "=== Customer Management Portal — Unattended Update ==="
+echo ""
+echo "→ Checking prerequisites..."
+ensure_tool curl
+ensure_tool jq
+ensure_tool python3
+ensure_tool rsync
+echo "  ✓ Prerequisites OK"
 echo ""
 
 # ── Fetch latest release tag ───────────────────────────────────────────────
 echo "→ Fetching latest release from GitHub..."
-
-is_valid_tag() { echo "$1" | grep -qE '^v?[0-9]+\.[0-9]'; }
 
 # Use pre-resolved tag from Node.js backend (passed as env var) when available
 if is_valid_tag "${LATEST_TAG:-}"; then
@@ -135,6 +183,20 @@ npm install --production 2>&1
 echo "  ✓ Backend dependencies installed"
 echo ""
 
+# Ensure node / npm are accessible (guard for PATH issues)
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+  echo "  ⚠ node/npm not in PATH — attempting to fix..."
+  # Common NVM / n / system locations
+  for d in /usr/local/bin /usr/bin ~/.nvm/versions/node/*/bin; do
+    [ -x "$d/node" ] && export PATH="$d:$PATH" && break
+  done
+  if ! command -v node >/dev/null 2>&1; then
+    ensure_tool nodejs nodejs
+    ensure_tool npm npm
+  fi
+  echo "  node: $(node --version 2>/dev/null || echo 'still not found')"
+fi
+
 # ── Run database migrations ────────────────────────────────────────────────
 echo "→ Running database migrations..."
 if ! node run_migrations.js; then
@@ -169,7 +231,27 @@ if [ -f /proc/meminfo ]; then
 fi
 
 export NODE_OPTIONS="--max-old-space-size=1536"
-NODE_ENV=development npm run build 2>&1
+
+# ── Build with automatic recovery on failure ───────────────────────────────
+build_frontend() {
+  NODE_ENV=development npm run build 2>&1
+}
+
+if ! build_frontend; then
+  echo "  ⚠ Build failed — checking for missing devDependencies..."
+  # Ensure vite and other devDependencies are installed regardless of NODE_ENV
+  if ! node_modules/.bin/vite --version >/dev/null 2>&1; then
+    echo "  ⚠ vite not found — running npm install --include=dev..."
+    npm install --include=dev 2>&1
+  fi
+  echo "  → Retrying build..."
+  if ! build_frontend; then
+    echo "  ERROR: Frontend build failed after recovery attempt"
+    unset NODE_OPTIONS
+    exit 1
+  fi
+fi
+
 unset NODE_OPTIONS
 
 if [ "$SWAP_CREATED" -eq 1 ]; then
