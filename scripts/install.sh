@@ -2,19 +2,25 @@
 set -euo pipefail
 
 # Customer Management Portal Installer
-# Version: v1.6.0
+# Version: v1.8.0
 # Features:
 #   - Downloads latest release tarball instead of cloning
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
 #   - Builds frontend, runs migrations, seeds admin + sample data
-#   - Issues Let's Encrypt certificate (DNS-01 via Cloudflare) for one or more domains
-#   - Automatic HTTP-01 fallback if DNS challenge fails (auto-detects third-party DNS like DynDNS)
+#   - Issues Let's Encrypt certificate: DNS-01 (Cloudflare) or HTTP-01 (standalone) user-selectable (v1.8.0)
 #   - Supports multiple domains via CMP_CERT_DOMAINS (comma or space separated)
 #   - Skip certificate issuance entirely with CMP_SKIP_CERT=1
 #   - Health probe after startup (/api/health) with summary
 #   - Integrity self-check if CMP_INSTALL_EXPECTED_SHA256 provided
 #   - GUI Update Manager (v1.6.0): in-panel version check + one-click unattended updates via SSE streaming
+#   - Update script self-healing: auto-installs prerequisites, retries on vite failure (v1.7.0)
 #   - JSON Generator improvements (v1.6.0): configurable data limit, optional .txt export, layout improvements
+#   - Logo persistence across updates: uploads/logos excluded from rsync --delete (v1.8.0)
+#   - Active theme displayed correctly in Settings dropdown (v1.8.0)
+#   - Database page fully responsive with proper button layout (v1.8.0)
+#   - Telegram bot test uses stored DB token; clear button on token field (v1.8.0)
+#   - Telegram bot immediately stops polling when disabled in settings (v1.8.0)
+#   - cmp-backend.service uses Restart=always, auto-deployed during updates (v1.8.0)
 #   - Copy menu theme support (v1.6.0): per-variant accent colors, light/dark snapshot classes
 # Environment Flags (summary):
 #   CMP_CHECKOUT_REF=ref|tag|commit         Force download of specific release version

@@ -2902,7 +2902,8 @@ router.get('/control/cert/config', authenticateToken, isAdmin, async (req, res) 
     const out = {
       domain: data.domain || process.env.DOMAIN_NAME || '',
       email: data.email || process.env.LETSENCRYPT_EMAIL || '',
-      api_token: data.api_token ? '********' : (process.env.CLOUDFLARE_API_TOKEN ? '********' : '')
+      api_token: data.api_token ? '********' : (process.env.CLOUDFLARE_API_TOKEN ? '********' : ''),
+      challenge_type: data.challenge_type || 'dns-cloudflare'
     };
     return res.json({ ok: true, config: out });
   } catch (e) {
@@ -2925,6 +2926,8 @@ router.put('/control/cert/config', authenticateToken, isAdmin, async (req, res) 
       if (domain) next.domain = domain;
       if (email) next.email = email;
       if (api_token_raw && api_token_raw !== '********') next.api_token = api_token_raw;
+      const challenge_type_raw = typeof body.challenge_type === 'string' ? body.challenge_type.trim() : '';
+      if (challenge_type_raw === 'http' || challenge_type_raw === 'dns-cloudflare') next.challenge_type = challenge_type_raw;
       await client.query(
         `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
          VALUES ($1,$2,$3, now())
@@ -2970,6 +2973,7 @@ router.post('/control/cert/install', authenticateToken, isAdmin, async (req, res
     let domain = typeof body.domain === 'string' ? body.domain.trim() : '';
     let email = typeof body.email === 'string' ? body.email.trim() : '';
     let apiToken = typeof body.api_token === 'string' ? body.api_token.trim() : '';
+    let challengeType = typeof body.challenge_type === 'string' ? body.challenge_type.trim() : '';
 
     // Load stored config for any missing fields
     try {
@@ -2978,7 +2982,9 @@ router.post('/control/cert/install', authenticateToken, isAdmin, async (req, res
       if (!domain && data.domain) domain = data.domain;
       if (!email && data.email) email = data.email;
       if ((!apiToken || apiToken === '********') && (data.api_token || data.cloudflare_api_token)) apiToken = data.api_token || data.cloudflare_api_token;
+      if (!challengeType && data.challenge_type) challengeType = data.challenge_type;
     } catch (_) {}
+    if (!challengeType) challengeType = 'dns-cloudflare';
 
     if (!domain) { send('error', 'ERROR: Domain is required'); finish(1); return; }
     if (!email) { send('error', 'ERROR: Email is required'); finish(1); return; }
@@ -2992,50 +2998,60 @@ router.post('/control/cert/install', authenticateToken, isAdmin, async (req, res
       next.domain = domain;
       next.email = email;
       if (apiToken && apiToken !== '********') next.api_token = apiToken;
+      next.challenge_type = challengeType;
       await pool.query(
         `INSERT INTO app_settings (settings_key, data, updated_by, updated_at) VALUES ($1,$2,$3,now())
          ON CONFLICT (settings_key) DO UPDATE SET data=EXCLUDED.data, updated_by=EXCLUDED.updated_by, updated_at=now()`,
         ['cert', next, req.user && req.user.id ? req.user.id : null]
       );
-      if (next.api_token) {
-        try {
-          await fsp.writeFile('/root/.cloudflare.ini', `dns_cloudflare_api_token = ${next.api_token}\n`, { encoding: 'utf8' });
-          await fsp.chmod('/root/.cloudflare.ini', 0o600);
-        } catch (e) { send('warn', `  Warning: could not write Cloudflare credentials: ${e.message}`); }
-      }
       send('info', '  ✓ Configuration saved');
     } catch (e) { send('error', `  ERROR saving config: ${e.message}`); finish(1); return; }
 
     // ── Step 2: Issue certificate ──────────────────────────────────────────
-    send('info', `→ Requesting Let's Encrypt certificate for ${domain}...`);
+    send('info', `→ Requesting Let's Encrypt certificate for ${domain} (${challengeType === 'http' ? 'HTTP-01' : 'DNS-01/Cloudflare'})...`);
     const credsFile = '/root/.cloudflare.ini';
     const existingCert = readCertInfo(domain);
     if (existingCert && existingCert.daysRemaining > 30) {
       send('info', `  ✓ Valid certificate already present (${existingCert.daysRemaining} days remaining)`);
     } else {
       let certOk = false;
-      try {
-        // DNS-01 via Cloudflare
-        const cmd = `certbot certonly --dns-cloudflare --dns-cloudflare-credentials ${credsFile} -d ${domain} -m ${email} --agree-tos --non-interactive --preferred-challenges dns`;
-        const { stdout, stderr } = await runCmd(cmd, process.cwd());
-        stdout.split('\n').filter(Boolean).forEach(l => send('info', `  ${l}`));
-        stderr.split('\n').filter(Boolean).forEach(l => send('info', `  ${l}`));
-        certOk = true;
-        send('info', '  ✓ Certificate issued (DNS-01)');
-      } catch (e) {
-        send('warn', `  DNS-01 failed: ${e.err && e.err.message ? e.err.message : 'unknown'}`);
-        if (e.stderr) e.stderr.split('\n').filter(Boolean).slice(0, 8).forEach(l => send('warn', `    ${l}`));
-        send('warn', '  Trying HTTP-01 standalone fallback...');
+      if (challengeType === 'http') {
+        // HTTP-01 via standalone — port 80 must be open
+        send('info', '  Using HTTP-01 (standalone). Ensure port 80 is accessible from the internet.');
         try {
-          const cmd2 = `certbot certonly --standalone -d ${domain} -m ${email} --preferred-challenges http --agree-tos --non-interactive`;
-          const { stdout: so } = await runCmd(cmd2, process.cwd());
-          so.split('\n').filter(Boolean).forEach(l => send('info', `  ${l}`));
+          const cmd = `certbot certonly --standalone -d ${domain} -m ${email} --preferred-challenges http --agree-tos --non-interactive`;
+          const { stdout, stderr } = await runCmd(cmd, process.cwd());
+          stdout.split('\n').filter(Boolean).forEach(l => send('info', `  ${l}`));
+          stderr.split('\n').filter(Boolean).forEach(l => send('info', `  ${l}`));
           certOk = true;
           send('info', '  ✓ Certificate issued (HTTP-01)');
-        } catch (e2) {
-          send('warn', `  HTTP-01 also failed: ${e2.err && e2.err.message ? e2.err.message : e2.message || 'unknown'}`);
-          if (e2.stderr) e2.stderr.split('\n').filter(Boolean).slice(0, 8).forEach(l => send('warn', `    ${l}`));
-          send('warn', '  Proceeding without certificate — configure manually if needed');
+        } catch (e) {
+          send('error', `  HTTP-01 failed: ${e.err && e.err.message ? e.err.message : 'unknown'}`);
+          if (e.stderr) e.stderr.split('\n').filter(Boolean).slice(0, 8).forEach(l => send('error', `    ${l}`));
+          send('warn', '  Proceeding to nginx configuration without certificate.');
+        }
+      } else {
+        // DNS-01 via Cloudflare (default)
+        if (!apiToken) {
+          send('error', '  ERROR: Cloudflare API token is required for DNS-01. Enter the token in the config or switch to HTTP-01.');
+          finish(1); return;
+        }
+        try {
+          await fsp.writeFile(credsFile, `dns_cloudflare_api_token = ${apiToken}\n`, { encoding: 'utf8' });
+          await fsp.chmod(credsFile, 0o600);
+        } catch (e) { send('warn', `  Warning: could not write Cloudflare credentials: ${e.message}`); }
+        send('info', '  Using DNS-01 challenge via Cloudflare. DNS propagation may take a moment.');
+        try {
+          const cmd = `certbot certonly --dns-cloudflare --dns-cloudflare-credentials ${credsFile} -d ${domain} -m ${email} --agree-tos --non-interactive --preferred-challenges dns`;
+          const { stdout, stderr } = await runCmd(cmd, process.cwd());
+          stdout.split('\n').filter(Boolean).forEach(l => send('info', `  ${l}`));
+          stderr.split('\n').filter(Boolean).forEach(l => send('info', `  ${l}`));
+          certOk = true;
+          send('info', '  ✓ Certificate issued (DNS-01)');
+        } catch (e) {
+          send('error', `  DNS-01 failed: ${e.err && e.err.message ? e.err.message : 'unknown'}`);
+          if (e.stderr) e.stderr.split('\n').filter(Boolean).slice(0, 8).forEach(l => send('error', `    ${l}`));
+          send('warn', '  Proceeding to nginx configuration without certificate.');
         }
       }
       if (!certOk) send('warn', '  Certificate not issued; nginx will be configured for HTTP only');

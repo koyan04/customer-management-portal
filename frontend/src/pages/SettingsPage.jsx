@@ -73,9 +73,10 @@ export default function SettingsPage() {
   const [installLines, setInstallLines] = useState([]);
   const [installRunning, setInstallRunning] = useState(false);
   const [installDone, setInstallDone] = useState(null);
+  const [installRedirectCountdown, setInstallRedirectCountdown] = useState(null);
   // Control Panel state (system/cert/update) — removed deprecated system & service port states
   const [certStatus, setCertStatus] = useState(null);
-  const [certConfig, setCertConfig] = useState({ domain: '', email: '', api_token: '' });
+  const [certConfig, setCertConfig] = useState({ domain: '', email: '', api_token: '', challenge_type: 'dns-cloudflare' });
   const [updateInfo, setUpdateInfo] = useState(null);
   const [updateStatus, setUpdateStatus] = useState(null);
   const [updateSource, setUpdateSource] = useState('');
@@ -224,7 +225,7 @@ export default function SettingsPage() {
     try {
       setCpBusy(true);
       // send api_token only if provided (avoid re-sending masked sentinel) — backend will ignore '********'
-      const payload = { domain: certConfig.domain || '', email: certConfig.email || '' };
+      const payload = { domain: certConfig.domain || '', email: certConfig.email || '', challenge_type: certConfig.challenge_type || 'dns-cloudflare' };
       if (certConfig.api_token) payload.api_token = certConfig.api_token;
       await axios.put(backendOrigin + '/api/admin/control/cert/config', payload, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
       showMsg('Certificate config saved');
@@ -380,7 +381,7 @@ export default function SettingsPage() {
     setInstallRunning(true);
     setShowInstallModal(true);
     try {
-      const payload = { domain: certConfig.domain, email: certConfig.email };
+      const payload = { domain: certConfig.domain, email: certConfig.email, challenge_type: certConfig.challenge_type || 'dns-cloudflare' };
       if (certConfig.api_token && certConfig.api_token !== '********') payload.api_token = certConfig.api_token;
       const res = await fetch(backendOrigin + '/api/admin/control/cert/install', {
         method: 'POST',
@@ -403,7 +404,19 @@ export default function SettingsPage() {
             const msg = JSON.parse(line);
             if (msg.type === 'done') {
               setInstallDone({ code: msg.code });
-              if (msg.code === 0) await fetchCert();
+              if (msg.code === 0) {
+                await fetchCert();
+                const targetDomain = certConfig.domain;
+                if (targetDomain) {
+                  let count = 5;
+                  setInstallRedirectCountdown(count);
+                  const timer = setInterval(() => {
+                    count--;
+                    setInstallRedirectCountdown(count);
+                    if (count <= 0) { clearInterval(timer); window.location.href = `https://${targetDomain}`; }
+                  }, 1000);
+                }
+              }
             } else {
               setInstallLines(prev => [...prev, { type: msg.type, text: msg.text || '' }]);
             }
@@ -1498,7 +1511,22 @@ export default function SettingsPage() {
               {/* System Status section removed */}
               {/* Certificate */}
               <section className="cp-cert" style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '0.75rem', padding: '0.75rem' }}>
-                <h4 style={{ margin: '0 0 0.5rem 0' }}>Certificate</h4>
+                <h4 style={{ margin: '0 0 0.75rem 0' }}>Certificate</h4>
+                {/* Current cert status */}
+                {certStatus && certStatus.cert ? (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '0.5rem', marginBottom: '0.75rem', padding: '0.6rem', background: 'rgba(76,175,130,0.08)', borderRadius: '0.5rem', border: '1px solid rgba(76,175,130,0.2)' }}>
+                    <div><strong>Domain</strong><br />{certStatus.domain}</div>
+                    <div><strong>Issuer</strong><br />{certStatus.cert.issuer || '—'}</div>
+                    <div><strong>Expires</strong><br />{certStatus.cert.notAfter || '—'}</div>
+                    <div><strong>Days Left</strong><br /><span style={{ color: (certStatus.cert.daysRemaining ?? 0) > 14 ? '#4caf82' : '#f88' }}>{certStatus.cert.daysRemaining ?? '—'}</span></div>
+                    <div><strong>Method</strong><br /><span style={{ opacity: 0.8 }}>{certConfig.challenge_type === 'http' ? 'HTTP-01' : 'DNS-01'}</span></div>
+                  </div>
+                ) : (
+                  <div style={{ opacity: 0.7, marginBottom: '0.75rem', padding: '0.5rem', background: 'rgba(255,255,255,0.04)', borderRadius: '0.5rem' }}>
+                    {certStatus ? 'No certificate found.' : 'No status yet.'}
+                  </div>
+                )}
+                {/* Config form */}
                 <div className="form-grid" style={{ marginBottom: '0.5rem' }}>
                   <label>
                     <span>Domain</span>
@@ -1509,26 +1537,27 @@ export default function SettingsPage() {
                     <input type="email" value={certConfig.email} onChange={(e) => setCertConfig({ ...certConfig, email: e.target.value })} />
                   </label>
                   <label className="full">
-                    <span>Cloudflare Global API Token</span>
-                    <input
-                      type="password"
-                      value={certConfig.api_token}
-                      placeholder={certConfig.api_token ? certConfig.api_token : ''}
-                      onChange={(e) => setCertConfig({ ...certConfig, api_token: e.target.value })}
-                    />
-                    <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>
-                      This token will be written to /root/.cloudflare.ini for DNS-01 challenges.
-                    </small>
+                    <span>Challenge Type</span>
+                    <select value={certConfig.challenge_type || 'dns-cloudflare'} onChange={(e) => setCertConfig({ ...certConfig, challenge_type: e.target.value })}>
+                      <option value="dns-cloudflare">DNS-01 via Cloudflare (recommended)</option>
+                      <option value="http">HTTP-01 standalone (port 80 must be open)</option>
+                    </select>
                   </label>
+                  {(certConfig.challenge_type || 'dns-cloudflare') === 'dns-cloudflare' && (
+                    <label className="full">
+                      <span>Cloudflare API Token</span>
+                      <input
+                        type="password"
+                        value={certConfig.api_token}
+                        placeholder={certConfig.api_token ? '••••••••' : 'Enter Cloudflare API token'}
+                        onChange={(e) => setCertConfig({ ...certConfig, api_token: e.target.value })}
+                      />
+                      <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>
+                        Required for DNS-01. Written to /root/.cloudflare.ini.
+                      </small>
+                    </label>
+                  )}
                 </div>
-                {certStatus && certStatus.cert ? (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: '0.5rem' }}>
-                    <div><strong>Domain</strong><br />{certStatus.domain}</div>
-                    <div><strong>Issuer</strong><br />{certStatus.cert.issuer || '—'}</div>
-                    <div><strong>Expires</strong><br />{certStatus.cert.notAfter || '—'}</div>
-                    <div><strong>Days Left</strong><br />{certStatus.cert.daysRemaining ?? '—'}</div>
-                  </div>
-                ) : <div style={{ opacity: 0.7 }}>{certStatus ? 'No certificate found.' : 'No status yet.'}</div>}
                 <div className="actions" style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                   <button className="btn" disabled={cpBusy || installRunning} onClick={fetchCert}><FaSyncAlt /> Refresh</button>
                   <button className="btn" disabled={cpBusy || installRunning} onClick={saveCertConfig}><FaSave /> Save Config</button>
@@ -1750,7 +1779,10 @@ export default function SettingsPage() {
                       <div style={{ padding: '0.75rem 1.1rem', borderTop: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                         {installDone.code === 0 ? (
                           <><FaCheckCircle style={{ color: '#4caf82' }} />
-                          <span style={{ color: '#4caf82', flex: 1 }}>Installation complete for {certConfig.domain}!</span></>
+                          <span style={{ color: '#4caf82', flex: 1 }}>
+                            Installation complete for {certConfig.domain}!
+                            {installRedirectCountdown != null && ` Redirecting to https://${certConfig.domain} in ${installRedirectCountdown}s…`}
+                          </span></>
                         ) : (
                           <><FaExclamationTriangle style={{ color: '#f88' }} />
                           <span style={{ color: '#f88', flex: 1 }}>Installation failed (exit code {installDone.code}). Check output above.</span></>
