@@ -275,6 +275,19 @@ if [ -d "$BACKUP_DIR/configs" ]; then
     echo "  ✓ Key configs restored"
 fi
 
+# ── Deploy/update systemd service file ────────────────────────────────────
+SERVICE_SRC="$APP_DIR/backend/systemd/cmp-backend.service"
+SERVICE_DEST="/etc/systemd/system/cmp-backend.service"
+if [ -f "$SERVICE_SRC" ]; then
+    echo "→ Updating systemd service file..."
+    cp "$SERVICE_SRC" "$SERVICE_DEST"
+    systemctl daemon-reload
+    echo "  ✓ Service file updated and daemon reloaded"
+    echo ""
+else
+    echo "  ⚠ cmp-backend.service not found in repo, skipping service file update"
+fi
+
 echo "=== Update complete! ==="
 echo ""
 echo "RESTART_SIGNAL"
