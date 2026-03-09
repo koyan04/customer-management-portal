@@ -68,7 +68,11 @@ export default function SettingsPage() {
     if (tgForm && tgForm.botToken && tgForm.botToken !== TOKEN_MASK) return true;
     return false;
   }, [preserveTgPlainToken, tgForm]);
-  const [rsForm, setRsForm] = useState({ host: '', port: 22, username: '', authMethod: 'password', password: '', privateKey: '', passphrase: '' });
+  // Install cert modal states
+  const [showInstallModal, setShowInstallModal] = useState(false);
+  const [installLines, setInstallLines] = useState([]);
+  const [installRunning, setInstallRunning] = useState(false);
+  const [installDone, setInstallDone] = useState(null);
   // Control Panel state (system/cert/update) — removed deprecated system & service port states
   const [certStatus, setCertStatus] = useState(null);
   const [certConfig, setCertConfig] = useState({ domain: '', email: '', api_token: '' });
@@ -108,7 +112,7 @@ export default function SettingsPage() {
 
   // helpers
   const showMsg = useCallback((msg) => { setStatusMsg(msg); setTimeout(() => setStatusMsg(''), 4000); }, []);
-  const currentForm = tab === 'database' ? dbForm : tab === 'telegram' ? tgForm : tab === 'general' ? generalForm : rsForm;
+  const currentForm = tab === 'database' ? dbForm : tab === 'telegram' ? tgForm : generalForm;
   // setCurrentForm helper removed (unused after direct state setters)
 
   const fetchSettings = useCallback(async (which) => {
@@ -180,7 +184,7 @@ export default function SettingsPage() {
             });
         }
       }
-      if (key === 'remoteServer') setRsForm({ host: data.host || '', port: data.port || 22, username: data.username || '', authMethod: data.authMethod || 'password', password: '', privateKey: '', passphrase: '' });
+      // remoteServer section removed
     } catch (err) {
       showMsg(`Failed to load ${key} settings: ` + (err.response?.data?.msg || err.message));
     } finally { setLoading(false); }
@@ -369,8 +373,53 @@ export default function SettingsPage() {
     }
   };
 
+  // ── Install/configure domain: save config + certbot + nginx (SSE streaming) ──
+  const installDomain = async () => {
+    setInstallLines([]);
+    setInstallDone(null);
+    setInstallRunning(true);
+    setShowInstallModal(true);
+    try {
+      const payload = { domain: certConfig.domain, email: certConfig.email };
+      if (certConfig.api_token && certConfig.api_token !== '********') payload.api_token = certConfig.api_token;
+      const res = await fetch(backendOrigin + '/api/admin/control/cert/install', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop();
+        for (const part of parts) {
+          const line = part.replace(/^data:\s*/, '').trim();
+          if (!line) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.type === 'done') {
+              setInstallDone({ code: msg.code });
+              if (msg.code === 0) await fetchCert();
+            } else {
+              setInstallLines(prev => [...prev, { type: msg.type, text: msg.text || '' }]);
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (err) {
+      setInstallLines(prev => [...prev, { type: 'error', text: `Connection error: ${err.message}` }]);
+      setInstallDone({ code: -1 });
+    } finally {
+      setInstallRunning(false);
+    }
+  };
+
   // load all on mount so switching tabs is instant
-  useEffect(() => { fetchSettings('database'); fetchSettings('telegram'); fetchSettings('remoteServer'); fetchSettings('general'); fetchBotStatus(); fetchCert(); }, [fetchSettings, fetchBotStatus, fetchCert]);
+  useEffect(() => { fetchSettings('database'); fetchSettings('telegram'); fetchSettings('general'); fetchBotStatus(); fetchCert(); }, [fetchSettings, fetchBotStatus, fetchCert]);
   // When switching to Control tab, load version info + lightweight update status
   useEffect(() => { if (tab === 'control') { loadUpdateLight(); checkVersionInfo(); } }, [tab, loadUpdateLight, checkVersionInfo]);
   // Auto-check update interval
@@ -409,11 +458,17 @@ export default function SettingsPage() {
   const onSave = async () => {
     setSaving(true);
     try {
-      const key = tab === 'database' ? 'database' : tab === 'telegram' ? 'telegram' : tab === 'general' ? 'general' : 'remoteServer';
+      const key = tab === 'database' ? 'database' : tab === 'telegram' ? 'telegram' : 'general';
       const payload = currentForm;
       // Optimistically persist autoLogoutMinutes and broadcast so running clients pick it up immediately
-      if (key === 'general' && typeof payload.autoLogoutMinutes !== 'undefined') {
-        try { localStorage.setItem('autoLogoutMinutes', String(Number.isNaN(Number(payload.autoLogoutMinutes)) ? 0 : Number(payload.autoLogoutMinutes))); } catch (_) {}
+      if (key === 'general') {
+        if (typeof payload.autoLogoutMinutes !== 'undefined') {
+          try { localStorage.setItem('autoLogoutMinutes', String(Number.isNaN(Number(payload.autoLogoutMinutes)) ? 0 : Number(payload.autoLogoutMinutes))); } catch (_) {}
+        }
+        // Immediately sync theme so changes are visible without page reload
+        if (payload.theme === 'dark' || payload.theme === 'light' || payload.theme === 'system') {
+          try { localStorage.setItem('themeOverride', payload.theme); } catch (_) {}
+        }
         try { window.dispatchEvent(new CustomEvent('general-settings-updated', { detail: payload })); } catch (_) {}
       }
       // Ensure cents fields are included to be explicit and avoid accidental loss
@@ -493,7 +548,7 @@ export default function SettingsPage() {
   const onTest = async () => {
     setTesting(true);
     try {
-      const key = tab === 'database' ? 'database' : tab === 'telegram' ? 'telegram' : tab === 'general' ? 'general' : 'remoteServer';
+      const key = tab === 'database' ? 'database' : tab === 'telegram' ? 'telegram' : 'general';
       const res = await axios.post(backendOrigin + `/api/admin/settings/${key}/test`, currentForm, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
       const d = res.data || {};
       if (d.ok) showMsg('Test OK: ' + (d.details || 'Success'));
@@ -1035,7 +1090,6 @@ export default function SettingsPage() {
             <div className="actions">
               <button className="btn" onClick={() => fetchSettings('general')} disabled={loading}><FaSyncAlt /> Refresh</button>
               <button className="btn primary" onClick={onSave} disabled={saving}><FaSave /> Save</button>
-              <button className="btn" onClick={onTest} disabled={testing}><FaFlask /> Validate</button>
             </div>
           </div>
         )}
@@ -1095,29 +1149,39 @@ export default function SettingsPage() {
             </div>
 
             <hr style={{ margin: '1rem 0', borderColor: 'rgba(255,255,255,0.08)' }} />
-            <h4>Backup & Restore</h4>
-            <div className="actions">
-              <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/config?record=1', 'config.json')}><FaCloudDownloadAlt /> Download config.json</button>
-              <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/db?record=1', 'database.db')}><FaCloudDownloadAlt /> Download database.db</button>
-              <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/snapshot?record=1', 'cmp-backup.json')} title="Same JSON format as Telegram bot backup"><FaCloudDownloadAlt /> Download Telegram backup (JSON)</button>
-              <button className="btn primary" disabled={busy} onClick={async () => {
-                try {
-                  setBusy(true);
-                  await axios.post(backendOrigin + '/api/admin/backup/record', {}, { headers: { ...authHeaders } });
-                  // refresh status to show latest timestamp
-                  try {
-                    const rs = await axios.get(backendOrigin + '/api/admin/db/status', { headers: authHeaders });
-                    setDbStatus(rs.data);
-                  } catch (_) {}
-                  showMsg('Backup Now recorded');
-                } catch (err) {
-                  showMsg('Backup Now failed: ' + (err.response?.data?.msg || err.message));
-                } finally { setBusy(false); }
-              }}>Backup Now</button>
+            <h4>Backup &amp; Restore</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: '0.6rem', marginBottom: '0.75rem' }}>
+              <div style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: '0.6rem 0.75rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.4rem', fontWeight: 600, fontSize: '0.85rem' }}>
+                  <FaCloudDownloadAlt style={{ opacity: 0.8 }} /> Backups
+                  <FaInfoCircle title="Download your current data as backup files. config.json contains app settings; database.db is the full PostgreSQL dump; the Telegram snapshot is the same JSON the bot uses." style={{ opacity: 0.6, cursor: 'help', marginLeft: 'auto' }} />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/config?record=1', 'config.json')} style={{ justifyContent: 'flex-start' }}><FaCloudDownloadAlt /> config.json</button>
+                  <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/db?record=1', 'database.db')} style={{ justifyContent: 'flex-start' }}><FaCloudDownloadAlt /> database.db</button>
+                  <button className="btn" disabled={busy} onClick={() => download(backendOrigin + '/api/admin/backup/snapshot?record=1', 'cmp-backup.json')} style={{ justifyContent: 'flex-start' }} title="Same JSON format as Telegram bot backup"><FaCloudDownloadAlt /> Telegram snapshot</button>
+                  <button className="btn primary" disabled={busy} onClick={async () => {
+                    try {
+                      setBusy(true);
+                      await axios.post(backendOrigin + '/api/admin/backup/record', {}, { headers: { ...authHeaders } });
+                      try {
+                        const rs = await axios.get(backendOrigin + '/api/admin/db/status', { headers: authHeaders });
+                        setDbStatus(rs.data);
+                      } catch (_) {}
+                      showMsg('Backup Now recorded');
+                    } catch (err) {
+                      showMsg('Backup Now failed: ' + (err.response?.data?.msg || err.message));
+                    } finally { setBusy(false); }
+                  }}>Backup Now</button>
+                </div>
+              </div>
             </div>
-              <div className="form-grid" style={{ marginTop: '0.5rem' }}>
+            <div className="form-grid" style={{ marginTop: '0.5rem' }}>
               <label className="full">
-                <span>Restore Config (config.json)</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.3rem' }}>
+                  <span>Restore Config (config.json)</span>
+                  <FaInfoCircle title="Restore app settings from a previously downloaded config.json. The page will reload after restore." style={{ opacity: 0.6, cursor: 'help', fontSize: '0.9em' }} />
+                </div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <input aria-label="Restore Config" type="file" accept="application/json,.json" onChange={(e) => { const f = e.target.files?.[0]; if (f) setRestoreFileConfig(f); e.target.value = ''; }} />
                   <button className="btn primary" disabled={!restoreFileConfig || restoreInProgress} onClick={() => startRestore(backendOrigin + '/api/admin/restore/config', restoreFileConfig)}>Restore</button>
@@ -1125,7 +1189,10 @@ export default function SettingsPage() {
                 </div>
               </label>
               <label className="full">
-                <span>Restore Database (.db)</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.3rem' }}>
+                  <span>Restore Database (.db)</span>
+                  <FaInfoCircle title="Restore the full PostgreSQL database from a previously downloaded database.db dump. All existing data will be replaced. The page will reload after restore." style={{ opacity: 0.6, cursor: 'help', fontSize: '0.9em' }} />
+                </div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <input aria-label="Restore Database" type="file" accept=".db" onChange={(e) => { const f = e.target.files?.[0]; if (f) setRestoreFileDB(f); e.target.value = ''; }} />
                   <button className="btn primary" disabled={!restoreFileDB || restoreInProgress} onClick={() => startRestore(backendOrigin + '/api/admin/restore/db', restoreFileDB)}>Restore</button>
@@ -1133,7 +1200,10 @@ export default function SettingsPage() {
                 </div>
               </label>
               <label className="full">
-                <span>Restore Telegram Snapshot (JSON)</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.3rem' }}>
+                  <span>Restore Telegram Snapshot (JSON)</span>
+                  <FaInfoCircle title="Restore from a Telegram bot backup snapshot (JSON). This restores user/server data the bot exported. The page will reload after restore." style={{ opacity: 0.6, cursor: 'help', fontSize: '0.9em' }} />
+                </div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <input aria-label="Restore Telegram Snapshot (JSON)" type="file" accept="application/json,.json" onChange={(e) => { const f = e.target.files?.[0]; if (f) setRestoreFileSnapshot(f); e.target.value = ''; }} />
                   <button className="btn primary" disabled={!restoreFileSnapshot || restoreInProgress} onClick={() => startRestore(backendOrigin + '/api/admin/restore/snapshot', restoreFileSnapshot)}>Restore</button>
@@ -1303,7 +1373,10 @@ export default function SettingsPage() {
               </label>
               <label>
                 <span>Default Chat ID</span>
-                <input type="text" value={tgForm.defaultChatId} onChange={(e) => setTgForm({ ...tgForm, defaultChatId: e.target.value })} />
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input type="text" value={tgForm.defaultChatId} onChange={(e) => setTgForm({ ...tgForm, defaultChatId: e.target.value })} style={{ flex: 1 }} />
+                  {tgForm.defaultChatId && <button type="button" className="btn" onClick={() => setTgForm({ ...tgForm, defaultChatId: '' })} title="Clear" style={{ padding: '0.25rem 0.5rem' }}>×</button>}
+                </div>
               </label>
               <label>
                 <span>Settings Reload Interval (seconds)</span>
@@ -1339,8 +1412,26 @@ export default function SettingsPage() {
               </div>
               <label className="full">
                 <span>Notification Time</span>
-                <input type="text" value={tgForm.notificationTime} placeholder="@daily" onChange={(e) => setTgForm({ ...tgForm, notificationTime: e.target.value })} />
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input type="text" value={tgForm.notificationTime} placeholder="@daily" onChange={(e) => setTgForm({ ...tgForm, notificationTime: e.target.value })} style={{ flex: 1 }} />
+                  {tgForm.notificationTime && <button type="button" className="btn" onClick={() => setTgForm({ ...tgForm, notificationTime: '' })} title="Clear" style={{ padding: '0.25rem 0.5rem' }}>×</button>}
+                </div>
                 <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>The Telegram bot notification time set for periodic reports. (use the crontab time format)</small>
+              </label>
+
+              <label className="full">
+                <span>Message Template</span>
+                <textarea
+                  rows={5}
+                  value={tgForm.messageTemplate || ''}
+                  onChange={(e) => setTgForm({ ...tgForm, messageTemplate: e.target.value })}
+                  placeholder="Leave empty to use the default template"
+                  style={{ fontFamily: 'monospace', fontSize: '0.85rem' }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+                  {tgForm.messageTemplate && <button type="button" className="btn" onClick={() => setTgForm({ ...tgForm, messageTemplate: '' })} title="Clear template">Clear Template</button>}
+                </div>
+                <small style={{ display: 'block', marginTop: '0.25rem', opacity: 0.85 }}>Custom Handlebars/Mustache-style template for bot reports. Leave empty to use the built-in default.</small>
               </label>
 
               <label className="full chk" style={{ marginTop: '0.5rem' }}>
@@ -1415,10 +1506,12 @@ export default function SettingsPage() {
                   </div>
                 ) : <div style={{ opacity: 0.7 }}>{certStatus ? 'No certificate found.' : 'No status yet.'}</div>}
                 <div className="actions" style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <button className="btn" disabled={cpBusy} onClick={fetchCert}><FaSyncAlt /> Refresh</button>
-                  <button className="btn" disabled={cpBusy} onClick={saveCertConfig}><FaSave /> Save Config</button>
-                  <button className="btn" disabled={cpBusy} onClick={issueCert}><FaSave /> Issue</button>
-                  <button className="btn" disabled={cpBusy} onClick={renewCert}><FaSyncAlt /> Renew</button>
+                  <button className="btn" disabled={cpBusy || installRunning} onClick={fetchCert}><FaSyncAlt /> Refresh</button>
+                  <button className="btn" disabled={cpBusy || installRunning} onClick={saveCertConfig}><FaSave /> Save Config</button>
+                  <button className="btn primary" disabled={cpBusy || installRunning || !certConfig.domain || !certConfig.email} onClick={installDomain} title="Save config, issue certificate, and configure nginx">
+                    <FaShieldAlt /> Save &amp; Install
+                  </button>
+                  <button className="btn" disabled={cpBusy || installRunning} onClick={renewCert}><FaSyncAlt /> Renew</button>
                 </div>
               </section>
               {/* Update */}
@@ -1581,54 +1674,69 @@ export default function SettingsPage() {
                   </div>
                 </div>
               )}
-              {/* Frontend Dev Port section removed per request */}
-              {/* Remote server settings retained */}
-              <section className="cp-remote" style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '0.75rem', padding: '0.75rem' }}>
-                <h4 style={{ margin: '0 0 0.5rem 0' }}>Remote Server Settings</h4>
-                <div className="form-grid">
-                  <label>
-                    <span>Host</span>
-                    <input type="text" value={rsForm.host} onChange={(e) => setRsForm({ ...rsForm, host: e.target.value })} />
-                  </label>
-                  <label>
-                    <span>Port</span>
-                    <input type="number" min="1" max="65535" value={rsForm.port} onChange={(e) => setRsForm({ ...rsForm, port: Number(e.target.value) })} />
-                  </label>
-                  <label>
-                    <span>Username</span>
-                    <input type="text" value={rsForm.username} onChange={(e) => setRsForm({ ...rsForm, username: e.target.value })} />
-                  </label>
-                  <label>
-                    <span>Auth Method</span>
-                    <select value={rsForm.authMethod} onChange={(e) => setRsForm({ ...rsForm, authMethod: e.target.value })}>
-                      <option value="password">Password</option>
-                      <option value="key">SSH Key</option>
-                    </select>
-                  </label>
-                  {rsForm.authMethod === 'password' ? (
-                    <label className="full">
-                      <span>Password</span>
-                      <input type="password" value={rsForm.password} onChange={(e) => setRsForm({ ...rsForm, password: e.target.value })} />
-                    </label>
-                  ) : (
-                    <>
-                      <label className="full">
-                        <span>Private Key (PEM)</span>
-                        <textarea rows={6} value={rsForm.privateKey} onChange={(e) => setRsForm({ ...rsForm, privateKey: e.target.value })} placeholder="-----BEGIN OPENSSH PRIVATE KEY-----" />
-                      </label>
-                      <label>
-                        <span>Passphrase (optional)</span>
-                        <input type="password" value={rsForm.passphrase} onChange={(e) => setRsForm({ ...rsForm, passphrase: e.target.value })} />
-                      </label>
-                    </>
-                  )}
+              {/* Install Domain Progress Modal */}
+              {showInstallModal && (
+                <div style={{
+                  position: 'fixed', inset: 0, zIndex: 9999,
+                  background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
+                }}>
+                  <div style={{
+                    background: '#1a2433', border: '1px solid rgba(0,191,165,0.25)', borderRadius: '12px',
+                    width: '100%', maxWidth: '680px', display: 'flex', flexDirection: 'column', maxHeight: '80vh'
+                  }}>
+                    <div style={{ padding: '0.9rem 1.1rem', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                      <FaShieldAlt style={{ color: '#00bfa5' }} />
+                      <strong style={{ flex: 1 }}>Installing Domain: {certConfig.domain}</strong>
+                      {!installRunning && (
+                        <button
+                          onClick={() => setShowInstallModal(false)}
+                          style={{ background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '1.1rem' }}
+                        >✕</button>
+                      )}
+                    </div>
+                    <div style={{ height: 4, background: 'rgba(255,255,255,0.07)', position: 'relative', overflow: 'hidden' }}>
+                      {installRunning && (
+                        <div style={{
+                          height: '100%', width: '30%', background: '#00bfa5',
+                          animation: 'progressSlide 1.5s ease-in-out infinite',
+                          position: 'absolute'
+                        }} />
+                      )}
+                      {!installRunning && installDone?.code === 0 && (
+                        <div style={{ height: '100%', width: '100%', background: '#4caf82', transition: 'width 0.4s' }} />
+                      )}
+                      {!installRunning && installDone?.code !== 0 && installDone != null && (
+                        <div style={{ height: '100%', width: '100%', background: '#e05555' }} />
+                      )}
+                    </div>
+                    <div style={{
+                      flex: 1, overflowY: 'auto', padding: '0.75rem 1rem',
+                      fontFamily: 'monospace', fontSize: '0.78rem', lineHeight: 1.6,
+                      background: '#111820', whiteSpace: 'pre-wrap', wordBreak: 'break-all'
+                    }} ref={el => { if (el) el.scrollTop = el.scrollHeight; }}>
+                      {installLines.map((l, i) => (
+                        <span key={i} style={{ display: 'block', color: l.type === 'error' ? '#f88' : l.type === 'warn' ? '#ffb06b' : '#c8fff4' }}>
+                          {l.text}
+                        </span>
+                      ))}
+                      {installRunning && <span style={{ opacity: 0.5 }}>▌</span>}
+                    </div>
+                    {!installRunning && installDone != null && (
+                      <div style={{ padding: '0.75rem 1.1rem', borderTop: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        {installDone.code === 0 ? (
+                          <><FaCheckCircle style={{ color: '#4caf82' }} />
+                          <span style={{ color: '#4caf82', flex: 1 }}>Installation complete for {certConfig.domain}!</span></>
+                        ) : (
+                          <><FaExclamationTriangle style={{ color: '#f88' }} />
+                          <span style={{ color: '#f88', flex: 1 }}>Installation failed (exit code {installDone.code}). Check output above.</span></>
+                        )}
+                        <button className="btn" onClick={() => setShowInstallModal(false)}>Close</button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="actions" style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <button className="btn" onClick={() => fetchSettings('remoteServer')} disabled={loading}><FaSyncAlt /> Refresh</button>
-                  <button className="btn primary" onClick={onSave} disabled={saving}><FaSave /> Save</button>
-                  <button className="btn" onClick={onTest} disabled={testing}><FaFlask /> Test Connectivity</button>
-                </div>
-              </section>
+              )}
             </div>
           </div>
         )}

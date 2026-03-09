@@ -2933,6 +2933,143 @@ router.put('/control/cert/config', authenticateToken, isAdmin, async (req, res) 
   }
 });
 
+// POST /control/cert/install — SSE: save config + issue cert (certbot) + configure nginx
+router.post('/control/cert/install', authenticateToken, isAdmin, async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  const send = (type, text) => {
+    try { res.write(`data: ${JSON.stringify({ type, text })}\n\n`); if (res.flush) res.flush(); } catch (_) {}
+  };
+  const finish = (code) => {
+    try { res.write(`data: ${JSON.stringify({ type: 'done', code })}\n\n`); res.end(); } catch (_) {}
+  };
+
+  try {
+    const body = req.body || {};
+    let domain = typeof body.domain === 'string' ? body.domain.trim() : '';
+    let email = typeof body.email === 'string' ? body.email.trim() : '';
+    let apiToken = typeof body.api_token === 'string' ? body.api_token.trim() : '';
+
+    // Load stored config for any missing fields
+    try {
+      const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'cert'");
+      const data = r.rows && r.rows[0] ? (r.rows[0].data || {}) : {};
+      if (!domain && data.domain) domain = data.domain;
+      if (!email && data.email) email = data.email;
+      if ((!apiToken || apiToken === '********') && (data.api_token || data.cloudflare_api_token)) apiToken = data.api_token || data.cloudflare_api_token;
+    } catch (_) {}
+
+    if (!domain) { send('error', 'ERROR: Domain is required'); finish(1); return; }
+    if (!email) { send('error', 'ERROR: Email is required'); finish(1); return; }
+
+    // ── Step 1: Save config ────────────────────────────────────────────────
+    send('info', '→ Saving certificate configuration...');
+    try {
+      const cur = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'cert'");
+      const current = cur.rows && cur.rows[0] ? (cur.rows[0].data || {}) : {};
+      const next = { ...current };
+      next.domain = domain;
+      next.email = email;
+      if (apiToken && apiToken !== '********') next.api_token = apiToken;
+      await pool.query(
+        `INSERT INTO app_settings (settings_key, data, updated_by, updated_at) VALUES ($1,$2,$3,now())
+         ON CONFLICT (settings_key) DO UPDATE SET data=EXCLUDED.data, updated_by=EXCLUDED.updated_by, updated_at=now()`,
+        ['cert', next, req.user && req.user.id ? req.user.id : null]
+      );
+      if (next.api_token) {
+        try {
+          await fsp.writeFile('/root/.cloudflare.ini', `dns_cloudflare_api_token = ${next.api_token}\n`, { encoding: 'utf8' });
+          await fsp.chmod('/root/.cloudflare.ini', 0o600);
+        } catch (e) { send('warn', `  Warning: could not write Cloudflare credentials: ${e.message}`); }
+      }
+      send('info', '  ✓ Configuration saved');
+    } catch (e) { send('error', `  ERROR saving config: ${e.message}`); finish(1); return; }
+
+    // ── Step 2: Issue certificate ──────────────────────────────────────────
+    send('info', `→ Requesting Let's Encrypt certificate for ${domain}...`);
+    const credsFile = '/root/.cloudflare.ini';
+    const existingCert = readCertInfo(domain);
+    if (existingCert && existingCert.daysRemaining > 30) {
+      send('info', `  ✓ Valid certificate already present (${existingCert.daysRemaining} days remaining)`);
+    } else {
+      let certOk = false;
+      try {
+        // DNS-01 via Cloudflare
+        const cmd = `certbot certonly --dns-cloudflare --dns-cloudflare-credentials ${credsFile} -d ${domain} -m ${email} --agree-tos --non-interactive --preferred-challenges dns`;
+        const { stdout, stderr } = await runCmd(cmd, process.cwd());
+        stdout.split('\n').filter(Boolean).forEach(l => send('info', `  ${l}`));
+        stderr.split('\n').filter(Boolean).forEach(l => send('info', `  ${l}`));
+        certOk = true;
+        send('info', '  ✓ Certificate issued (DNS-01)');
+      } catch (e) {
+        send('warn', `  DNS-01 failed: ${e.err && e.err.message ? e.err.message : 'unknown'}`);
+        if (e.stderr) e.stderr.split('\n').filter(Boolean).slice(0, 8).forEach(l => send('warn', `    ${l}`));
+        send('warn', '  Trying HTTP-01 standalone fallback...');
+        try {
+          const cmd2 = `certbot certonly --standalone -d ${domain} -m ${email} --preferred-challenges http --agree-tos --non-interactive`;
+          const { stdout: so } = await runCmd(cmd2, process.cwd());
+          so.split('\n').filter(Boolean).forEach(l => send('info', `  ${l}`));
+          certOk = true;
+          send('info', '  ✓ Certificate issued (HTTP-01)');
+        } catch (e2) {
+          send('warn', `  HTTP-01 also failed: ${e2.err && e2.err.message ? e2.err.message : e2.message || 'unknown'}`);
+          if (e2.stderr) e2.stderr.split('\n').filter(Boolean).slice(0, 8).forEach(l => send('warn', `    ${l}`));
+          send('warn', '  Proceeding without certificate — configure manually if needed');
+        }
+      }
+      if (!certOk) send('warn', '  Certificate not issued; nginx will be configured for HTTP only');
+    }
+
+    // ── Step 3: Configure nginx ────────────────────────────────────────────
+    send('info', '→ Configuring nginx...');
+    let nginxAvail = false;
+    try { await runCmd('which nginx', process.cwd()); nginxAvail = true; } catch (_) {}
+    if (!nginxAvail) {
+      send('warn', '  nginx not found — skipping nginx configuration');
+      await writeControlAudit(req.user && req.user.id, 'cert_install', { domain, nginxSkipped: true });
+      send('info', ''); send('info', `=== Installation complete for ${domain} ===`);
+      finish(0); return;
+    }
+
+    const backendPort = process.env.PORT || 3000;
+    const certPath = `/etc/letsencrypt/live/${domain}/fullchain.pem`;
+    let certExists = false;
+    try { await fsp.access(certPath); certExists = true; } catch (_) {}
+
+    const nginxConf = certExists
+      ? `upstream cmp_backend {\n    server 127.0.0.1:${backendPort};\n    keepalive 32;\n}\n\nserver {\n    listen 80;\n    listen [::]:80;\n    server_name ${domain};\n    location /.well-known/acme-challenge/ { root /var/www/letsencrypt; }\n    location / { return 301 https://$host$request_uri; }\n}\n\nserver {\n    listen 443 ssl http2;\n    listen [::]:443 ssl http2;\n    server_name ${domain};\n    ssl_certificate /etc/letsencrypt/live/${domain}/fullchain.pem;\n    ssl_certificate_key /etc/letsencrypt/live/${domain}/privkey.pem;\n    ssl_protocols TLSv1.2 TLSv1.3;\n    ssl_prefer_server_ciphers on;\n    location / {\n        proxy_pass http://cmp_backend;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n    }\n}\n`
+      : `upstream cmp_backend {\n    server 127.0.0.1:${backendPort};\n    keepalive 32;\n}\n\nserver {\n    listen 80;\n    listen [::]:80;\n    server_name ${domain};\n    location / {\n        proxy_pass http://cmp_backend;\n        proxy_http_version 1.1;\n        proxy_set_header Host $host;\n        proxy_set_header X-Real-IP $remote_addr;\n        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto $scheme;\n    }\n}\n`;
+
+    const confPath = `/etc/nginx/sites-available/cmp-${domain}.conf`;
+    try {
+      await fsp.mkdir('/var/www/letsencrypt', { recursive: true });
+      await fsp.writeFile(confPath, nginxConf, 'utf8');
+      send('info', `  ✓ nginx config written to ${confPath}`);
+      try { await fsp.mkdir('/etc/nginx/sites-enabled', { recursive: true }); } catch (_) {}
+      await runCmd(`ln -sf ${confPath} /etc/nginx/sites-enabled/cmp-${domain}.conf`, process.cwd());
+      const { stderr: testErr } = await runCmd('nginx -t', process.cwd());
+      send('info', `  nginx test: ${testErr || 'ok'}`);
+      await runCmd('systemctl restart nginx', process.cwd());
+      send('info', '  ✓ nginx restarted');
+    } catch (e) {
+      send('error', `  nginx configuration error: ${e.err && e.err.message ? e.err.message : (e.message || 'unknown')}`);
+      if (e.stderr) e.stderr.split('\n').filter(Boolean).slice(0, 6).forEach(l => send('error', `    ${l}`));
+    }
+
+    await writeControlAudit(req.user && req.user.id, 'cert_install', { domain, certExists });
+    send('info', '');
+    send('info', `=== Installation complete for ${domain} ===`);
+    finish(0);
+  } catch (e) {
+    send('error', `Unexpected error: ${e.message}`);
+    finish(1);
+  }
+});
+
 // Update check
 router.get('/control/update/check', authenticateToken, isAdmin, async (req, res) => {
   try {
