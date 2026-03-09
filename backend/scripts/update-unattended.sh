@@ -13,22 +13,41 @@ echo ""
 
 # ── Fetch latest release tag ───────────────────────────────────────────────
 echo "→ Fetching latest release from GitHub..."
-API_RESPONSE=$(curl -fsSL \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest")
 
-# Parse tag_name: prefer jq (exact), fall back to python3, then sed (first-line grep)
-if command -v jq >/dev/null 2>&1; then
-  LATEST_TAG=$(printf '%s' "$API_RESPONSE" | jq -r '.tag_name // empty')
-elif command -v python3 >/dev/null 2>&1; then
-  LATEST_TAG=$(printf '%s' "$API_RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('tag_name',''))")
-else
-  LATEST_TAG=$(printf '%s' "$API_RESPONSE" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+# Method 1: follow the /releases/latest redirect — no JSON parsing needed
+LATEST_TAG=$(curl -fsSL -o /dev/null -w '%{url_effective}' \
+  "https://github.com/${OWNER}/${REPO}/releases/latest" 2>/dev/null \
+  | sed 's|.*/||' || true)
+
+# Validate: must look like a version tag (v1.2.3 or 1.2.3)
+is_valid_tag() { echo "$1" | grep -qE '^v?[0-9]+\.[0-9]'; }
+
+if ! is_valid_tag "$LATEST_TAG"; then
+  echo "  Redirect method failed, falling back to API..."
+  API_RESPONSE=$(curl -fsSL \
+    -H "Accept: application/vnd.github+json" \
+    "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" 2>/dev/null || true)
+
+  # Parse tag_name: prefer jq, fall back to python3, then grep
+  LATEST_TAG=""
+  if command -v jq >/dev/null 2>&1; then
+    LATEST_TAG=$(printf '%s' "$API_RESPONSE" | jq -r '.tag_name // empty' 2>/dev/null || true)
+  fi
+  if ! is_valid_tag "$LATEST_TAG" && command -v python3 >/dev/null 2>&1; then
+    LATEST_TAG=$(printf '%s' "$API_RESPONSE" | python3 -c \
+      "import sys,json; d=json.load(sys.stdin); print(d.get('tag_name',''))" 2>/dev/null || true)
+  fi
+  if ! is_valid_tag "$LATEST_TAG"; then
+    LATEST_TAG=$(printf '%s' "$API_RESPONSE" \
+      | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' \
+      | head -1 \
+      | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/' \
+      || true)
+  fi
 fi
 
-if [ -z "$LATEST_TAG" ] || [ "$LATEST_TAG" = "null" ]; then
-    echo "  ERROR: Could not fetch latest release tag from GitHub"
-    echo "  API response preview: $(printf '%s' "$API_RESPONSE" | head -c 200)"
+if ! is_valid_tag "$LATEST_TAG"; then
+    echo "  ERROR: Could not determine latest release tag from GitHub"
     exit 1
 fi
 echo "  Latest release: $LATEST_TAG"
