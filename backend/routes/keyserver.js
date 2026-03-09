@@ -3,7 +3,7 @@ const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { authenticateToken, isAdmin } = require('../middleware/authMiddleware');
+const { authenticateToken, isAdmin, isAdminOrServerAdmin } = require('../middleware/authMiddleware');
 
 // Key server config file path
 const CONFIG_PATH = path.join(__dirname, '..', 'data', 'keyserver.json');
@@ -18,6 +18,44 @@ const DEFAULT_CONFIG = {
   secretKey: '',
   configDir: '/srv/cmp/configs',
   autoStart: false,
+  publicDomain: '',
+};
+
+// Token map: persists { byToken: { token: filename }, byFile: { filename: token } }
+const TOKEN_MAP_PATH = path.join(DATA_DIR, 'token_map.json');
+
+const loadTokenMap = () => {
+  try {
+    if (fs.existsSync(TOKEN_MAP_PATH)) {
+      const raw = JSON.parse(fs.readFileSync(TOKEN_MAP_PATH, 'utf-8'));
+      return { byToken: raw.byToken || {}, byFile: raw.byFile || {} };
+    }
+  } catch (_) {}
+  return { byToken: {}, byFile: {} };
+};
+
+const saveTokenMap = (map) => {
+  fs.writeFileSync(TOKEN_MAP_PATH, JSON.stringify(map, null, 2), 'utf-8');
+};
+
+const getOrCreateToken = (filename) => {
+  const map = loadTokenMap();
+  if (map.byFile[filename]) return { token: map.byFile[filename], map };
+  const token = crypto.randomBytes(16).toString('hex');
+  map.byToken[token] = filename;
+  map.byFile[filename] = token;
+  saveTokenMap(map);
+  return { token, map };
+};
+
+const removeTokenForFile = (filename) => {
+  const map = loadTokenMap();
+  const token = map.byFile[filename];
+  if (token) {
+    delete map.byToken[token];
+    delete map.byFile[filename];
+    saveTokenMap(map);
+  }
 };
 
 // Load config
@@ -53,6 +91,16 @@ const startKeyServer = (config) => {
 
       const expressModule = require('express');
       keyServerApp = expressModule();
+
+      // CORS – allow all origins so subscription clients (V2Box, Clash, etc.) can fetch
+      keyServerApp.use((req, res, next) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        if (req.method === 'OPTIONS') return res.sendStatus(204);
+        next();
+      });
+
       const configDir = config.configDir || DEFAULT_CONFIG.configDir;
       const secretKey = config.secretKey;
 
@@ -265,14 +313,37 @@ const startKeyServer = (config) => {
           const proxyTypes = ['vmess', 'vless', 'trojan', 'shadowsocks'];
           const proxyOutbounds = config.outbounds
             .filter(ob => proxyTypes.includes(ob.type))
-            .map(ob => singboxToV2RayOutbound(ob))
+            .map((ob, i) => {
+              const converted = singboxToV2RayOutbound(ob);
+              if (!converted) return null;
+              // Ensure each outbound has a unique tag
+              converted.tag = converted.tag || `proxy-${i + 1}`;
+              return converted;
+            })
             .filter(Boolean);
 
           if (proxyOutbounds.length === 0) return null;
 
-          // Use first proxy outbound
-          const mainProxy = proxyOutbounds[0];
-          mainProxy.tag = 'proxy';
+          // Tag the first proxy as 'proxy' for default routing; others keep their tags
+          const proxyTags = proxyOutbounds.map((ob, i) => {
+            if (i === 0) ob.tag = 'proxy';
+            return ob.tag;
+          });
+
+          // Build outbound list: all proxy outbounds + selector (if multiple) + freedom + block
+          const outboundList = [...proxyOutbounds];
+          if (proxyOutbounds.length > 1) {
+            outboundList.unshift({
+              protocol: 'selector',
+              tag: 'select',
+              settings: { servers: proxyTags },
+              remarks: 'Select server'
+            });
+          }
+          outboundList.push(
+            { protocol: 'freedom', tag: 'direct', settings: { domainStrategy: 'AsIs' } },
+            { protocol: 'blackhole', tag: 'block', settings: { response: { type: 'http' } } }
+          );
 
           const v2rayConfig = {
             log: { loglevel: 'warning' },
@@ -295,23 +366,11 @@ const startKeyServer = (config) => {
                 settings: { userLevel: 8 }
               }
             ],
-            outbounds: [
-              mainProxy,
-              {
-                protocol: 'freedom',
-                tag: 'direct',
-                settings: { domainStrategy: 'AsIs' }
-              },
-              {
-                protocol: 'blackhole',
-                tag: 'block',
-                settings: { response: { type: 'http' } }
-              }
-            ],
+            outbounds: outboundList,
             routing: {
               domainStrategy: 'AsIs',
               rules: [
-                { type: 'field', network: 'tcp,udp', outboundTag: 'proxy' }
+                { type: 'field', network: 'tcp,udp', outboundTag: proxyOutbounds.length > 1 ? 'select' : 'proxy' }
               ]
             },
             policy: {
@@ -336,8 +395,8 @@ const startKeyServer = (config) => {
         } catch (_) { return null; }
       };
 
-      keyServerApp.get('/sub/:filename', (req, res) => {
-        const filename = req.params.filename;
+      keyServerApp.get('/sub/:id', (req, res) => {
+        const idParam = req.params.id;
         const userKey = req.query.key;
 
         // Security Check
@@ -345,8 +404,10 @@ const startKeyServer = (config) => {
           return res.status(403).send('⛔ Access Denied: Invalid Key');
         }
 
-        // Sanitize filename to prevent path traversal
-        const sanitized = path.basename(filename);
+        // Resolve token → actual filename (fall back to treating id as filename directly)
+        const tokenMap = loadTokenMap();
+        const resolvedFilename = tokenMap.byToken[idParam] || idParam;
+        const sanitized = path.basename(resolvedFilename);
         const filePath = path.join(configDir, sanitized);
 
         if (!fs.existsSync(filePath)) {
@@ -387,6 +448,7 @@ const startKeyServer = (config) => {
               const v2rayJson = convertSingboxToV2Ray(content, sanitized);
               if (v2rayJson) {
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
+                res.setHeader('Content-Disposition', `attachment; filename="${sanitized}"`);
                 res.send(v2rayJson);
                 console.log(`[KeyServer] [${new Date().toISOString()}] Served (V2Ray JSON): ${sanitized} to ${req.ip}`);
                 return;
@@ -397,12 +459,13 @@ const startKeyServer = (config) => {
           // Raw sing-box format
           if (req.query.format === 'raw') {
             res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="${sanitized}"`);
             res.sendFile(filePath);
             console.log(`[KeyServer] [${new Date().toISOString()}] Served (raw): ${sanitized} to ${req.ip}`);
             return;
           }
           
-          // Default: base64 proxy URIs
+          // Default: base64 proxy URIs — serve as plain text (no attachment, subscription clients need inline)
           try {
             const base64 = convertSingboxToURIs(content);
             if (base64) {
@@ -418,6 +481,9 @@ const startKeyServer = (config) => {
         const contentType = sanitized.endsWith('.json')
           ? 'application/json; charset=utf-8'
           : 'text/plain; charset=utf-8';
+        if (sanitized.endsWith('.json')) {
+          res.setHeader('Content-Disposition', `attachment; filename="${sanitized}"`);
+        }
         res.setHeader('Content-Type', contentType);
         res.sendFile(filePath);
         console.log(`[KeyServer] [${new Date().toISOString()}] Served: ${sanitized} to ${req.ip}`);
@@ -476,7 +542,7 @@ const stopKeyServer = () => {
 // ─── API Routes ───
 
 // GET /api/keyserver/config - Get key server config
-router.get('/config', authenticateToken, isAdmin, (req, res) => {
+router.get('/config', authenticateToken, isAdminOrServerAdmin, (req, res) => {
   const config = loadConfig();
   res.json(config);
 });
@@ -484,12 +550,13 @@ router.get('/config', authenticateToken, isAdmin, (req, res) => {
 // PUT /api/keyserver/config - Save key server config
 router.put('/config', authenticateToken, isAdmin, (req, res) => {
   try {
-    const { port, secretKey, configDir, autoStart } = req.body;
+    const { port, secretKey, configDir, autoStart, publicDomain } = req.body;
     const config = loadConfig();
     if (port != null) config.port = parseInt(port);
     if (secretKey != null) config.secretKey = secretKey;
     if (configDir != null) config.configDir = configDir;
     if (autoStart != null) config.autoStart = autoStart;
+    if (publicDomain != null) config.publicDomain = publicDomain;
     saveConfig(config);
     res.json({ message: 'Config saved', config });
   } catch (err) {
@@ -504,7 +571,7 @@ router.post('/generate-key', authenticateToken, isAdmin, (req, res) => {
 });
 
 // GET /api/keyserver/status - Get key server status
-router.get('/status', authenticateToken, isAdmin, (req, res) => {
+router.get('/status', authenticateToken, isAdminOrServerAdmin, (req, res) => {
   const config = loadConfig();
   res.json({
     status: keyServerStatus,
@@ -553,7 +620,7 @@ router.post('/restart', authenticateToken, isAdmin, async (req, res) => {
 });
 
 // GET /api/keyserver/keys - List all config files
-router.get('/keys', authenticateToken, isAdmin, (req, res) => {
+router.get('/keys', authenticateToken, isAdminOrServerAdmin, (req, res) => {
   try {
     const config = loadConfig();
     const configDir = config.configDir || DEFAULT_CONFIG.configDir;
@@ -562,13 +629,15 @@ router.get('/keys', authenticateToken, isAdmin, (req, res) => {
       return res.json([]);
     }
 
+    const tokenMap = loadTokenMap();
     const files = fs.readdirSync(configDir)
-      .filter(f => (f.endsWith('.yaml') || f.endsWith('.yml') || f.endsWith('.json')) && !f.endsWith('.meta.json'))
+      .filter(f => (f.endsWith('.yaml') || f.endsWith('.yml') || f.endsWith('.json') || f.endsWith('.txt')) && !f.endsWith('.meta.json'))
       .map(filename => {
         const filePath = path.join(configDir, filename);
         const stats = fs.statSync(filePath);
         return {
           filename,
+          token: tokenMap.byFile[filename] || null,
           size: stats.size,
           modified: stats.mtime,
           created: stats.birthtime,
@@ -600,7 +669,7 @@ router.post('/keys', authenticateToken, isAdmin, (req, res) => {
 
     // Sanitize filename
     const sanitized = path.basename(filename).replace(/[^a-zA-Z0-9._-]/g, '-');
-    const finalName = sanitized.endsWith('.yaml') || sanitized.endsWith('.yml') || sanitized.endsWith('.json')
+    const finalName = sanitized.endsWith('.yaml') || sanitized.endsWith('.yml') || sanitized.endsWith('.json') || sanitized.endsWith('.txt')
       ? sanitized : `${sanitized}.yaml`;
 
     const filePath = path.join(configDir, finalName);
@@ -614,7 +683,10 @@ router.post('/keys', authenticateToken, isAdmin, (req, res) => {
       } catch (_) {}
     }
 
-    res.json({ message: 'File saved', filename: finalName });
+    // Generate or retrieve a stable token for this file (hides the real filename from URLs)
+    const { token } = getOrCreateToken(finalName);
+
+    res.json({ message: 'File saved', filename: finalName, token });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -635,6 +707,8 @@ router.delete('/keys/:filename', authenticateToken, isAdmin, (req, res) => {
     fs.unlinkSync(filePath);
     // Also remove companion .meta.json if present
     try { const metaPath = filePath + '.meta.json'; if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath); } catch (_) {}
+    // Remove token mapping
+    removeTokenForFile(sanitized);
     res.json({ message: 'File deleted', filename: sanitized });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -642,7 +716,7 @@ router.delete('/keys/:filename', authenticateToken, isAdmin, (req, res) => {
 });
 
 // GET /api/keyserver/keys/:filename/content - Read file content
-router.get('/keys/:filename/content', authenticateToken, isAdmin, (req, res) => {
+router.get('/keys/:filename/content', authenticateToken, isAdminOrServerAdmin, (req, res) => {
   try {
     const config = loadConfig();
     const configDir = config.configDir || DEFAULT_CONFIG.configDir;
@@ -671,7 +745,7 @@ router.get('/backup', authenticateToken, isAdmin, (req, res) => {
     const files = [];
     if (fs.existsSync(configDir)) {
       const entries = fs.readdirSync(configDir)
-        .filter(f => (f.endsWith('.yaml') || f.endsWith('.yml') || f.endsWith('.json')) && !f.endsWith('.meta.json'));
+        .filter(f => (f.endsWith('.yaml') || f.endsWith('.yml') || f.endsWith('.json') || f.endsWith('.txt')) && !f.endsWith('.meta.json'));
       for (const filename of entries) {
         const filePath = path.join(configDir, filename);
         const stats = fs.statSync(filePath);
@@ -685,10 +759,12 @@ router.get('/backup', authenticateToken, isAdmin, (req, res) => {
       }
     }
 
+    const tokenMap = loadTokenMap();
     const backup = {
       version: 1,
       createdAt: new Date().toISOString(),
       config: { ...config },
+      tokenMap,
       files,
     };
 
@@ -725,6 +801,7 @@ router.post('/restore', authenticateToken, isAdmin, (req, res) => {
           secretKey: backup.config.secretKey ?? DEFAULT_CONFIG.secretKey,
           configDir: backup.config.configDir ?? DEFAULT_CONFIG.configDir,
           autoStart: backup.config.autoStart ?? DEFAULT_CONFIG.autoStart,
+          publicDomain: backup.config.publicDomain ?? DEFAULT_CONFIG.publicDomain,
         });
       } else {
         // Merge: only fill in missing values from backup
@@ -734,10 +811,28 @@ router.post('/restore', authenticateToken, isAdmin, (req, res) => {
           secretKey: current.secretKey || backup.config.secretKey,
           configDir: current.configDir || backup.config.configDir,
           autoStart: current.autoStart != null ? current.autoStart : backup.config.autoStart,
+          publicDomain: current.publicDomain || backup.config.publicDomain || '',
         };
         saveConfig(merged);
       }
       results.configRestored = true;
+    }
+
+    // Restore token map
+    if (backup.tokenMap && typeof backup.tokenMap === 'object') {
+      if (mode === 'overwrite') {
+        saveTokenMap({
+          byToken: backup.tokenMap.byToken || {},
+          byFile: backup.tokenMap.byFile || {},
+        });
+      } else {
+        const current = loadTokenMap();
+        const merged = {
+          byToken: { ...(backup.tokenMap.byToken || {}), ...current.byToken },
+          byFile: { ...(backup.tokenMap.byFile || {}), ...current.byFile },
+        };
+        saveTokenMap(merged);
+      }
     }
 
     // Restore key files
@@ -752,7 +847,7 @@ router.post('/restore', authenticateToken, isAdmin, (req, res) => {
       // In overwrite mode, delete existing files first
       if (mode === 'overwrite') {
         const existing = fs.readdirSync(configDir)
-          .filter(f => /\.(ya?ml|json)$/i.test(f));
+          .filter(f => /\.(ya?ml|json|txt)$/i.test(f));
         for (const f of existing) {
           try { fs.unlinkSync(path.join(configDir, f)); } catch (_) { /* ignore */ }
         }
@@ -765,8 +860,8 @@ router.post('/restore', authenticateToken, isAdmin, (req, res) => {
             continue;
           }
           const sanitized = path.basename(file.filename);
-          // Only allow yaml/yml/json files
-          if (!/\.(ya?ml|json)$/i.test(sanitized)) {
+          // Only allow yaml/yml/json/txt files
+          if (!/\.(ya?ml|json|txt)$/i.test(sanitized)) {
             results.filesSkipped++;
             continue;
           }
@@ -820,6 +915,8 @@ router.post('/keys/batch-delete', authenticateToken, isAdmin, (req, res) => {
         fs.unlinkSync(filePath);
         // Also remove companion .meta.json if present
         try { const metaPath = filePath + '.meta.json'; if (fs.existsSync(metaPath)) fs.unlinkSync(metaPath); } catch (_) {}
+        // Remove token mapping
+        removeTokenForFile(sanitized);
         results.deleted++;
       } catch (err) {
         results.errors.push(`${filename}: ${err.message}`);

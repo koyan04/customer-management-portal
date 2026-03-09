@@ -274,6 +274,22 @@ try {
 // Fallback for favicon requests to avoid noisy 404s when no icon is present
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
+// Avoid stale SPA shell (index.html) caching. This helps clients always load
+// the newest hashed CSS/JS bundle references after deployment.
+app.use((req, res, next) => {
+	try {
+		if (req.method === 'GET') {
+			const url = req.originalUrl || req.url || '';
+			if (url === '/' || url.endsWith('.html')) {
+				res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+				res.setHeader('Pragma', 'no-cache');
+				res.setHeader('Expires', '0');
+			}
+		}
+	} catch (_) { /* ignore header errors */ }
+	next();
+});
+
 // Serve built frontend (vite) directly from backend in production
 // If ../frontend/dist exists (relative to backend/), expose it and set up SPA fallback.
 try {
@@ -287,9 +303,14 @@ try {
 				if (req.method !== 'GET') return next();
 				const url = req.originalUrl || '';
 				if (url.startsWith('/api') || url.startsWith('/uploads') || url.startsWith('/metrics') || url.startsWith('/internal')) return next();
-				// Only attempt send if index.html exists
-				const indexFile = path.join(feDistDir, 'index.html');
-				if (!fs.existsSync(indexFile)) return next();
+				// Prefer backend/public/index.html (deployed build) over frontend/dist/index.html
+				const publicIndexFile = path.join(__dirname, 'public', 'index.html');
+				const distIndexFile = path.join(feDistDir, 'index.html');
+				const indexFile = fs.existsSync(publicIndexFile) ? publicIndexFile : (fs.existsSync(distIndexFile) ? distIndexFile : null);
+				if (!indexFile) return next();
+				res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+				res.setHeader('Pragma', 'no-cache');
+				res.setHeader('Expires', '0');
 				return res.sendFile(indexFile);
 			} catch (e) { return next(e); }
 		});

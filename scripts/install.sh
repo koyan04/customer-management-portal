@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Customer Management Portal Installer
+# Version: v1.6.0
 # Features:
 #   - Downloads latest release tarball instead of cloning
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
@@ -12,6 +13,9 @@ set -euo pipefail
 #   - Skip certificate issuance entirely with CMP_SKIP_CERT=1
 #   - Health probe after startup (/api/health) with summary
 #   - Integrity self-check if CMP_INSTALL_EXPECTED_SHA256 provided
+#   - GUI Update Manager (v1.6.0): in-panel version check + one-click unattended updates via SSE streaming
+#   - JSON Generator improvements (v1.6.0): configurable data limit, optional .txt export, layout improvements
+#   - Copy menu theme support (v1.6.0): per-variant accent colors, light/dark snapshot classes
 # Environment Flags (summary):
 #   CMP_CHECKOUT_REF=ref|tag|commit         Force download of specific release version
 #   CMP_SKIP_NODE_AUTO_INSTALL=1            Require preinstalled Node
@@ -270,6 +274,12 @@ color "Moving application files to ${APP_DIR}..."
 # Exclude Public_Release (local staging folder only, not for deployment)
 rsync -a "$TMP_DIR/" "$APP_DIR/" --exclude='Public_Release' || die "Failed to move files to ${APP_DIR}"
 rm -rf "$TMP_DIR"
+
+# Ensure backend scripts are executable (e.g. update-unattended.sh for GUI Update Manager)
+if [ -d "$BACKEND_DIR/scripts" ]; then
+  chmod +x "$BACKEND_DIR/scripts/"*.sh 2>/dev/null || true
+  color "Backend scripts marked executable"
+fi
 
 # Install/refresh Cloudflare credentials for certbot (always rewrite to match chosen mode)
 if [ -f "$CF_CREDS_FILE" ]; then
@@ -1009,8 +1019,8 @@ echo "All domains: ${ALL_DOMAINS[*]}"
 echo "Backend service: $BACKEND_SERVICE (port $BACKEND_PORT)"
 echo "Admin credentials: $ADMIN_USER / $ADMIN_PASS"
 
-# v1.3.0 verification tips (automated checks)
-color "v1.3.0 verification: running lightweight checks..."
+# v1.6.0 verification tips (automated checks)
+color "v1.6.0 verification: running lightweight checks..."
 # 1) Check app version reported by /api/health
 if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
   VER=$(curl -fsS "http://127.0.0.1:$BACKEND_PORT/api/health" | jq -r '.versions.appVersion // empty') || VER=""

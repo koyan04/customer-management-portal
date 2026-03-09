@@ -62,6 +62,22 @@ const isAdmin = async (req, res, next) => {
   }
 };
 
+const isAdminOrServerAdmin = async (req, res, next) => {
+  try {
+    if (!req.user) return res.status(401).json({ msg: 'Unauthorized' });
+    const { id } = req.user;
+    const { rows } = await pool.query('SELECT role FROM admins WHERE id = $1', [id]);
+    if (rows.length === 0) return res.status(403).json({ msg: 'User not found' });
+    if (rows[0].role !== 'ADMIN' && rows[0].role !== 'SERVER_ADMIN') {
+      return res.status(403).json({ msg: 'Admin or Server Admin role required' });
+    }
+    next();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ msg: 'Server error' });
+  }
+};
+
 // Check if the current user is either global admin or a server-admin for the provided serverId
 const isServerAdminOrGlobal = (serverIdFromReqParamName = 'serverId') => {
   return async (req, res, next) => {
@@ -80,4 +96,4 @@ const isServerAdminOrGlobal = (serverIdFromReqParamName = 'serverId') => {
   };
 };
 
-module.exports = { authenticateToken, isAdmin, isServerAdminOrGlobal };
+module.exports = { authenticateToken, isAdmin, isAdminOrServerAdmin, isServerAdminOrGlobal };

@@ -10,6 +10,10 @@ export default function UserTransferModal({ isOpen, onClose, servers, onTransfer
   const [users, setUsers] = useState([]);
   const [selectedUserIds, setSelectedUserIds] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterServiceType, setFilterServiceType] = useState(''); // '' = All
+  const [filterStatus, setFilterStatus] = useState('');           // '' = All | 'enabled' | 'disabled'
+  const [sortField, setSortField] = useState('account_name');     // 'account_name' | 'service_type' | 'status' | 'expire_date'
+  const [sortDir, setSortDir] = useState('asc');                  // 'asc' | 'desc'
   const [loading, setLoading] = useState(false);
   const [transferring, setTransferring] = useState(false);
   const [error, setError] = useState('');
@@ -23,6 +27,10 @@ export default function UserTransferModal({ isOpen, onClose, servers, onTransfer
       setUsers([]);
       setSelectedUserIds(new Set());
       setSearchQuery('');
+      setFilterServiceType('');
+      setFilterStatus('');
+      setSortField('account_name');
+      setSortDir('asc');
       setError('');
       setSuccess('');
     }
@@ -35,6 +43,11 @@ export default function UserTransferModal({ isOpen, onClose, servers, onTransfer
     } else {
       setUsers([]);
       setSelectedUserIds(new Set());
+      setFilterServiceType('');
+      setFilterStatus('');
+      setSearchQuery('');
+      setSortField('account_name');
+      setSortDir('asc');
     }
   }, [sourceServerId]);
 
@@ -128,15 +141,78 @@ export default function UserTransferModal({ isOpen, onClose, servers, onTransfer
     }
   };
 
-  // Filter users by search query
+  // Mirror the same status logic used in UserTable across the app
+  const parseDateOnly = (val) => {
+    if (!val) return null;
+    const s = String(val);
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? null : d;
+  };
+  const getUserStatusLabel = (user) => {
+    if (user.enabled === false) return 'disabled';
+    const now = new Date();
+    const expiry = parseDateOnly(user.expire_date);
+    if (!expiry) return 'active';
+    const cutoff = new Date(expiry.getFullYear(), expiry.getMonth(), expiry.getDate() + 1);
+    const msDiff = cutoff.getTime() - now.getTime();
+    if (msDiff <= 0) return 'expired';
+    if (msDiff <= 24 * 60 * 60 * 1000) return 'soon';
+    return 'active';
+  };
+
+  // Toggle sort: same field flips direction; new field resets to asc
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDir('asc');
+    }
+  };
+
+  const SortIcon = ({ field }) => {
+    if (sortField !== field) return <span style={{ opacity: 0.3, fontSize: '0.7rem' }}> ⇅</span>;
+    return <span style={{ fontSize: '0.7rem' }}>{sortDir === 'asc' ? ' ↑' : ' ↓'}</span>;
+  };
+
+  // All known service types — always shown regardless of what the loaded server has
+  const serviceTypes = ['Mini', 'Basic', 'Unlimited'];
+
+  // Filter users by search + service type + status
   const filteredUsers = users.filter(user => {
-    if (!searchQuery) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      user.account_name?.toLowerCase().includes(q) ||
-      user.contact?.toLowerCase().includes(q) ||
-      user.service_type?.toLowerCase().includes(q)
-    );
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch = (
+        user.account_name?.toLowerCase().includes(q) ||
+        user.contact?.toLowerCase().includes(q) ||
+        user.service_type?.toLowerCase().includes(q) ||
+        user.remark?.toLowerCase().includes(q)
+      );
+      if (!matchesSearch) return false;
+    }
+    if (filterServiceType && (user.service_type || '').toLowerCase() !== filterServiceType.toLowerCase()) return false;
+    if (filterStatus && getUserStatusLabel(user) !== filterStatus) return false;
+    return true;
+  });
+
+  // Sort filteredUsers
+  const statusOrder = { active: 0, soon: 1, expired: 2, disabled: 3 };
+  const sortedUsers = [...filteredUsers].sort((a, b) => {
+    let cmp = 0;
+    if (sortField === 'account_name') {
+      cmp = (a.account_name || '').localeCompare(b.account_name || '');
+    } else if (sortField === 'service_type') {
+      cmp = (a.service_type || '').localeCompare(b.service_type || '');
+    } else if (sortField === 'status') {
+      cmp = (statusOrder[getUserStatusLabel(a)] ?? 9) - (statusOrder[getUserStatusLabel(b)] ?? 9);
+    } else if (sortField === 'expire_date') {
+      const da = a.expire_date ? new Date(a.expire_date).getTime() : Infinity;
+      const db = b.expire_date ? new Date(b.expire_date).getTime() : Infinity;
+      cmp = da - db;
+    }
+    return sortDir === 'asc' ? cmp : -cmp;
   });
 
   const sourceServer = servers.find(s => s.id === Number(sourceServerId));
@@ -239,17 +315,107 @@ export default function UserTransferModal({ isOpen, onClose, servers, onTransfer
                   )}
                 </div>
 
-                {/* Search */}
-                <div className="user-search" style={{ marginBottom: '1rem' }}>
-                  <FaSearch className="search-icon" />
-                  <input
-                    type="text"
-                    className="user-search-input"
-                    placeholder="Search users..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    disabled={loading || transferring}
-                  />
+                {/* Search + Filters */}
+                <div style={{ marginBottom: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                  <div className="user-search">
+                    <FaSearch className="search-icon" />
+                    <input
+                      type="text"
+                      className="user-search-input"
+                      placeholder="Search by name, contact, service…"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      disabled={loading || transferring}
+                    />
+                  </div>
+
+                  {/* Filter pills — only show once users are loaded */}
+                  {users.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.4rem', alignItems: 'center' }}>
+                      {/* Service type pills */}
+                      {['', ...serviceTypes].map(svc => (
+                        <button
+                          key={svc || '__all_svc'}
+                          type="button"
+                          onClick={() => setFilterServiceType(svc)}
+                          disabled={loading || transferring}
+                          style={{
+                            padding: '0.2rem 0.65rem',
+                            borderRadius: '999px',
+                            fontSize: '0.78rem',
+                            fontWeight: '600',
+                            border: '1px solid',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s',
+                            borderColor: filterServiceType === svc ? 'var(--accent)' : 'rgba(255,255,255,0.2)',
+                            backgroundColor: filterServiceType === svc ? 'var(--accent)' : 'transparent',
+                            color: filterServiceType === svc ? '#000' : 'var(--muted-text)',
+                          }}
+                        >
+                          {svc || 'All Types'}
+                        </button>
+                      ))}
+
+                      {/* Divider */}
+                      <span style={{ width: '1px', height: '16px', backgroundColor: 'rgba(255,255,255,0.15)', margin: '0 0.2rem' }} />
+
+                      {/* Status pills */}
+                      {[
+                        ['', 'All Status'],
+                        ['active', 'Active'],
+                        ['soon', 'Expire Soon (≤24h)'],
+                        ['expired', 'Expired'],
+                        ['disabled', 'Disabled'],
+                      ].map(([val, label]) => {
+                        const isActive = filterStatus === val;
+                        const dangerVals = ['expired', 'disabled'];
+                        const warnVals = ['soon'];
+                        const activeColor = dangerVals.includes(val) ? '#ff6b6b' : warnVals.includes(val) ? '#f0a500' : 'var(--accent)';
+                        return (
+                        <button
+                          key={val || '__all_st'}
+                          type="button"
+                          onClick={() => setFilterStatus(val)}
+                          disabled={loading || transferring}
+                          style={{
+                            padding: '0.2rem 0.65rem',
+                            borderRadius: '999px',
+                            fontSize: '0.78rem',
+                            fontWeight: '600',
+                            border: '1px solid',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s',
+                            borderColor: isActive ? activeColor : 'rgba(255,255,255,0.2)',
+                            backgroundColor: isActive ? activeColor : 'transparent',
+                            color: isActive ? '#000' : 'var(--muted-text)',
+                          }}
+                        >
+                          {label}
+                        </button>
+                        );
+                      })}
+
+                      {/* Active filter count badge */}
+                      {(filterServiceType || filterStatus || searchQuery) && (
+                        <button
+                          type="button"
+                          onClick={() => { setFilterServiceType(''); setFilterStatus(''); setSearchQuery(''); }}
+                          style={{
+                            padding: '0.2rem 0.6rem',
+                            borderRadius: '999px',
+                            fontSize: '0.75rem',
+                            border: '1px solid rgba(255,100,100,0.4)',
+                            backgroundColor: 'transparent',
+                            color: '#ff6b6b',
+                            cursor: 'pointer',
+                            marginLeft: 'auto',
+                          }}
+                        >
+                          Clear filters
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* User List */}
@@ -269,17 +435,49 @@ export default function UserTransferModal({ isOpen, onClose, servers, onTransfer
                   <div style={{ 
                     border: '1px solid rgba(255,255,255,0.1)', 
                     borderRadius: '4px',
-                    backgroundColor: 'rgba(79, 227, 131, 0.2)',
-                    maxHeight: '300px',
-                    overflowY: 'auto'
+                    overflow: 'hidden',
                   }}>
-                    {filteredUsers.map(user => (
+                    {/* Sticky sort header */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: '24px 1fr 90px 100px 90px',
+                      gap: '0.25rem',
+                      padding: '0.4rem 0.75rem',
+                      backgroundColor: 'rgba(0,0,0,0.35)',
+                      borderBottom: '1px solid rgba(255,255,255,0.1)',
+                      position: 'sticky',
+                      top: 0,
+                      zIndex: 1,
+                    }}>
+                      <div />
+                      {[['account_name','Name'],['service_type','Type'],['status','Status'],['expire_date','Expires']].map(([field, label]) => (
+                        <button
+                          key={field}
+                          type="button"
+                          onClick={() => handleSort(field)}
+                          style={{
+                            background: 'none', border: 'none', cursor: 'pointer',
+                            textAlign: 'left', padding: 0,
+                            fontSize: '0.75rem', fontWeight: '700',
+                            color: sortField === field ? 'var(--accent)' : 'var(--muted-text)',
+                            letterSpacing: '0.04em', textTransform: 'uppercase',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {label}<SortIcon field={field} />
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ maxHeight: '280px', overflowY: 'auto', backgroundColor: 'rgba(79,227,131,0.08)' }}>
+                    {sortedUsers.map(user => {const statusLabel = getUserStatusLabel(user); const statusColor = statusLabel === 'active' ? 'var(--accent)' : statusLabel === 'soon' ? '#f0a500' : '#ff6b6b'; return (
                       <label
                         key={user.id}
                         style={{
-                          display: 'flex',
+                          display: 'grid',
+                          gridTemplateColumns: '24px 1fr 90px 100px 90px',
+                          gap: '0.25rem',
                           alignItems: 'center',
-                          padding: '0.75rem',
+                          padding: '0.6rem 0.75rem',
                           borderBottom: '1px solid rgba(255,255,255,0.05)',
                           cursor: 'pointer',
                           transition: 'background-color 0.2s',
@@ -292,19 +490,22 @@ export default function UserTransferModal({ isOpen, onClose, servers, onTransfer
                           checked={selectedUserIds.has(user.id)}
                           onChange={() => toggleUserSelection(user.id)}
                           disabled={transferring}
-                          style={{ marginRight: '0.75rem', width: '18px', height: '18px' }}
+                          style={{ width: '16px', height: '16px', cursor: 'pointer' }}
                         />
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: '600' }}>{user.account_name}</div>
-                          <div style={{ fontSize: '0.85rem', color: 'var(--muted-text)' }}>
-                            {user.service_type} {user.contact ? `• ${user.contact}` : ''}
-                          </div>
+                        <div style={{ overflow: 'hidden' }}>
+                          <div style={{ fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.account_name}</div>
+                          {user.contact && <div style={{ fontSize: '0.78rem', color: 'var(--muted-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{user.contact}</div>}
                         </div>
-                        {selectedUserIds.has(user.id) && (
-                          <FaCheck style={{ color: 'var(--accent)' }} />
-                        )}
+                        <div style={{ fontSize: '0.82rem', color: 'var(--muted-text)' }}>{user.service_type || '—'}</div>
+                        <div style={{ fontSize: '0.78rem', fontWeight: '600', color: statusColor, textTransform: 'capitalize' }}>
+                          {statusLabel === 'soon' ? 'Expire Soon' : statusLabel.charAt(0).toUpperCase() + statusLabel.slice(1)}
+                        </div>
+                        <div style={{ fontSize: '0.78rem', color: 'var(--muted-text)' }}>
+                          {user.expire_date ? user.expire_date.slice(0,10) : '—'}
+                        </div>
                       </label>
-                    ))}
+                    );})}
+                    </div>
                   </div>
                 )}
 

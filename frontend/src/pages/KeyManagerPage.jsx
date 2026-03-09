@@ -6,7 +6,9 @@ import { getBackendOrigin } from '../lib/backendOrigin';
 import './KeyManagerPage.css';
 
 const KeyManagerPage = () => {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
+  const role = user?.user?.role || user?.role;
+  const isAdmin = role === 'ADMIN';
   const backendOrigin = getBackendOrigin();
 
   // Key Server config state
@@ -14,6 +16,7 @@ const KeyManagerPage = () => {
   const [secretKey, setSecretKey] = useState('');
   const [configDir, setConfigDir] = useState('/srv/cmp/configs');
   const [autoStart, setAutoStart] = useState(false);
+  const [publicDomain, setPublicDomain] = useState('');
   const [showKey, setShowKey] = useState(false);
   const [serverStatus, setServerStatus] = useState('stopped');
   const [serverError, setServerError] = useState('');
@@ -25,7 +28,7 @@ const KeyManagerPage = () => {
 
   // Search, filter & pagination
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterType, setFilterType] = useState('all'); // all | yaml | json
+  const [filterType, setFilterType] = useState('all'); // all | yaml | json | txt
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [sortBy, setSortBy] = useState(null); // 'filename' | 'modified' | null
@@ -45,6 +48,7 @@ const KeyManagerPage = () => {
   const restoreInputRef = useRef(null);
   const importInputRef = useRef(null);
   const [restoreModal, setRestoreModal] = useState(null); // null | { backup, filename }
+  const [copyModal, setCopyModal] = useState(null);   // null | keyEntry
 
   // Selection for batch delete
   const [selectedKeys, setSelectedKeys] = useState(new Set());
@@ -53,6 +57,20 @@ const KeyManagerPage = () => {
   const [openMenu, setOpenMenu] = useState(null); // null | { filename, x, y }
 
   const headers = { Authorization: `Bearer ${token}` };
+
+  const resolveLightTheme = useCallback(() => {
+    try {
+      const override = localStorage.getItem('themeOverride');
+      if (override === 'light') return true;
+      if (override === 'dark') return false;
+      if (override === 'system') {
+        return window.matchMedia ? !window.matchMedia('(prefers-color-scheme: dark)').matches : document.body.classList.contains('theme-light');
+      }
+    } catch (_) {
+      // Fall through to body class detection.
+    }
+    return document.body.classList.contains('theme-light');
+  }, []);
 
   const showFeedback = (msg, type = 'success') => {
     setFeedback({ msg, type });
@@ -68,6 +86,7 @@ const KeyManagerPage = () => {
       setSecretKey(c.secretKey || '');
       setConfigDir(c.configDir || '/srv/cmp/configs');
       setAutoStart(c.autoStart || false);
+      setPublicDomain(c.publicDomain || '');
       setConfigDirty(false);
     } catch (err) {
       console.error('Failed to load config:', err);
@@ -134,7 +153,7 @@ const KeyManagerPage = () => {
   const handleSaveConfig = async () => {
     try {
       await axios.put(`${backendOrigin}/api/keyserver/config`, {
-        port, secretKey, configDir, autoStart
+        port, secretKey, configDir, autoStart, publicDomain
       }, { headers });
       setConfigDirty(false);
       showFeedback('Configuration saved');
@@ -169,15 +188,32 @@ const KeyManagerPage = () => {
     }
   };
 
-  // Copy subscription URL
-  const copySubUrl = (filename) => {
-    const host = window.location.hostname;
-    const url = `http://${host}:${port}/sub/${filename}?key=${secretKey}`;
+  // Copy subscription URL using token (hides real filename) and optional public domain
+  const copySubUrl = (keyEntry, format = null) => {
+    const id = keyEntry.token || keyEntry.filename;
+    const normDomain = publicDomain
+      ? (publicDomain.match(/^https?:\/\//) ? publicDomain : `http://${publicDomain}`).replace(/\/+$/, '')
+      : '';
+    const baseHost = normDomain || `http://${window.location.hostname}:${port}`;
+    const formatParam = format ? `&format=${format}` : '';
+    const url = `${baseHost}/sub/${id}?key=${secretKey}${formatParam}`;
     navigator.clipboard.writeText(url).then(() => {
       showFeedback('URL copied to clipboard');
     }).catch(() => {
       showFeedback('Failed to copy', 'error');
     });
+  };
+
+  const openCopyModal = (keyEntry) => setCopyModal({ ...keyEntry, prefersLightTheme: resolveLightTheme() });
+
+  // Build URL for display
+  const buildSubUrl = (keyEntry) => {
+    const id = keyEntry.token || keyEntry.filename;
+    const normDomain = publicDomain
+      ? (publicDomain.match(/^https?:\/\//) ? publicDomain : `http://${publicDomain}`).replace(/\/+$/, '')
+      : '';
+    const baseHost = normDomain || `http://${window.location.hostname}:${port}`;
+    return `${baseHost}/sub/${id}?key=${secretKey}`;
   };
 
   // Preview file
@@ -371,7 +407,7 @@ const KeyManagerPage = () => {
     if (openMenu && openMenu.filename === filename) {
       setOpenMenu(null);
     } else {
-      setOpenMenu({ filename });
+      setOpenMenu({ filename, prefersLightTheme: resolveLightTheme() });
     }
   };
 
@@ -386,6 +422,8 @@ const KeyManagerPage = () => {
       result = result.filter(k => /\.(ya?ml)$/i.test(k.filename));
     } else if (filterType === 'json') {
       result = result.filter(k => /\.json$/i.test(k.filename));
+    } else if (filterType === 'txt') {
+      result = result.filter(k => /\.txt$/i.test(k.filename));
     }
     // Filter by search
     if (searchQuery.trim()) {
@@ -455,6 +493,7 @@ const KeyManagerPage = () => {
               <span className="km-status-text" style={{ color: statusColor }}>{statusLabel}</span>
             </span>
             {serverError && <span className="km-status-error">{serverError}</span>}
+            {isAdmin && (
             <button
               className={`km-btn km-btn-icon km-btn-config${showConfig ? ' active' : ''}`}
               onClick={() => setShowConfig(v => !v)}
@@ -462,10 +501,11 @@ const KeyManagerPage = () => {
             >
               <FaCog />
             </button>
+            )}
           </div>
         </div>
 
-        {showConfig && (
+        {isAdmin && showConfig && (
         <div className="km-server-grid">
           {/* Port */}
           <div className="km-field-row">
@@ -528,6 +568,23 @@ const KeyManagerPage = () => {
             </div>
           </div>
 
+          {/* Public Domain */}
+          <div className="km-field-row">
+            <label className="km-label" htmlFor="km-publicdomain">Public Domain</label>
+            <div className="km-key-input-group">
+              <FaLink className="km-folder-icon" />
+              <input
+                id="km-publicdomain"
+                type="text"
+                className="km-input km-input-dir"
+                value={publicDomain}
+                onChange={e => { setPublicDomain(e.target.value); setConfigDirty(true); }}
+                placeholder="https://sub.yourdomain.com (leave empty to use IP:port)"
+              />
+            </div>
+            <span className="km-field-hint">If set, subscription URLs use this instead of IP:port</span>
+          </div>
+
           {/* Auto Start */}
           <div className="km-field-row km-field-row-checkbox">
             <label className="km-checkbox-label">
@@ -543,7 +600,7 @@ const KeyManagerPage = () => {
         )}
 
         {/* Action Buttons */}
-        {showConfig && (
+        {isAdmin && showConfig && (
         <div className="km-actions">
           <button
             className={`km-btn km-btn-save${configDirty ? ' km-btn-dirty' : ''}`}
@@ -633,13 +690,13 @@ const KeyManagerPage = () => {
             )}
           </div>
           <div className="km-filter-btns">
-            {['all', 'yaml', 'json'].map(t => (
+            {['all', 'yaml', 'json', 'txt'].map(t => (
               <button
                 key={t}
                 className={`km-btn km-btn-filter${filterType === t ? ' active' : ''}`}
                 onClick={() => setFilterType(t)}
               >
-                {t === 'all' ? 'All' : t === 'yaml' ? 'YAML' : 'JSON'}
+                {t === 'all' ? 'All' : t === 'yaml' ? 'YAML' : t === 'json' ? 'JSON' : 'TXT'}
               </button>
             ))}
           </div>
@@ -719,7 +776,7 @@ const KeyManagerPage = () => {
                       <div className="km-actions-desktop">
                         <button
                           className="km-btn km-btn-sm km-btn-copy"
-                          onClick={() => copySubUrl(k.filename)}
+                          onClick={() => openCopyModal(k)}
                           title="Copy subscription URL"
                         >
                           <FaCopy />
@@ -750,10 +807,10 @@ const KeyManagerPage = () => {
                         </button>
                         {openMenu && openMenu.filename === k.filename && (
                           <div
-                            className="km-popup-menu"
+                            className={`km-popup-menu ${openMenu.prefersLightTheme ? 'km-ui-light' : 'km-ui-dark'}`}
                             onClick={e => e.stopPropagation()}
                           >
-                            <button className="km-popup-item" onClick={() => { copySubUrl(k.filename); setOpenMenu(null); }}>
+                            <button className="km-popup-item" onClick={() => { openCopyModal(k); setOpenMenu(null); }}>
                               <FaLink /> Copy URL
                             </button>
                             <button className="km-popup-item" onClick={() => { handlePreview(k.filename); setOpenMenu(null); }}>
@@ -863,6 +920,44 @@ const KeyManagerPage = () => {
         </div>
       )}
       {/* ─── Restore Modal ─── */}
+      {copyModal && (
+        <div className="km-modal-overlay" onClick={() => setCopyModal(null)}>
+          <div className={`km-modal km-copy-modal ${copyModal.prefersLightTheme ? 'km-ui-light' : 'km-ui-dark'}`} onClick={e => e.stopPropagation()}>
+            <div className="km-modal-header">
+              <span>Copy Subscription URL</span>
+              <button className="km-btn km-btn-sm km-btn-close" onClick={() => setCopyModal(null)}>✕</button>
+            </div>
+            <div className="km-modal-body km-copy-body">
+              <p className="km-copy-filename">{copyModal.filename}</p>
+              <p className="km-copy-hint">Choose the format to copy:</p>
+              <div className="km-copy-options">
+                {copyModal.filename.endsWith('.txt') ? (
+                  <button className="km-copy-option km-copy-option--v2box" onClick={() => { copySubUrl(copyModal); setCopyModal(null); }}>
+                    <span className="km-copy-opt-label">V2Box Subscription</span>
+                    <span className="km-copy-opt-desc">Plain-text proxy URI list (//profile headers)</span>
+                  </button>
+                ) : (
+                  <>
+                    <button className="km-copy-option km-copy-option--base64" onClick={() => { copySubUrl(copyModal); setCopyModal(null); }}>
+                      <span className="km-copy-opt-label">Default (Base64 URIs)</span>
+                      <span className="km-copy-opt-desc">Subscription URL — all proxies, works with V2Box, Hiddify, Nekoray</span>
+                    </button>
+                    <button className="km-copy-option km-copy-option--singbox" onClick={() => { copySubUrl(copyModal, 'raw'); setCopyModal(null); }}>
+                      <span className="km-copy-opt-label">Sing-box JSON</span>
+                      <span className="km-copy-opt-desc">Download raw sing-box config for sing-box / Hiddify import</span>
+                    </button>
+                    <button className="km-copy-option km-copy-option--v2ray" onClick={() => { copySubUrl(copyModal, 'v2ray'); setCopyModal(null); }}>
+                      <span className="km-copy-opt-label">V2Ray / Xray JSON</span>
+                      <span className="km-copy-opt-desc">Download V2Ray config with all servers — for V2Box / V2RayNG import</span>
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {restoreModal && (
         <div className="km-modal-overlay" onClick={() => setRestoreModal(null)}>
           <div className="km-modal km-restore-modal" onClick={e => e.stopPropagation()}>

@@ -15,6 +15,28 @@ const DomainManagerPage = () => {
   const [selectedDomains, setSelectedDomains] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [editingData, setEditingData] = useState({});
+  const [sortField, setSortField] = useState('');
+  const [sortDir, setSortDir] = useState('asc');
+
+  const handleSort = (field) => {
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir('asc'); }
+  };
+  const SortTh = ({ field, children, className }) => (
+    <th className={className} onClick={() => handleSort(field)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
+      {children}
+      <span style={{ marginLeft: '4px', fontSize: '0.7em', opacity: sortField === field ? 1 : 0.3 }}>
+        {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : '⇅'}
+      </span>
+    </th>
+  );
+  const sortedDomains = sortField ? [...domains].sort((a, b) => {
+    let cmp = 0;
+    if (sortField === 'service') cmp = (a.service || '').localeCompare(b.service || '');
+    else if (sortField === 'server') cmp = (a.server || '').localeCompare(b.server || '');
+    else if (sortField === 'domain') cmp = (a.domain || '').localeCompare(b.domain || '');
+    return sortDir === 'asc' ? cmp : -cmp;
+  }) : domains;
 
   // Available server regions
   const regions = ['SG', 'HK', 'US', 'JP', 'ID', 'TH', 'VN', 'UK', 'CN', 'IN', 'AU'];
@@ -285,14 +307,14 @@ const DomainManagerPage = () => {
                     onChange={toggleSelectAll}
                   />
                 </th>
-                <th>Service</th>
-                <th>Server</th>
-                <th>Domain</th>
+                <SortTh field="service">Service</SortTh>
+                <SortTh field="server">Server</SortTh>
+                <SortTh field="domain">Domain</SortTh>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {domains.map(domain => (
+              {sortedDomains.map(domain => (
                 <tr key={domain.id} className={selectedDomains.includes(domain.id) ? 'selected' : ''}>
                   <td className="checkbox-cell">
                     <input

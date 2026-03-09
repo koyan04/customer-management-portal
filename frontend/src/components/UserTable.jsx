@@ -49,6 +49,8 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, onToggle, canManageU
   try { role = JSON.parse(localStorage.getItem('user'))?.role || (localStorage.getItem('user') || null); } catch(e) { role = null; }
   const allowActions = canManageUsers !== null ? canManageUsers : (role === 'ADMIN');
 
+  const [sortField, setSortField] = useState('');  // '' = natural order
+  const [sortDir, setSortDir] = useState('asc');
   const [openRenewFor, setOpenRenewFor] = useState(null);
   const [openOverflowFor, setOpenOverflowFor] = useState(null);
   // map of refs for each row so outside-click detection works per-row
@@ -102,23 +104,48 @@ function UserTable({ users, onEdit, onDelete, onQuickRenew, onToggle, canManageU
     return () => document.removeEventListener('click', onDoc);
   }, [openOverflowFor]);
 
+  const handleSort = (field) => {
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir('asc'); }
+  };
+
+  const statusOrder = { 'Active': 0, 'Expire Soon': 1, 'Expired': 2, 'Disabled': 3 };
+  const sortedUsers = sortField ? [...users].sort((a, b) => {
+    let cmp = 0;
+    if (sortField === 'name') cmp = (a.account_name || '').localeCompare(b.account_name || '');
+    else if (sortField === 'status') cmp = (statusOrder[getUserStatus(a.expire_date, a.enabled).text] ?? 9) - (statusOrder[getUserStatus(b.expire_date, b.enabled).text] ?? 9);
+    else if (sortField === 'service') cmp = (a.service_type || '').localeCompare(b.service_type || '');
+    else if (sortField === 'contact') cmp = (a.contact || '').localeCompare(b.contact || '');
+    else if (sortField === 'expire') { const da = a.expire_date ? new Date(a.expire_date).getTime() : Infinity; const db = b.expire_date ? new Date(b.expire_date).getTime() : Infinity; cmp = da - db; }
+    return sortDir === 'asc' ? cmp : -cmp;
+  }) : users;
+
+  const SortTh = ({ field, children, style }) => (
+    <th onClick={() => handleSort(field)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', ...style }}>
+      {children}
+      <span style={{ marginLeft: '4px', fontSize: '0.7em', opacity: sortField === field ? 1 : 0.3 }}>
+        {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : '⇅'}
+      </span>
+    </th>
+  );
+
   return (
     <div className="user-table-container">
       <table className="user-table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Status</th>
-            <th>Service</th>
-            {showContact && (<th>Contact</th>)}
+            <SortTh field="name">Name</SortTh>
+            <SortTh field="status">Status</SortTh>
+            <SortTh field="service">Service</SortTh>
+            {showContact && (<SortTh field="contact">Contact</SortTh>)}
             <th>Duration</th>
-            <th>Expire Date</th>
+            <SortTh field="expire">Expire Date</SortTh>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           <AnimatePresence>
-              {users.map(user => {
+              {sortedUsers.map(user => {
               const status = getUserStatus(user.expire_date, user.enabled);
                 // ensure there's a ref element for this row
                 const ensureRef = (el) => { if (el) rowRefs.current[user.id] = el; };

@@ -362,17 +362,19 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
               {/* indicate the form is busy while saving for assistive tech */}
               <div aria-hidden style={{ display: 'none' }} />
               <div className="modal-header">
-                <div className="avatar-preview">
-                  {avatarPreview ? (
-                    <img src={avatarPreview} alt="avatar preview" />
-                  ) : (
-                    <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }} aria-hidden>
-                      <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                        <circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.2" fill="none" />
-                        <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />
-                      </svg>
-                    </div>
-                  )}
+                <div className="avatar-wrap">
+                  <div className="avatar-preview">
+                    {avatarPreview ? (
+                      <img src={avatarPreview} alt="avatar preview" />
+                    ) : (
+                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#666' }} aria-hidden>
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
+                          <circle cx="12" cy="8" r="3.2" stroke="currentColor" strokeWidth="1.2" fill="none" />
+                          <path d="M4 20c0-3.3 2.7-6 6-6h4c3.3 0 6 2.7 6 6" stroke="currentColor" strokeWidth="1.2" fill="none" strokeLinecap="round" />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
                   {/* camera-style button overlay for both add and edit: open avatar editor modal */}
                   <button type="button" className="avatar-camera-btn" title={isEdit ? "Change profile picture" : "Add profile picture"} aria-label={isEdit ? "Change profile picture" : "Add profile picture"} onClick={() => setShowAvatarEditor(true)}>
                     <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" role="img" focusable="false">
@@ -413,7 +415,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
                     );
                   })()}
                   {isEdit && !hideRoleAndReset && (
-                    <div style={{ marginTop: '0.5rem' }}>
+                    <div className="header-reset-wrap">
                       <button type="button" className="reset-btn header-reset-btn" onClick={() => {
                         // clicking Reset opens inline fields on desktop but on small screens
                         // we expand the modal to a near-full height and make the body scrollable
@@ -479,7 +481,7 @@ export default function AdminEditorForm({ isOpen, onClose, onSaved, account, ser
               ) : (
                 <div className="form-group">
                   <label>Role</label>
-                  <div style={{ padding: '0.6rem 0.8rem', borderRadius: 6, background: 'transparent', color: '#cfd8dc' }}>{form.role === 'SERVER_ADMIN' ? 'SERVER ADMIN' : form.role}</div>
+                  <div className="role-readonly-display" style={{ padding: '0.6rem 0.8rem', borderRadius: 6 }}>{form.role === 'SERVER_ADMIN' ? 'SERVER ADMIN' : form.role}</div>
                 </div>
               )}
 

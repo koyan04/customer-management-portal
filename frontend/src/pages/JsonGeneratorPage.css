@@ -3,3 +3,43 @@
 /* This file only contains JSON-specific overrides if needed */
 
 @import './YamlGeneratorPage.css';
+
+/* Save TXT File — checkbox in the filename meta row */
+.filename-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.filename-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.filename-meta-row .filename-preview {
+  margin-left: auto;
+  padding-bottom: 0;
+}
+
+.save-txt-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  white-space: nowrap;
+  color: var(--text-color, #ccc);
+  cursor: pointer;
+  user-select: none;
+}
+.save-txt-checkbox-label input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+body.theme-light .save-txt-checkbox-label {
+  color: #444;
+}

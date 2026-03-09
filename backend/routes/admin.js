@@ -3052,6 +3052,137 @@ router.get('/control/update/status', authenticateToken, isAdmin, async (req, res
   }
 });
 
+// ── Version check: current (VERSION file) + latest (GitHub releases API) ─────
+router.get('/control/update/version', authenticateToken, isAdmin, async (req, res) => {
+  const repoDir = path.resolve(__dirname, '..', '..');
+  // Read current version from VERSION file
+  let current = null;
+  try { current = fs.readFileSync(path.join(repoDir, 'VERSION'), 'utf8').trim(); } catch (_) {}
+
+  // Fetch latest release from GitHub
+  let latest = null;
+  try {
+    const https = require('https');
+    latest = await new Promise((resolve, reject) => {
+      const opts = {
+        hostname: 'api.github.com',
+        path: '/repos/koyan04/customer-management-portal/releases/latest',
+        headers: { 'User-Agent': 'cmp-backend', 'Accept': 'application/vnd.github+json' }
+      };
+      https.get(opts, (r) => {
+        let data = '';
+        r.on('data', c => { data += c; });
+        r.on('end', () => {
+          try { resolve(JSON.parse(data).tag_name || null); } catch (_) { resolve(null); }
+        });
+      }).on('error', reject);
+    });
+  } catch (_) {}
+
+  // Normalize for comparison: strip leading 'v', 'cmp ver ', whitespace
+  const norm = (s) => (s || '').replace(/^v/i, '').replace(/^cmp\s+ver\s+/i, '').trim();
+  const isOutdated = !!(current && latest && norm(current) !== norm(latest));
+
+  // Get last applied update time from app_settings
+  let lastAppliedAt = null;
+  try {
+    const r = await pool.query("SELECT data FROM app_settings WHERE settings_key = 'update_applied'");
+    if (r.rows[0]) lastAppliedAt = r.rows[0].data && r.rows[0].data.appliedAt;
+  } catch (_) {}
+
+  return res.json({ ok: true, current, latest, isOutdated, lastAppliedAt, checkedAt: new Date().toISOString() });
+});
+
+// ── Streaming update via GitHub release tarball (SSE) ─────────────────────
+router.post('/control/update/run', authenticateToken, isAdmin, (req, res) => {
+  const { spawn } = require('child_process');
+  const adminId = req.user && req.user.id;
+  const scriptPath = path.join(__dirname, '..', 'scripts', 'update-unattended.sh');
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disable nginx buffering
+  res.flushHeaders();
+
+  const send = (obj) => {
+    try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch (_) {}
+  };
+
+  if (!fs.existsSync(scriptPath)) {
+    send({ type: 'error', text: 'Update script not found on server' });
+    res.end();
+    return;
+  }
+
+  writeControlAudit(adminId, 'update_run_start', {}).catch(() => {});
+  send({ type: 'log', text: '=== Starting unattended update ===\n' });
+
+  const child = spawn('bash', [scriptPath], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: false
+  });
+
+  let shouldRestart = false;
+  let lineBuffer = '';
+
+  const handleChunk = (chunk, isErr) => {
+    lineBuffer += chunk.toString();
+    const lines = lineBuffer.split('\n');
+    lineBuffer = lines.pop();
+    for (const line of lines) {
+      if (line === 'RESTART_SIGNAL') {
+        shouldRestart = true;
+        send({ type: 'restarting', text: '→ Signalling service restart...\n' });
+      } else {
+        send({ type: isErr ? 'err' : 'log', text: line + '\n' });
+      }
+    }
+  };
+
+  child.stdout.on('data', (chunk) => handleChunk(chunk, false));
+  child.stderr.on('data', (chunk) => handleChunk(chunk, true));
+
+  child.on('close', async (code) => {
+    // flush remaining buffer
+    if (lineBuffer.trim()) send({ type: 'log', text: lineBuffer + '\n' });
+
+    if (code === 0) {
+      // Record last applied timestamp
+      try {
+        await pool.query(
+          `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
+           VALUES ($1,$2,$3,now())
+           ON CONFLICT (settings_key) DO UPDATE SET data=EXCLUDED.data, updated_by=EXCLUDED.updated_by, updated_at=now()`,
+          ['update_applied', { appliedAt: new Date().toISOString() }, adminId]
+        );
+      } catch (_) {}
+      await writeControlAudit(adminId, 'update_run_success', {}).catch(() => {});
+    } else {
+      await writeControlAudit(adminId, 'update_run_failed', { code }).catch(() => {});
+    }
+
+    send({ type: 'done', code, restarting: shouldRestart && code === 0 });
+    res.end();
+
+    if (shouldRestart && code === 0) {
+      setTimeout(() => {
+        try { process.kill(process.pid, 'SIGTERM'); } catch (_) { process.exit(0); }
+      }, 1200);
+    }
+  });
+
+  child.on('error', (err) => {
+    send({ type: 'error', text: `Failed to start update script: ${err.message}\n` });
+    res.end();
+  });
+
+  req.on('close', () => {
+    try { child.kill('SIGTERM'); } catch (_) {}
+  });
+});
+
 // ── Admin-specific backup (full admin data + permissions + audit logs) ────────
 router.get('/backup/admins', authenticateToken, isAdmin, async (req, res) => {
   try {

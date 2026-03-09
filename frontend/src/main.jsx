@@ -14,6 +14,7 @@ import ServerListPage from './pages/ServerListPage.jsx';
 import FinancialPage from './pages/FinancialPage.jsx';
 import SearchPage from './pages/SearchPage.jsx';
 import AdminOnlyRoute from './components/AdminOnlyRoute.jsx';
+import AdminOrServerAdminRoute from './components/AdminOrServerAdminRoute.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
 import YamlGeneratorPage from './pages/YamlGeneratorPage.jsx';
 import JsonGeneratorPage from './pages/JsonGeneratorPage.jsx';
@@ -71,7 +72,7 @@ const router = createBrowserRouter([
               },
               {
                 path: 'key-manager',
-                element: <AdminOnlyRoute />,
+                element: <AdminOrServerAdminRoute />,
                 children: [
                   { index: true, element: <KeyManagerPage /> },
                 ]

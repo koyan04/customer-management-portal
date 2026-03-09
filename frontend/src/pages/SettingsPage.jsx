@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
 import InfoModal from '../components/InfoModal.jsx';
 import { FaInfoCircle, FaCog } from 'react-icons/fa';
 import axios from 'axios';
@@ -77,6 +77,19 @@ export default function SettingsPage() {
   const [updateSource, setUpdateSource] = useState('');
   const [cpBusy, setCpBusy] = useState(false);
   const [updateBusy, setUpdateBusy] = useState(false);
+  // New: clean version/update state
+  const [versionInfo, setVersionInfo] = useState(null);
+  const [versionChecking, setVersionChecking] = useState(false);
+  const [autoCheckUpdate, setAutoCheckUpdate] = useState(() => {
+    try { return localStorage.getItem('update.autoCheck') === 'true'; } catch (_) { return false; }
+  });
+  const [autoCheckInterval, setAutoCheckInterval] = useState(() => {
+    try { return parseInt(localStorage.getItem('update.autoCheckInterval') || '24', 10) || 24; } catch (_) { return 24; }
+  });
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [updateLines, setUpdateLines] = useState([]);
+  const [updateRunning, setUpdateRunning] = useState(false);
+  const [updateDone, setUpdateDone] = useState(null); // {code, restarting}
   // Frontend dev server (Vite) port control — removed per request
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -302,10 +315,78 @@ export default function SettingsPage() {
     } catch (e) { showMsg('Retry failed: ' + (e.response?.data?.error || e.message)); } finally { setUpdateBusy(false); }
   };
 
+  // ── New clean version check ──
+  const checkVersionInfo = useCallback(async () => {
+    setVersionChecking(true);
+    try {
+      const res = await axios.get(backendOrigin + '/api/admin/control/update/version', { headers: authHeaders });
+      setVersionInfo(res.data || null);
+    } catch (_) {
+      setVersionInfo(null);
+    } finally {
+      setVersionChecking(false);
+    }
+  }, [backendOrigin, authHeaders]);
+
+  // ── Run the unattended update (SSE streaming) ──
+  const runUpdate = async () => {
+    setUpdateLines([]);
+    setUpdateDone(null);
+    setUpdateRunning(true);
+    setShowUpdateModal(true);
+    try {
+      const res = await fetch(backendOrigin + '/api/admin/control/update/run', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop();
+        for (const part of parts) {
+          const line = part.replace(/^data:\s*/, '').trim();
+          if (!line) continue;
+          try {
+            const msg = JSON.parse(line);
+            if (msg.type === 'done') {
+              setUpdateDone({ code: msg.code, restarting: msg.restarting });
+            } else {
+              setUpdateLines(prev => [...prev, { type: msg.type, text: msg.text || '' }]);
+            }
+          } catch (_) {}
+        }
+      }
+    } catch (err) {
+      setUpdateLines(prev => [...prev, { type: 'error', text: `Connection error: ${err.message}` }]);
+      setUpdateDone({ code: -1, restarting: false });
+    } finally {
+      setUpdateRunning(false);
+    }
+  };
+
   // load all on mount so switching tabs is instant
   useEffect(() => { fetchSettings('database'); fetchSettings('telegram'); fetchSettings('remoteServer'); fetchSettings('general'); fetchBotStatus(); fetchCert(); }, [fetchSettings, fetchBotStatus, fetchCert]);
-  // When switching to Control tab, load lightweight update source + status
-  useEffect(() => { if (tab === 'control') { loadUpdateLight(); } }, [tab, loadUpdateLight]);
+  // When switching to Control tab, load version info + lightweight update status
+  useEffect(() => { if (tab === 'control') { loadUpdateLight(); checkVersionInfo(); } }, [tab, loadUpdateLight, checkVersionInfo]);
+  // Auto-check update interval
+  useEffect(() => {
+    if (!autoCheckUpdate) return;
+    const ms = Math.max(1, autoCheckInterval) * 60 * 60 * 1000;
+    const id = setInterval(() => { checkVersionInfo(); }, ms);
+    return () => clearInterval(id);
+  }, [autoCheckUpdate, autoCheckInterval, checkVersionInfo]);
+  // Persist auto-check prefs
+  useEffect(() => {
+    try { localStorage.setItem('update.autoCheck', autoCheckUpdate ? 'true' : 'false'); } catch (_) {}
+  }, [autoCheckUpdate]);
+  useEffect(() => {
+    try { localStorage.setItem('update.autoCheckInterval', String(autoCheckInterval)); } catch (_) {}
+  }, [autoCheckInterval]);
   // Update current date/time every second
   useEffect(() => {
     const timer = setInterval(() => {
@@ -1341,62 +1422,165 @@ export default function SettingsPage() {
                 </div>
               </section>
               {/* Update */}
-              <section className="cp-update" style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '0.75rem', padding: '0.75rem' }}>
-                <h4 style={{ margin: '0 0 0.5rem 0' }}>Update</h4>
-                <div className="form-grid" style={{ marginBottom: '0.5rem' }}>
-                  <label className="full">
-                    <span>Update source (Git URL)</span>
-                    <input type="text" value={updateSource} onChange={(e) => setUpdateSource(e.target.value)} placeholder="https://github.com/owner/repo.git or git@github.com:owner/repo.git" />
-                  </label>
-                </div>
-                {/* Inline status for origins */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                  <div><strong>Git origin</strong><br />{updateStatus?.gitOrigin || '—'}</div>
-                  <div><strong>Stored origin</strong><br />{updateStatus?.storedOrigin || '—'}</div>
-                  <div><strong>Updated by</strong><br />{(updateStatus && (updateStatus.updatedBy || updateStatus.updated_by)) ?? '—'}</div>
-                  <div><strong>Updated at</strong><br />{updateStatus?.updatedAt ? new Date(updateStatus.updatedAt).toLocaleString() : (updateStatus?.updated_at ? new Date(updateStatus.updated_at).toLocaleString() : '—')}</div>
-                </div>
-                {(() => {
-                  const g = updateStatus?.gitOrigin;
-                  const s = updateStatus?.storedOrigin;
-                  if (g && s && g !== s) {
-                    return (
-                      <div aria-label="origin-mismatch" style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.4rem',
-                        padding: '0.35rem 0.6rem',
-                        borderRadius: '999px',
-                        background: 'rgba(255,140,0,0.15)',
-                        border: '1px solid rgba(255,140,0,0.35)',
-                        color: '#ffb06b',
-                        fontSize: '0.75rem',
-                        fontWeight: 600,
-                        marginBottom: '0.5rem'
-                      }}>
-                        <FaExclamationTriangle style={{ fontSize: '0.9rem' }} />
-                        <span>Git origin differs from stored origin</span>
-                      </div>
-                    );
-                  }
-                  return null;
-                })()}
-                {updateInfo ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                    <div><strong>Branch:</strong> {updateInfo.branch}</div>
-                    <div><strong>Local:</strong> {updateInfo.localSha?.slice(0,12)}</div>
-                    <div><strong>Remote:</strong> {updateInfo.remoteSha?.slice(0,12)}</div>
-                    <div><strong>Status:</strong> {updateInfo.behind ? 'Behind (update available)' : 'Up to date'}</div>
-                    {updateInfo.originUrl ? (<div><strong>Origin:</strong> {updateInfo.originUrl}</div>) : null}
+              <section className="cp-update" style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '0.75rem', padding: '1rem' }}>
+                <h4 style={{ margin: '0 0 0.75rem 0', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <FaCloudDownloadAlt /> Update
+                </h4>
+
+                {/* Version info grid */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: '0.6rem', marginBottom: '0.75rem' }}>
+                  <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '8px', padding: '0.5rem 0.75rem' }}>
+                    <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.6, marginBottom: '0.2rem' }}>Current Version</div>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem', fontFamily: 'monospace' }}>{versionInfo?.current ?? '—'}</div>
                   </div>
-                ) : <div style={{ opacity: 0.7 }}>No check yet.</div>}
-                <div className="actions" style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  <button className="btn" disabled={updateBusy} onClick={checkUpdate}><FaSyncAlt /> Check</button>
-                  <button className="btn" disabled={updateBusy} onClick={saveUpdateSource}><FaSave /> Save Source</button>
-                  <button className="btn" disabled={updateBusy || !(updateStatus?.storedOrigin || updateSource)} onClick={retryUpdateOrigin}><FaSyncAlt /> Retry Git Remote Update</button>
-                  <button className="btn primary" disabled={updateBusy || !updateInfo?.behind} onClick={applyUpdate}><FaSave /> Apply Update</button>
+                  <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '8px', padding: '0.5rem 0.75rem' }}>
+                    <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.6, marginBottom: '0.2rem' }}>Latest Version</div>
+                    <div style={{ fontWeight: 600, fontSize: '0.9rem', fontFamily: 'monospace' }}>{versionInfo?.latest ?? '—'}</div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '8px', padding: '0.5rem 0.75rem' }}>
+                    <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.6, marginBottom: '0.2rem' }}>Last Updated</div>
+                    <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>
+                      {versionInfo?.lastAppliedAt ? new Date(versionInfo.lastAppliedAt).toLocaleString() : '—'}
+                    </div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '8px', padding: '0.5rem 0.75rem' }}>
+                    <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', opacity: 0.6, marginBottom: '0.2rem' }}>Status</div>
+                    {versionInfo == null ? (
+                      <div style={{ opacity: 0.5, fontSize: '0.85rem' }}>Not checked</div>
+                    ) : versionInfo.isOutdated ? (
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: '#ffb06b', fontWeight: 700 }}>
+                        <FaExclamationTriangle /> Outdated
+                      </div>
+                    ) : (
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', color: '#4caf82', fontWeight: 700 }}>
+                        <FaCheckCircle /> Up to Date
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {/* Actions row */}
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', marginBottom: '0.6rem' }}>
+                  <button className="btn" disabled={versionChecking} onClick={checkVersionInfo} title="Check GitHub for latest version">
+                    <FaSyncAlt style={versionChecking ? { animation: 'spin 1s linear infinite' } : {}} /> Check for Update
+                  </button>
+                  {versionInfo?.isOutdated && (
+                    <button
+                      className="btn primary"
+                      disabled={updateRunning}
+                      onClick={runUpdate}
+                      style={{ background: 'rgba(0,191,165,0.8)', borderColor: '#00bfa5', color: '#fff' }}
+                    >
+                      <FaCloudDownloadAlt /> Update
+                    </button>
+                  )}
+                </div>
+
+                {/* Auto-check row */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer', userSelect: 'none' }}>
+                  <input
+                    type="checkbox"
+                    checked={autoCheckUpdate}
+                    onChange={e => setAutoCheckUpdate(e.target.checked)}
+                    style={{ width: 15, height: 15 }}
+                  />
+                  Auto check for updates every
+                  <input
+                    type="number"
+                    min="1"
+                    max="720"
+                    value={autoCheckInterval}
+                    onChange={e => setAutoCheckInterval(Math.max(1, parseInt(e.target.value) || 24))}
+                    disabled={!autoCheckUpdate}
+                    style={{ width: 55, padding: '0.15rem 0.3rem', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.06)', color: 'inherit', fontSize: '0.85rem', textAlign: 'center', opacity: autoCheckUpdate ? 1 : 0.4 }}
+                  />
+                  hours
+                </label>
+                {versionInfo?.checkedAt && (
+                  <div style={{ fontSize: '0.72rem', opacity: 0.4, marginTop: '0.4rem' }}>
+                    Last checked: {new Date(versionInfo.checkedAt).toLocaleString()}
+                  </div>
+                )}
               </section>
+
+              {/* Update Progress Modal */}
+              {showUpdateModal && (
+                <div style={{
+                  position: 'fixed', inset: 0, zIndex: 9999,
+                  background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
+                }}>
+                  <div style={{
+                    background: '#1a2433', border: '1px solid rgba(0,191,165,0.25)', borderRadius: '12px',
+                    width: '100%', maxWidth: '680px', display: 'flex', flexDirection: 'column', maxHeight: '80vh'
+                  }}>
+                    <div style={{ padding: '0.9rem 1.1rem', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                      <FaCloudDownloadAlt style={{ color: '#00bfa5' }} />
+                      <strong style={{ flex: 1 }}>Updating…</strong>
+                      {!updateRunning && (
+                        <button
+                          onClick={() => { setShowUpdateModal(false); if (updateDone?.restarting) showMsg('Service is restarting — please refresh in a moment'); }}
+                          style={{ background: 'none', border: 'none', color: '#aaa', cursor: 'pointer', fontSize: '1.1rem' }}
+                        >✕</button>
+                      )}
+                    </div>
+
+                    {/* Progress bar */}
+                    <div style={{ height: 4, background: 'rgba(255,255,255,0.07)', position: 'relative', overflow: 'hidden' }}>
+                      {updateRunning && (
+                        <div style={{
+                          height: '100%', width: '30%', background: '#00bfa5',
+                          animation: 'progressSlide 1.5s ease-in-out infinite',
+                          position: 'absolute'
+                        }} />
+                      )}
+                      {!updateRunning && updateDone?.code === 0 && (
+                        <div style={{ height: '100%', width: '100%', background: '#4caf82', transition: 'width 0.4s' }} />
+                      )}
+                      {!updateRunning && updateDone?.code !== 0 && updateDone != null && (
+                        <div style={{ height: '100%', width: '100%', background: '#e05555' }} />
+                      )}
+                    </div>
+
+                    {/* Log output */}
+                    <div style={{
+                      flex: 1, overflowY: 'auto', padding: '0.75rem 1rem',
+                      fontFamily: 'monospace', fontSize: '0.78rem', lineHeight: 1.6,
+                      background: '#111820', whiteSpace: 'pre-wrap', wordBreak: 'break-all'
+                    }} ref={el => { if (el) el.scrollTop = el.scrollHeight; }}>
+                      {updateLines.map((l, i) => (
+                        <span key={i} style={{ color: l.type === 'error' || l.type === 'err' ? '#f88' : l.type === 'restarting' ? '#ffb06b' : '#c8fff4' }}>
+                          {l.text}
+                        </span>
+                      ))}
+                      {updateRunning && <span style={{ opacity: 0.5 }}>▌</span>}
+                    </div>
+
+                    {/* Footer */}
+                    {!updateRunning && updateDone != null && (
+                      <div style={{ padding: '0.75rem 1.1rem', borderTop: '1px solid rgba(255,255,255,0.07)', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        {updateDone.code === 0 ? (
+                          <>
+                            <FaCheckCircle style={{ color: '#4caf82' }} />
+                            <span style={{ color: '#4caf82', flex: 1 }}>
+                              {updateDone.restarting ? 'Update complete — service is restarting. Please refresh the page.' : 'Update complete!'}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <FaExclamationTriangle style={{ color: '#f88' }} />
+                            <span style={{ color: '#f88', flex: 1 }}>Update failed (exit code {updateDone.code}). Check output above.</span>
+                          </>
+                        )}
+                        <button
+                          className="btn"
+                          onClick={() => { setShowUpdateModal(false); checkVersionInfo(); }}
+                        >Close</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
               {/* Frontend Dev Port section removed per request */}
               {/* Remote server settings retained */}
               <section className="cp-remote" style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: '0.75rem', padding: '0.75rem' }}>

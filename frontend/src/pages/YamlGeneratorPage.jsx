@@ -254,12 +254,21 @@ const YamlGeneratorPage = () => {
   };
 
   const parseShadowsocks = (uri) => {
-    const url = new URL(uri);
+    // Strip fragment before passing to URL parser to avoid issues with special chars in hash
+    const hashIdx = uri.indexOf('#');
+    const rawName = hashIdx !== -1 ? decodeURIComponent(uri.substring(hashIdx + 1)) : '';
+    const uriWithoutHash = hashIdx !== -1 ? uri.substring(0, hashIdx) : uri;
+
+    const url = new URL(uriWithoutHash);
     const userinfo = atob(url.username);
     const [cipher, password] = userinfo.split(':');
-    const name = decodeURIComponent(url.hash.substring(1)) || url.hostname;
-    
-    return {
+    const name = rawName || url.hostname;
+
+    // Extract prefix query param (Outline / SIP022 stream prefix for throttle evasion)
+    const params = new URLSearchParams(url.search);
+    const prefix = params.get('prefix'); // URL-decoded bytes string (may contain non-printable chars)
+
+    const node = {
       name: addFlag(name),
       type: 'ss',
       server: url.hostname,
@@ -268,6 +277,12 @@ const YamlGeneratorPage = () => {
       password,
       udp: true
     };
+
+    if (prefix !== null) {
+      node._prefix = prefix; // internal field, not output to YAML (Clash doesn't support it natively)
+    }
+
+    return node;
   };
 
   const parseVMess = (uri) => {
@@ -415,6 +430,12 @@ const YamlGeneratorPage = () => {
       }
       if (node.type === 'ss') {
         const userinfo = btoa(`${node.cipher}:${node.password}`);
+        const ssParams = new URLSearchParams();
+        if (node._prefix !== undefined && node._prefix !== null) {
+          ssParams.set('outline', '1');
+          ssParams.set('prefix', node._prefix);
+          return `ss://${userinfo}@${node.server}:${node.port}/?${ssParams.toString()}#${encodeURIComponent(name)}`;
+        }
         return `ss://${userinfo}@${node.server}:${node.port}#${encodeURIComponent(name)}`;
       }
       if (node.type === 'hysteria2' || node.type === 'hy2') {
@@ -593,6 +614,7 @@ const YamlGeneratorPage = () => {
     let first = true;
     for (const [key, value] of Object.entries(obj)) {
       if (value === null || value === undefined) continue;
+      if (key.startsWith('_')) continue; // skip internal fields (e.g. _prefix)
       const prefix = first ? '  - ' : '    ';
       first = false;
       if (typeof value === 'object' && !Array.isArray(value)) {
@@ -645,6 +667,7 @@ const YamlGeneratorPage = () => {
     yaml += `allow-lan: true\n`;
     yaml += `mode: rule\n`;
     yaml += `log-level: info\n`;
+    yaml += `ipv6: true\n`;
     yaml += `external-controller: 127.0.0.1:9090\n`;
     
     // Anti-DPI settings
@@ -655,6 +678,12 @@ const YamlGeneratorPage = () => {
       }
       yaml += `global-client-fingerprint: ${clientFingerprint}\n`;
       yaml += `keep-alive-interval: 30\n`;
+      if (tlsFragment) {
+        yaml += `tls-fragment:\n`;
+        yaml += `  enable: true\n`;
+        yaml += `  length: "${fragmentLength}"\n`;
+        yaml += `  interval: "${fragmentInterval}"\n`;
+      }
       
       if (fakeDNS) {
         yaml += `\n# Fake-IP mode for maximum evasion\n`;
@@ -735,6 +764,13 @@ const YamlGeneratorPage = () => {
       if (antiDPI) {
         nodeObj['client-fingerprint'] = clientFingerprint;
         nodeObj['skip-cert-verify'] = true;
+      }
+      // Strip internal _prefix field (stream prefix for Outline/SS — not supported by Clash/Mihomo)
+      // The prefix won't take effect in Clash; it is preserved in the exported ss:// URI for other clients.
+      if (nodeObj._prefix !== undefined) {
+        const prefixHex = [...nodeObj._prefix].map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+        delete nodeObj._prefix;
+        yaml += `  # ⚠ SS stream prefix (${prefixHex}) detected — not supported by Clash/Mihomo, effective only in V2Box/Outline\n`;
       }
       yaml += `${nodeToYaml(nodeObj)}\n`;
     });

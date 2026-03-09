@@ -10,6 +10,8 @@ const JsonGeneratorPage = () => {
   // Top menu settings
   const [groupName, setGroupName] = useState('VChannel-Premium');
   const [unlim, setUnlim] = useState(false);
+  const [dataLimit, setDataLimit] = useState(150); // GB, used when unlim is false
+  const [alsoSaveTxt, setAlsoSaveTxt] = useState(false);
   const [loadBalance, setLoadBalance] = useState(false);
   const [staticBalance, setStaticBalance] = useState(false);
   const [expireDate, setExpireDate] = useState('');
@@ -31,6 +33,8 @@ const JsonGeneratorPage = () => {
   const [tlsFragment, setTlsFragment] = useState(false);
   const [fragmentLength, setFragmentLength] = useState('10-30');
   const [fragmentInterval, setFragmentInterval] = useState('10-20');
+  const [ssPrefix, setSsPrefix] = useState(false);
+  const [ssPrefixValue, setSsPrefixValue] = useState('%16%03%01%00%C2%A8%01%01');
 
   // Server management
   const [bulkInput, setBulkInput] = useState('');
@@ -161,6 +165,8 @@ const JsonGeneratorPage = () => {
         if (saved.tlsFragment != null) setTlsFragment(saved.tlsFragment);
         if (saved.fragmentLength) setFragmentLength(saved.fragmentLength);
         if (saved.fragmentInterval) setFragmentInterval(saved.fragmentInterval);
+        if (saved.ssPrefix != null) setSsPrefix(saved.ssPrefix);
+        if (saved.ssPrefixValue) setSsPrefixValue(saved.ssPrefixValue);
       }
     } catch (_) {}
     try {
@@ -180,7 +186,7 @@ const JsonGeneratorPage = () => {
   const saveAntiDPISettings = () => {
     localStorage.setItem('json_antidpi_settings', JSON.stringify({
       antiDPI, tcpConcurrent, clientFingerprint, dohEnabled, dohServer,
-      fakeDNS, tlsFragment, fragmentLength, fragmentInterval
+      fakeDNS, tlsFragment, fragmentLength, fragmentInterval, ssPrefix, ssPrefixValue
     }));
     setAntiDPISaved(true);
     setTimeout(() => setAntiDPISaved(false), 2000);
@@ -385,7 +391,8 @@ const JsonGeneratorPage = () => {
       }
       if (node.type === 'ss') {
         const userinfo = btoa(`${node.cipher}:${node.password}`);
-        return `ss://${userinfo}@${node.server}:${node.port}#${encodeURIComponent(name)}`;
+        const prefixQuery = (ssPrefix && ssPrefixValue) ? `?prefix=${ssPrefixValue}` : '';
+        return `ss://${userinfo}@${node.server}:${node.port}${prefixQuery}#${encodeURIComponent(name)}`;
       }
       if (node.type === 'hysteria2' || node.type === 'hy2') {
         const params = new URLSearchParams();
@@ -402,6 +409,54 @@ const JsonGeneratorPage = () => {
     const blob = new Blob([text], { type: 'text/plain' });
     const suffix = fileSuffix.trim();
     const filename = suffix ? `${suffix}.txt` : 'keys.txt';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  // Generate V2Box plain-text subscription (//profile-title / //subscription-userinfo headers + proxy URIs)
+  const generateV2BoxSubscription = () => {
+    const lines = [];
+    const titleName = groupName || 'VChannel-Premium';
+    lines.push(`//profile-title: ${titleName}`);
+    lines.push(`//profile-update-interval: ${updateInterval}`);
+
+    // Compute total bytes and expire Unix timestamp
+    const limitGb = unlim ? 500 : dataLimit;
+    let total = Math.round(limitGb * 1073741824);
+    let expire = 0;
+
+    const userDataLimitGb = selectedUser?.data_limit_gb;
+    if (userDataLimitGb) {
+      total = Math.round(userDataLimitGb * 1073741824);
+    }
+
+    const expireDateStr = expireDate || selectedUser?.expire_date?.substring(0, 10);
+    if (expireDateStr) {
+      // Parse as local midnight to avoid UTC off-by-one
+      expire = Math.floor(new Date(expireDateStr + 'T00:00:00').getTime() / 1000);
+    }
+
+    lines.push(`//subscription-userinfo: upload=0; download=0; total=${total}; expire=${expire}`);
+    lines.push('');
+
+    // One proxy URI per line
+    activeNodes.forEach(node => {
+      lines.push(nodeToURI(node));
+    });
+
+    return lines.join('\n');
+  };
+
+  const downloadV2BoxSub = () => {
+    if (!activeNodes.length) return;
+    const content = generateV2BoxSubscription();
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    const prefix = filePrefix.trim() || 'vchannel-config';
+    const suffix = fileSuffix.trim();
+    const filename = suffix ? `${prefix}-${suffix}.txt` : `${prefix}.txt`;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = filename;
@@ -879,6 +934,27 @@ const JsonGeneratorPage = () => {
       auto_detect_interface: true
     };
 
+    // ── IPv6 ──
+    config.inbounds.forEach(inb => {
+      if (inb.type === 'tun') inb.auto_redirect_output_mark = 8872; // keep existing
+    });
+
+    // ── Anti-DPI extras ──
+    if (antiDPI && tcpConcurrent) {
+      config.dial_fields = { tcp_multi_path: true, tcp_fast_open: true };
+    }
+
+    if (antiDPI && tlsFragment) {
+      config.tls_fragment = {
+        enabled: true,
+        size: fragmentLength,
+        sleep: fragmentInterval
+      };
+    }
+
+    // ── IPv6 route ──
+    config.route.final_ipv6 = true;
+
     // ── Experimental ──
     config.experimental = {
       clash_api: {
@@ -897,10 +973,11 @@ const JsonGeneratorPage = () => {
 
   useEffect(() => {
     generateJSON();
-  }, [activeNodes, groupName, unlim, loadBalance, staticBalance, expireDate,
+  }, [activeNodes, groupName, unlim, dataLimit, loadBalance, staticBalance, expireDate,
       updateInterval, checkInterval, autoSwitchInterval, globalDefault,
       proxyRules, directRules, appRouting,
-      antiDPI, tcpConcurrent, clientFingerprint, dohEnabled, dohServer, fakeDNS, tlsFragment, fragmentLength, fragmentInterval]);
+      antiDPI, tcpConcurrent, clientFingerprint, dohEnabled, dohServer, fakeDNS, tlsFragment, fragmentLength, fragmentInterval,
+      ssPrefix, ssPrefixValue]);
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(generatedJson);
@@ -932,6 +1009,7 @@ const JsonGeneratorPage = () => {
 
   const [serverSaveStatus, setServerSaveStatus] = useState('');
   const [serverSaveMsg, setServerSaveMsg] = useState('');
+  const [subUrl, setSubUrl] = useState('');
 
   const saveToServer = async () => {
     if (!generatedJson.trim()) return;
@@ -939,8 +1017,10 @@ const JsonGeneratorPage = () => {
     setServerSaveMsg('');
     try {
       const backendOrigin = getBackendOrigin();
-      const filename = getCombinedFilename();
-      // Build subscription metadata for v2box headers
+      const jsonFilename = getCombinedFilename();
+      const txtFilename = jsonFilename.replace(/\.json$/, '.txt');
+
+      // Build subscription metadata for sing-box JSON save
       const metadata = {};
       if (selectedUser) {
         if (selectedUser.data_limit_gb) metadata.data_limit_gb = selectedUser.data_limit_gb;
@@ -949,15 +1029,49 @@ const JsonGeneratorPage = () => {
         if (expireDate) metadata.expire_date = expireDate;
       }
       if (unlim) metadata.unlimited = true;
+
+      // Save sing-box JSON config
       const res = await axios.post(`${backendOrigin}/api/keyserver/keys`, {
-        filename,
+        filename: jsonFilename,
         content: generatedJson,
         metadata: Object.keys(metadata).length > 0 ? metadata : undefined
       }, {
         headers: { Authorization: `Bearer ${token}` }
       });
+
+      // Also save V2Box plain-text subscription (.txt) if checkbox is enabled
+      let savedTxtToken = '';
+      if (alsoSaveTxt && activeNodes.length > 0) {
+        const v2boxContent = generateV2BoxSubscription();
+        const txtRes = await axios.post(`${backendOrigin}/api/keyserver/keys`, {
+          filename: txtFilename,
+          content: v2boxContent
+        }, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        savedTxtToken = txtRes.data.token || txtRes.data.filename;
+      }
+
+      // Build subscription URL for the .txt file using token + optional publicDomain
+      if (savedTxtToken) {
+        const ksConfig = await axios.get(`${backendOrigin}/api/keyserver/config`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const ksPort = ksConfig.data.port || 8088;
+        const ksKey = ksConfig.data.secretKey || '';
+        const rawDomain = ksConfig.data.publicDomain || '';
+        const normDomain = rawDomain
+          ? (rawDomain.match(/^https?:\/\//) ? rawDomain : `http://${rawDomain}`).replace(/\/+$/, '')
+          : '';
+        const baseHost = normDomain || `http://${window.location.hostname}:${ksPort}`;
+        const url = `${baseHost}/sub/${savedTxtToken}?key=${ksKey}`;
+        setSubUrl(url);
+      }
+
       setServerSaveStatus('saved');
-      setServerSaveMsg(`Saved as ${res.data.filename}`);
+      setServerSaveMsg(savedTxtToken
+        ? `Saved ${res.data.filename} + ${txtFilename}`
+        : `Saved as ${res.data.filename}`);
       setTimeout(() => { setServerSaveStatus(''); setServerSaveMsg(''); }, 3000);
     } catch (err) {
       setServerSaveStatus('error');
@@ -989,40 +1103,41 @@ const JsonGeneratorPage = () => {
               />
             </div>
 
-            <div className="form-group checkbox">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={unlim}
-                  onChange={(e) => setUnlim(e.target.checked)}
-                />
-                Unlim
-              </label>
+            {/* Stacked checkboxes: Unlim on top, LB below */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+              <div className="form-group checkbox">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={unlim}
+                    onChange={(e) => setUnlim(e.target.checked)}
+                  />
+                  Unlim
+                </label>
+              </div>
+              <div className="form-group checkbox">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={loadBalance}
+                    onChange={(e) => setLoadBalance(e.target.checked)}
+                  />
+                  LB
+                </label>
+              </div>
+              {loadBalance && (
+                <div className="form-group checkbox">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={staticBalance}
+                      onChange={(e) => setStaticBalance(e.target.checked)}
+                    />
+                    Static
+                  </label>
+                </div>
+              )}
             </div>
-
-          <div className="form-group checkbox">
-            <label>
-              <input
-                type="checkbox"
-                checked={loadBalance}
-                onChange={(e) => setLoadBalance(e.target.checked)}
-              />
-              LB
-            </label>
-          </div>
-
-          {loadBalance && (
-            <div className="form-group checkbox">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={staticBalance}
-                  onChange={(e) => setStaticBalance(e.target.checked)}
-                />
-                Static
-              </label>
-            </div>
-          )}
 
           <div className="form-group">
             <label>Expire Date:</label>
@@ -1032,6 +1147,19 @@ const JsonGeneratorPage = () => {
               onChange={(e) => setExpireDate(e.target.value)}
             />
           </div>
+
+          {!unlim && (
+            <div className="form-group">
+              <label>Data Limit (GB):</label>
+              <input
+                type="number"
+                min="1"
+                value={dataLimit}
+                onChange={(e) => setDataLimit(Math.max(1, parseInt(e.target.value) || 1))}
+                style={{ width: '80px' }}
+              />
+            </div>
+          )}
 
           <button
             className={`settings-btn anti-dpi-btn ${antiDPI ? 'active' : ''}`}
@@ -1206,6 +1334,32 @@ const JsonGeneratorPage = () => {
                     />
                   </div>
                 </>
+              )}
+
+              <div className="form-group checkbox">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={ssPrefix}
+                    onChange={(e) => setSsPrefix(e.target.checked)}
+                  />
+                  SS Prefix
+                </label>
+                <span className="setting-hint">Prepend bytes to Shadowsocks connections to bypass DPI (appended to SS URI for V2Box)</span>
+              </div>
+
+              {ssPrefix && (
+                <div className="form-group">
+                  <label>Prefix Value:</label>
+                  <input
+                    type="text"
+                    value={ssPrefixValue}
+                    onChange={(e) => setSsPrefixValue(e.target.value)}
+                    placeholder="%16%03%01%00%C2%A8%01%01"
+                    style={{ fontFamily: 'monospace', fontSize: '0.85em' }}
+                  />
+                  <span className="setting-hint">URL-encoded bytes prepended to each SS connection</span>
+                </div>
               )}
             </div>
             <button className="btn-save-settings" onClick={saveAntiDPISettings}>
@@ -1388,8 +1542,11 @@ const JsonGeneratorPage = () => {
             <div className="active-nodes-header">
               <h3>Active Nodes ({activeNodes.length})</h3>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
-                <button className="btn-export-outline" onClick={exportNodesAsText} title="Export keys as text file">
+                <button className="btn-export-outline" onClick={exportNodesAsText} title="Export raw URIs as text file">
                   <FaDownload /> Export
+                </button>
+                <button className="btn-export-outline" onClick={downloadV2BoxSub} title="Download V2Box subscription (with //profile headers)">
+                  <FaDownload /> V2Box Sub
                 </button>
                 <button className="btn-delete-outline" onClick={() => setActiveNodes([])}>
                   <FaTrash /> Clear All
@@ -1418,36 +1575,51 @@ const JsonGeneratorPage = () => {
         {/* Step 5: Final Config */}
         <div className="step-section final-config">
           <h2>Step 5: Final Configuration</h2>
-          <div className="filename-row">
-            <div className="filename-field">
-              <label>Filename Prefix</label>
-              <div className="filename-input-group">
+          <div className="filename-section">
+            <div className="filename-row">
+              <div className="filename-field">
+                <label>Filename Prefix</label>
+                <div className="filename-input-group">
+                  <input
+                    type="text"
+                    className="filename-input"
+                    value={filePrefix}
+                    onChange={e => setFilePrefix(e.target.value)}
+                    placeholder="vchannel-config"
+                  />
+                  <button className="btn-save-prefix" onClick={saveFilePrefix} title="Save prefix">
+                    <FaSave />
+                  </button>
+                </div>
+              </div>
+              <span className="filename-dash">—</span>
+              <div className="filename-field">
+                <label>Filename Suffix</label>
                 <input
                   type="text"
                   className="filename-input"
-                  value={filePrefix}
-                  onChange={e => setFilePrefix(e.target.value)}
-                  placeholder="vchannel-config"
+                  value={fileSuffix}
+                  onChange={e => setFileSuffix(e.target.value)}
+                  placeholder="username"
                 />
-                <button className="btn-save-prefix" onClick={saveFilePrefix} title="Save prefix">
-                  <FaSave />
-                </button>
               </div>
             </div>
-            <span className="filename-dash">—</span>
-            <div className="filename-field">
-              <label>Filename Suffix</label>
-              <input
-                type="text"
-                className="filename-input"
-                value={fileSuffix}
-                onChange={e => setFileSuffix(e.target.value)}
-                placeholder="username"
-              />
-            </div>
-            <div className="filename-preview">
-              <span className="filename-preview-label">File:</span>
-              <span className="filename-preview-value">{getCombinedFilename()}</span>
+            <div className="filename-meta-row">
+              <label
+                className="save-txt-checkbox-label"
+                title="Also save a V2Box .txt subscription file when saving to server"
+              >
+                <input
+                  type="checkbox"
+                  checked={alsoSaveTxt}
+                  onChange={(e) => setAlsoSaveTxt(e.target.checked)}
+                />
+                Save TXT File
+              </label>
+              <div className="filename-preview">
+                <span className="filename-preview-label">File:</span>
+                <span className="filename-preview-value">{getCombinedFilename()}</span>
+              </div>
             </div>
           </div>
           <div className="config-actions">
@@ -1472,6 +1644,25 @@ const JsonGeneratorPage = () => {
               </span>
             )}
           </div>
+          {subUrl && (
+            <div className="sub-url-row">
+              <span className="sub-url-label">V2Box Sub URL:</span>
+              <input
+                type="text"
+                className="sub-url-input"
+                value={subUrl}
+                readOnly
+                onClick={e => e.target.select()}
+              />
+              <button
+                className="btn-copy-url"
+                onClick={() => { navigator.clipboard.writeText(subUrl); }}
+                title="Copy URL"
+              >
+                <FaCopy /> Copy
+              </button>
+            </div>
+          )}
           <textarea
             value={generatedJson}
             readOnly

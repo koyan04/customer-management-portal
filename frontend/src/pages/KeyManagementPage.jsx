@@ -17,6 +17,21 @@ function KeyManagementInner() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [selectedIds, setSelectedIds] = useState(new Set());
+  const [sortField, setSortField] = useState('');
+  const [sortDir, setSortDir] = useState('asc');
+
+  const handleSort = (field) => {
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir('asc'); }
+  };
+  const SortTh = ({ field, children, style }) => (
+    <th onClick={() => handleSort(field)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap', ...style }}>
+      {children}
+      <span style={{ marginLeft: '4px', fontSize: '0.7em', opacity: sortField === field ? 1 : 0.3 }}>
+        {sortField === field ? (sortDir === 'asc' ? '↑' : '↓') : '⇅'}
+      </span>
+    </th>
+  );
 
   // modal state
   const [showBox, setShowBox] = useState(false);
@@ -78,9 +93,15 @@ function KeyManagementInner() {
 
   const filtered = useMemo(() => {
     const q = (search || '').toLowerCase().trim();
-    if (!q) return keys;
-    return keys.filter(k => ((k.username || '') + ' ' + (k.description || '')).toLowerCase().includes(q));
-  }, [keys, search]);
+    const base = q ? keys.filter(k => ((k.username || '') + ' ' + (k.description || '')).toLowerCase().includes(q)) : keys;
+    if (!sortField) return base;
+    return [...base].sort((a, b) => {
+      let cmp = 0;
+      if (sortField === 'username') cmp = (a.username || '').localeCompare(b.username || '');
+      else if (sortField === 'description') cmp = (a.description || '').localeCompare(b.description || '');
+      return sortDir === 'asc' ? cmp : -cmp;
+    });
+  }, [keys, search, sortField, sortDir]);
 
   const toggleSelect = (id) => {
     setSelectedIds(prev => {
@@ -331,8 +352,8 @@ function KeyManagementInner() {
               <th>
                 <input type="checkbox" aria-label="Select all" checked={filtered.length > 0 && Array.from(selectedIds).length === filtered.filter(k => k.id).length} onChange={(e) => { if (e.target.checked) selectAllVisible(); else clearSelection(); }} />
               </th>
-              <th><span className="thead-icon"><FaUser /></span>Username</th>
-              <th>Key Description</th>
+              <SortTh field="username"><span className="thead-icon"><FaUser /></span>Username</SortTh>
+              <SortTh field="description">Key Description</SortTh>
               <th>Action</th>
             </tr>
           </thead>

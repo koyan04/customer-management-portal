@@ -98,6 +98,19 @@
     box-shadow: none !important;
     margin-top: 8px !important;
   }
+
+  /* edit-sized (editing another user's account): align avatar to top of multi-line title */
+  .modal-content.edit-sized .modal-header {
+    align-items: flex-start !important;
+    gap: 0.6rem !important;
+  }
+  .modal-content.edit-sized .modal-header .modal-title {
+    flex: 1 1 auto !important;
+    min-width: 0 !important;
+  }
+  .modal-content.edit-sized .modal-header .avatar-preview {
+    flex: 0 0 auto !important;
+  }
 }
 
 /* Desktop: when editing an ADMIN and Reset is activated, make the modal body scrollable
@@ -125,6 +138,23 @@
   border-radius: 10px !important;
   box-shadow: 0 8px 20px rgba(2,8,12,0.18) !important;
   animation: modalActionsIn 220ms cubic-bezier(.2,.9,.3,1) both;
+}
+
+/* iOS WebKit: avoid sticky action overlap in edit-sized modal by using normal flow actions. */
+@supports (-webkit-touch-callout: none) {
+  @media (max-width: 640px) {
+    .modal-content.edit-sized .modal-actions,
+    .modal-content.edit-sized.compact-form .modal-actions {
+      position: static !important;
+      bottom: auto !important;
+      margin-top: 0.7rem !important;
+      z-index: 1 !important;
+    }
+    .modal-content.edit-sized .modal-form,
+    .modal-content.edit-sized.compact-form .modal-form {
+      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px) !important;
+    }
+  }
 }
 
 @keyframes modalActionsIn {

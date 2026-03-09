@@ -36,7 +36,13 @@ function BackToTop() {
 function App() {
   // App title and theme from General settings
   const [appTitle, setAppTitle] = useState('VChannel');
-  const [appTheme, setAppTheme] = useState('system'); // 'system' | 'dark' | 'light'
+  const [appTheme, setAppTheme] = useState(() => {
+    try {
+      const stored = localStorage.getItem('themeOverride');
+      if (stored === 'dark' || stored === 'light' || stored === 'system') return stored;
+    } catch (_) {}
+    return 'system';
+  });
   // App version surfaced from /api/health
   const [appVersion, setAppVersion] = useState(() => {
     try { return localStorage.getItem('app.version') || ''; } catch (_) { return ''; }
@@ -80,15 +86,7 @@ function App() {
     return undefined;
   }, [appTheme]);
 
-  // On mount, apply local theme override if present
-  useEffect(() => {
-    try {
-      const override = localStorage.getItem('themeOverride');
-      if (override === 'dark' || override === 'light' || override === 'system') {
-        setAppTheme(override);
-      }
-    } catch (_) {}
-  }, []);
+  // (theme now read from localStorage in useState initializer above)
 
   // Fetch General settings (public)
   useEffect(() => {
@@ -676,7 +674,7 @@ function App() {
             
             {keyMenuOpen && (
               <div className="key-menu" role="menu" aria-label="Generators menu">
-                {role === 'ADMIN' && (
+                {(role === 'ADMIN' || role === 'SERVER_ADMIN') && (
                   <Link
                     to="/key-manager"
                     className="key-menu-item"

@@ -668,6 +668,49 @@
   color: #f44336;
 }
 
+.sub-url-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  flex-wrap: wrap;
+}
+.sub-url-label {
+  font-size: 0.8rem;
+  color: #a0d4c4;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.sub-url-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.78rem;
+  padding: 0.35rem 0.6rem;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  color: #c8fff4;
+  font-family: monospace;
+  cursor: text;
+}
+.btn-copy-url {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.78rem;
+  background: rgba(0, 188, 212, 0.2);
+  border: 1px solid rgba(0, 188, 212, 0.4);
+  border-radius: 6px;
+  color: #00bcd4;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+.btn-copy-url:hover {
+  background: rgba(0, 188, 212, 0.35);
+}
+
 .btn-secondary {
   background: rgba(255, 255, 255, 0.1);
   color: #c8fff4;
