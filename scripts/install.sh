@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Customer Management Portal Installer
-# Version: v1.8.5
+# Version: v1.8.6
 # Features:
 #   - Downloads latest release tarball instead of cloning
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
