@@ -309,12 +309,22 @@ const JsonGeneratorPage = () => {
     if (params.get('security') === 'tls') {
       node.tls = true;
       if (params.get('sni')) node.servername = params.get('sni');
+      if (params.get('fp')) node['client-fingerprint'] = params.get('fp');
+      const flow = params.get('flow');
+      if (flow && flow.trim()) node.flow = flow;
+    } else if (params.get('security') === 'reality') {
+      node.security = 'reality';
+      if (params.get('sni')) node.servername = params.get('sni');
+      if (params.get('pbk')) node.publicKey = params.get('pbk');
+      if (params.get('sid') !== null) node.shortId = params.get('sid');
+      if (params.get('spx')) node.spiderX = decodeURIComponent(params.get('spx'));
+      if (params.get('fp')) node['client-fingerprint'] = params.get('fp');
+      const flow = params.get('flow');
+      if (flow && flow.trim()) node.flow = flow;
     }
     if (network === 'ws') {
       node.udp = false;
       node.alpn = ['http/1.1'];
-      const flow = params.get('flow');
-      if (flow && flow.trim()) node.flow = flow;
       node['ws-opts'] = {
         path: params.get('path') || '/',
         headers: { Host: params.get('host') || url.hostname }
@@ -376,7 +386,16 @@ const JsonGeneratorPage = () => {
       if (node.type === 'vless') {
         const params = new URLSearchParams();
         if (node.network) params.set('type', node.network);
-        if (node.tls) { params.set('security', 'tls'); if (node.servername) params.set('sni', node.servername); }
+        if (node.security === 'reality') {
+          params.set('security', 'reality');
+          if (node.servername) params.set('sni', node.servername);
+          if (node.publicKey) params.set('pbk', node.publicKey);
+          if (node.shortId !== undefined) params.set('sid', node.shortId);
+          if (node.spiderX) params.set('spx', node.spiderX);
+        } else if (node.tls) {
+          params.set('security', 'tls');
+          if (node.servername) params.set('sni', node.servername);
+        }
         if (node['client-fingerprint']) params.set('fp', node['client-fingerprint']);
         if (node.flow) params.set('flow', node.flow);
         if (node['ws-opts']) { params.set('path', node['ws-opts'].path || '/'); params.set('host', node['ws-opts'].headers?.Host || node.server); }
@@ -625,27 +644,31 @@ const JsonGeneratorPage = () => {
     ss.network = network;
 
     // Determine security mode
-    const isReality = node.security === 'reality' || node.tls === 'reality';
-    const needsTLS = node.tls || node.type === 'trojan' || node.type === 'vless' || node.type === 'hysteria2';
+    const isReality = node.security === 'reality';
+    const needsTLS = node.tls === true || node.type === 'trojan' || node.type === 'hysteria2';
     ss.security = isReality ? 'reality' : (needsTLS ? 'tls' : 'none');
 
     if (ss.security === 'tls') {
       const sni = node.servername || node.sni || node['ws-opts']?.headers?.Host || node.server;
+      // Always set allowInsecure, fingerprint, and alpn — V2Box shows all three as named fields
       const tlsSettings = { serverName: sni, allowInsecure: node['skip-cert-verify'] !== false };
-      const fp = antiDPI ? clientFingerprint : (node['client-fingerprint'] || '');
-      if (fp) tlsSettings.fingerprint = fp;
+      // Fingerprint: use anti-DPI setting if enabled, otherwise use parsed fp or default 'chrome'
+      tlsSettings.fingerprint = antiDPI ? clientFingerprint : (node['client-fingerprint'] || 'chrome');
+      // ALPN: always set sensible defaults so V2Box shows the field
       const defaultAlpn = network === 'ws' ? ['http/1.1'] : ['h2', 'http/1.1'];
-      const alpnArr = node.alpn
+      tlsSettings.alpn = node.alpn
         ? (Array.isArray(node.alpn) ? node.alpn : [node.alpn])
-        : (antiDPI ? defaultAlpn : []);
-      if (alpnArr.length > 0) tlsSettings.alpn = alpnArr;
+        : defaultAlpn;
       ss.tlsSettings = tlsSettings;
     } else if (ss.security === 'reality') {
+      const sni = node.servername || node.sni || node.server;
+      // Fingerprint: use anti-DPI setting or parsed fp from URI
+      const fp = antiDPI ? clientFingerprint : (node['client-fingerprint'] || 'chrome');
       ss.realitySettings = {
-        serverName: node.sni || node.servername || node.server,
-        fingerprint: antiDPI ? clientFingerprint : (node['client-fingerprint'] || 'chrome'),
+        serverName: sni,
+        fingerprint: fp,
         publicKey: node.publicKey || '',
-        shortId: node.shortId || '',
+        shortId: node.shortId !== undefined ? node.shortId : '',
         spiderX: node.spiderX || '/'
       };
     }
