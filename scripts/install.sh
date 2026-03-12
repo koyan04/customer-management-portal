@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Customer Management Portal Installer
-# Version: v1.8.12
+# Version: v1.8.13
 # Features:
 #   - Downloads latest release tarball instead of cloning
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
@@ -14,7 +14,10 @@ set -euo pipefail
 #   - Integrity self-check if CMP_INSTALL_EXPECTED_SHA256 provided
 #   - GUI Update Manager (v1.6.0): in-panel version check + one-click unattended updates via SSE streaming
 #   - Update script self-healing: auto-installs prerequisites, retries on vite failure (v1.7.0)
-#   - JSON Generator: show 3 subscription URLs after Save to Server (v1.8.12)
+#   - SS prefix now included in all subscription output formats (v1.8.13):
+#       * convertNodeToSingbox stores _prefix in sing-box SS outbound when ssPrefix enabled
+#       * outboundToURI emits ss://.../?outline=1&prefix=... format (keyserver -> V2Box)
+#       * nodeToURI emits same format for .txt subscription export
 #       * Sub URL (base64)  — paste into V2Box / V2RayNG 'Add Subscription'
 #       * Raw URL (?format=raw) — proxy-only sing-box JSON for V2Box native sing-box sub
 #       * V2Ray URL (?format=v2ray) — full V2Ray/Xray JSON for V2RayNG config import

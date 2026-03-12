@@ -415,8 +415,10 @@ const JsonGeneratorPage = () => {
       }
       if (node.type === 'ss') {
         const userinfo = btoa(`${node.cipher}:${node.password}`);
-        const prefixQuery = (ssPrefix && ssPrefixValue) ? `?prefix=${ssPrefixValue}` : '';
-        return `ss://${userinfo}@${node.server}:${node.port}${prefixQuery}#${encodeURIComponent(name)}`;
+        if (ssPrefix && ssPrefixValue) {
+          return `ss://${userinfo}@${node.server}:${node.port}/?outline=1&prefix=${ssPrefixValue}#${encodeURIComponent(name)}`;
+        }
+        return `ss://${userinfo}@${node.server}:${node.port}#${encodeURIComponent(name)}`;
       }
       if (node.type === 'hysteria2' || node.type === 'hy2') {
         const params = new URLSearchParams();
@@ -681,8 +683,11 @@ const JsonGeneratorPage = () => {
     const network = node.network || 'tcp';
 
     switch (node.type) {
-      case 'ss':
-        return { type: 'shadowsocks', tag, server: node.server, server_port: node.port, method: node.cipher, password: node.password, udp_over_tcp: false };
+      case 'ss': {
+        const ssOut = { type: 'shadowsocks', tag, server: node.server, server_port: node.port, method: node.cipher, password: node.password, udp_over_tcp: false };
+        if (ssPrefix && ssPrefixValue) ssOut._prefix = ssPrefixValue;
+        return ssOut;
+      }
 
       case 'vmess': {
         const out = { type: 'vmess', tag, server: node.server, server_port: node.port, uuid: node.uuid, alter_id: node.alterId || 0, security: node.cipher || 'auto' };

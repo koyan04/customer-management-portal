@@ -196,6 +196,9 @@ const startKeyServer = (config) => {
 
           if (ob.type === 'shadowsocks') {
             const userinfo = Buffer.from(`${ob.method}:${ob.password}`).toString('base64');
+            if (ob._prefix) {
+              return `ss://${userinfo}@${server}:${port}/?outline=1&prefix=${ob._prefix}#${encodeURIComponent(tag)}`;
+            }
             return `ss://${userinfo}@${server}:${port}#${encodeURIComponent(tag)}`;
           }
 
