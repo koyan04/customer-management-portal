@@ -450,19 +450,18 @@ const startKeyServer = (config) => {
         res.setHeader('profile-update-interval', '24');
 
         // For .json files: handle format conversions
-        // - ?format=raw: original sing-box JSON (for sing-box clients)
-        // - ?format=v2ray: V2Ray/Xray JSON (for V2Box, V2RayNG, etc.)
-        // - default: base64 proxy URIs (for most subscription clients)
+        // - default:      base64 proxy URIs (V2Box / V2RayNG / any standard subscription client)
+        // - ?format=raw:  proxy-only sing-box JSON {"outbounds":[...]} (sing-box-native clients: V2Box, NekoBox)
+        // - ?format=v2ray: full V2Ray/Xray JSON config (V2RayNG local config import, Xray clients)
         if (sanitized.endsWith('.json')) {
           const content = fs.readFileSync(filePath, 'utf-8');
           
-          // V2Ray/Xray JSON format for V2Box
+          // V2Ray/Xray JSON format for V2RayNG / Xray clients
           if (req.query.format === 'v2ray') {
             try {
               const v2rayJson = convertSingboxToV2Ray(content, sanitized);
               if (v2rayJson) {
                 res.setHeader('Content-Type', 'application/json; charset=utf-8');
-                res.setHeader('Content-Disposition', `attachment; filename="${sanitized}"`);
                 res.send(v2rayJson);
                 console.log(`[KeyServer] [${new Date().toISOString()}] Served (V2Ray JSON): ${sanitized} to ${req.ip}`);
                 return;
@@ -470,12 +469,23 @@ const startKeyServer = (config) => {
             } catch (_) {}
           }
           
-          // Raw sing-box format
+          // Raw sing-box subscription: proxy outbounds only (no selector/urltest/direct/dns/block)
+          // Serves {"outbounds":[...]} for sing-box-native clients (V2Box, NekoBox, etc.)
           if (req.query.format === 'raw') {
-            res.setHeader('Content-Type', 'application/json; charset=utf-8');
-            res.setHeader('Content-Disposition', `attachment; filename="${sanitized}"`);
-            res.sendFile(filePath);
-            console.log(`[KeyServer] [${new Date().toISOString()}] Served (raw): ${sanitized} to ${req.ip}`);
+            try {
+              const config = JSON.parse(content);
+              const proxyTypes = ['shadowsocks', 'vmess', 'vless', 'trojan', 'hysteria2'];
+              const proxyOutbounds = Array.isArray(config.outbounds)
+                ? config.outbounds.filter(ob => proxyTypes.includes(ob.type))
+                : [];
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.send(JSON.stringify({ outbounds: proxyOutbounds }, null, 2));
+              console.log(`[KeyServer] [${new Date().toISOString()}] Served (raw sing-box sub, ${proxyOutbounds.length} nodes): ${sanitized} to ${req.ip}`);
+            } catch (_) {
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.sendFile(filePath);
+              console.log(`[KeyServer] [${new Date().toISOString()}] Served (raw fallback): ${sanitized} to ${req.ip}`);
+            }
             return;
           }
           

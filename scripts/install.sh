@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Customer Management Portal Installer
-# Version: v1.8.10
+# Version: v1.8.11
 # Features:
 #   - Downloads latest release tarball instead of cloning
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
@@ -14,7 +14,11 @@ set -euo pipefail
 #   - Integrity self-check if CMP_INSTALL_EXPECTED_SHA256 provided
 #   - GUI Update Manager (v1.6.0): in-panel version check + one-click unattended updates via SSE streaming
 #   - Update script self-healing: auto-installs prerequisites, retries on vite failure (v1.7.0)
-#   - JSON Generator v1.8.10: fix TLS/SNI/ALPN/fingerprint/REALITY in V2Box subscription URIs
+#   - KeyServer subscription formats fixed (v1.8.11):
+#       * ?format=raw: now serves proxy-only sing-box JSON {"outbounds":[...]} (strips selector/urltest/direct/block)
+#         → V2Box/NekoBox can parse as sing-box subscription and show individual selectable nodes
+#       * ?format=v2ray: removed Content-Disposition:attachment so URL can be used for config import
+#       * default (base64): unchanged — works with all standard V2Ray/V2Box subscription clients
 #       * keyserver outboundToURI: VMess now emits fp, alpn, allowInsecure
 #       * keyserver outboundToURI: VLESS now emits security=reality, pbk, sid, fp (REALITY nodes)
 #       * keyserver outboundToURI: VLESS TLS now emits alpn, allowInsecure
