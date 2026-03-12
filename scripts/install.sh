@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Customer Management Portal Installer
-# Version: v1.8.6
+# Version: v1.8.9
 # Features:
 #   - Downloads latest release tarball instead of cloning
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
@@ -14,12 +14,13 @@ set -euo pipefail
 #   - Integrity self-check if CMP_INSTALL_EXPECTED_SHA256 provided
 #   - GUI Update Manager (v1.6.0): in-panel version check + one-click unattended updates via SSE streaming
 #   - Update script self-healing: auto-installs prerequisites, retries on vite failure (v1.7.0)
-#   - JSON Generator: full rewrite to native xray/V2Ray format (v1.8.5)
-#       * All per-node V2Box fields now populated: Utls/fingerprint, SNI, ALPN, allowInsecure,
-#         Fragment (sockopt.dialerProxy), Head Type, PublicKey, ShortId, SpiderX
-#       * SOCKS (10808) + HTTP (10809) inbounds replace TUN inbound
-#       * freedom-fragment outbound for TLS fragmentation anti-DPI (per-node sockopt)
-#       * Observatory + balancer replace urltest/selector groups
+#   - JSON Generator reverted to sing-box format — restores multi-node V2Box subscription (v1.8.9)
+#       * xray format (v1.8.5) caused V2Box to treat entire config as 1 "JSON" entry (0 usable nodes)
+#       * sing-box outbounds ("type" field) display as individual selectable nodes in V2Box
+#       * buildSingboxTLS: REALITY (tls.reality.public_key/short_id + tls.utls.fingerprint)
+#       * TLS: utls.fingerprint from clientFingerprint/URI fp; alpn from forceAlpn or node.alpn
+#       * allowInsecure → tls.insecure; forceAlpn → tls.alpn (Anti-DPI panel controls)
+#       * Hysteria2: tls.alpn:["h3"] + optional utls when anti-DPI enabled
 #       * All 5 protocols: Shadowsocks, VMess, VLESS, VLESS+REALITY, Trojan, Hysteria2
 #   - Logo persistence across updates: uploads/logos excluded from rsync --delete (v1.8.0)
 #   - Logo and avatar files restored after GUI update (belt-and-suspenders, v1.8.4)
