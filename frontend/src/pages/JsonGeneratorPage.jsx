@@ -27,6 +27,8 @@ const JsonGeneratorPage = () => {
   const [antiDPI, setAntiDPI] = useState(false);
   const [tcpConcurrent, setTcpConcurrent] = useState(true);
   const [clientFingerprint, setClientFingerprint] = useState('random');
+  const [allowInsecure, setAllowInsecure] = useState(true);
+  const [forceAlpn, setForceAlpn] = useState(true);
   const [dohEnabled, setDohEnabled] = useState(true);
   const [dohServer, setDohServer] = useState('https://1.1.1.1/dns-query');
   const [fakeDNS, setFakeDNS] = useState(false);
@@ -159,6 +161,8 @@ const JsonGeneratorPage = () => {
       if (saved) {
         if (saved.tcpConcurrent != null) setTcpConcurrent(saved.tcpConcurrent);
         if (saved.clientFingerprint) setClientFingerprint(saved.clientFingerprint);
+        if (saved.allowInsecure != null) setAllowInsecure(saved.allowInsecure);
+        if (saved.forceAlpn != null) setForceAlpn(saved.forceAlpn);
         if (saved.dohEnabled != null) setDohEnabled(saved.dohEnabled);
         if (saved.dohServer) setDohServer(saved.dohServer);
         if (saved.fakeDNS != null) setFakeDNS(saved.fakeDNS);
@@ -185,8 +189,9 @@ const JsonGeneratorPage = () => {
 
   const saveAntiDPISettings = () => {
     localStorage.setItem('json_antidpi_settings', JSON.stringify({
-      antiDPI, tcpConcurrent, clientFingerprint, dohEnabled, dohServer,
-      fakeDNS, tlsFragment, fragmentLength, fragmentInterval, ssPrefix, ssPrefixValue
+      antiDPI, tcpConcurrent, clientFingerprint, allowInsecure, forceAlpn,
+      dohEnabled, dohServer, fakeDNS, tlsFragment, fragmentLength, fragmentInterval,
+      ssPrefix, ssPrefixValue
     }));
     setAntiDPISaved(true);
     setTimeout(() => setAntiDPISaved(false), 2000);
@@ -650,15 +655,17 @@ const JsonGeneratorPage = () => {
 
     if (ss.security === 'tls') {
       const sni = node.servername || node.sni || node['ws-opts']?.headers?.Host || node.server;
-      // Always set allowInsecure, fingerprint, and alpn — V2Box shows all three as named fields
-      const tlsSettings = { serverName: sni, allowInsecure: node['skip-cert-verify'] !== false };
-      // Fingerprint: use anti-DPI setting if enabled, otherwise use parsed fp or default 'chrome'
+      // allowInsecure: use anti-DPI toggle when enabled, otherwise true (VPN servers use self-signed certs)
+      const insecure = antiDPI ? allowInsecure : (node['skip-cert-verify'] !== false);
+      const tlsSettings = { serverName: sni, allowInsecure: insecure };
+      // Fingerprint: always set — anti-DPI fp or URI fp param or 'chrome'
       tlsSettings.fingerprint = antiDPI ? clientFingerprint : (node['client-fingerprint'] || 'chrome');
-      // ALPN: always set sensible defaults so V2Box shows the field
+      // ALPN: use anti-DPI forceAlpn override, else always set sensible defaults
       const defaultAlpn = network === 'ws' ? ['http/1.1'] : ['h2', 'http/1.1'];
-      tlsSettings.alpn = node.alpn
-        ? (Array.isArray(node.alpn) ? node.alpn : [node.alpn])
-        : defaultAlpn;
+      tlsSettings.alpn = (antiDPI && !forceAlpn)
+        ? []
+        : (node.alpn ? (Array.isArray(node.alpn) ? node.alpn : [node.alpn]) : defaultAlpn);
+      if (tlsSettings.alpn.length === 0) delete tlsSettings.alpn;
       ss.tlsSettings = tlsSettings;
     } else if (ss.security === 'reality') {
       const sni = node.servername || node.sni || node.server;
@@ -1200,6 +1207,30 @@ const JsonGeneratorPage = () => {
                   <option value="qq">QQ Browser</option>
                 </select>
                 <span className="setting-hint">Disguise TLS handshake as a normal browser</span>
+              </div>
+
+              <div className="form-group checkbox">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={allowInsecure}
+                    onChange={(e) => setAllowInsecure(e.target.checked)}
+                  />
+                  Allow Insecure TLS
+                </label>
+                <span className="setting-hint">Skip TLS certificate verification (V2Box: allow insecure). Required for VPN servers with self-signed certs.</span>
+              </div>
+
+              <div className="form-group checkbox">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={forceAlpn}
+                    onChange={(e) => setForceAlpn(e.target.checked)}
+                  />
+                  Force ALPN (h2 + http/1.1)
+                </label>
+                <span className="setting-hint">Set ALPN negotiation on every TLS node (V2Box: ALPN field). Helps bypass protocol-based DPI filters.</span>
               </div>
 
               <div className="form-group checkbox">
