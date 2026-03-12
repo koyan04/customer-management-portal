@@ -309,9 +309,13 @@ SERVICE_SRC="$APP_DIR/backend/systemd/cmp-backend.service"
 SERVICE_DEST="/etc/systemd/system/cmp-backend.service"
 if [ -f "$SERVICE_SRC" ]; then
     echo "→ Updating systemd service file..."
-    cp "$SERVICE_SRC" "$SERVICE_DEST"
-    systemctl daemon-reload
-    echo "  ✓ Service file updated and daemon reloaded"
+    if cp "$SERVICE_SRC" "$SERVICE_DEST" 2>/dev/null; then
+        systemctl daemon-reload
+        echo "  ✓ Service file updated and daemon reloaded"
+    else
+        echo "  ⚠ Could not write to $SERVICE_DEST (read-only filesystem or permission denied) — skipping service file update"
+        echo "    The existing service file will continue to be used."
+    fi
     echo ""
 else
     echo "  ⚠ cmp-backend.service not found in repo, skipping service file update"
