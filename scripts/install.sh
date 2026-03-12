@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Customer Management Portal Installer
-# Version: v1.8.13
+# Version: v1.8.14
 # Features:
 #   - Downloads latest release tarball instead of cloning
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
@@ -14,7 +14,9 @@ set -euo pipefail
 #   - Integrity self-check if CMP_INSTALL_EXPECTED_SHA256 provided
 #   - GUI Update Manager (v1.6.0): in-panel version check + one-click unattended updates via SSE streaming
 #   - Update script self-healing: auto-installs prerequisites, retries on vite failure (v1.7.0)
-#   - SS prefix now included in all subscription output formats (v1.8.13):
+#   - Fix: manual data limit now saved to subscription metadata (v1.8.14)
+#       * saveToServer was not including data_limit_gb in metadata when no user selected
+#       * V2Box showed 100 GB regardless of the Data Limit field value
 #       * convertNodeToSingbox stores _prefix in sing-box SS outbound when ssPrefix enabled
 #       * outboundToURI emits ss://.../?outline=1&prefix=... format (keyserver -> V2Box)
 #       * nodeToURI emits same format for .txt subscription export

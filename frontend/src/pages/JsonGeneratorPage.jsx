@@ -889,6 +889,7 @@ const JsonGeneratorPage = () => {
         if (selectedUser.data_limit_gb) metadata.data_limit_gb = selectedUser.data_limit_gb;
         if (selectedUser.expire_date) metadata.expire_date = selectedUser.expire_date.substring(0, 10);
       } else {
+        if (!unlim && dataLimit) metadata.data_limit_gb = dataLimit;
         if (expireDate) metadata.expire_date = expireDate;
       }
       if (unlim) metadata.unlimited = true;
