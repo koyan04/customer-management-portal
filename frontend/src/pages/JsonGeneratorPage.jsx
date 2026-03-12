@@ -616,279 +616,198 @@ const JsonGeneratorPage = () => {
       'IP-CIDR,13.248.212.0/24,no-resolve', 'IP-CIDR,76.223.92.0/24,no-resolve'],
   };
 
-  // ── sing-box format helpers ──
+  // ── xray/V2Ray format helpers ──
 
-  // Convert internal Clash-style node to sing-box outbound
-  const convertNodeToSingbox = (node) => {
-    const base = { server: node.server, server_port: node.port };
+  // Build xray streamSettings: network transport, TLS/REALITY security, and anti-DPI sockopt
+  const buildXrayStreamSettings = (node) => {
+    const ss = {};
+    const network = node.network || 'tcp';
+    ss.network = network;
 
-    // TLS object builder
-    const buildTLS = () => {
-      const hasTLS = node.tls || node.type === 'trojan' || node.type === 'hysteria2' ||
-        (node.type === 'vless' && node.network !== 'ws');
-      // For VLESS WS, check tls explicitly
-      const needsTLS = hasTLS || (node.type === 'vless' && node.tls);
-      if (!needsTLS) return undefined;
-      const tls = { enabled: true, insecure: node['skip-cert-verify'] !== false };
+    // Determine security mode
+    const isReality = node.security === 'reality' || node.tls === 'reality';
+    const needsTLS = node.tls || node.type === 'trojan' || node.type === 'vless' || node.type === 'hysteria2';
+    ss.security = isReality ? 'reality' : (needsTLS ? 'tls' : 'none');
+
+    if (ss.security === 'tls') {
       const sni = node.servername || node.sni || node['ws-opts']?.headers?.Host || node.server;
-      if (sni) tls.server_name = sni;
-      if (node.alpn) tls.alpn = Array.isArray(node.alpn) ? node.alpn : [node.alpn];
-      // uTLS fingerprint for anti-DPI
-      if (antiDPI) {
-        tls.utls = { enabled: true, fingerprint: clientFingerprint === 'random' ? 'random' : clientFingerprint };
-      } else if (node['client-fingerprint']) {
-        tls.utls = { enabled: true, fingerprint: node['client-fingerprint'] };
-      }
-      return tls;
-    };
+      const tlsSettings = { serverName: sni, allowInsecure: node['skip-cert-verify'] !== false };
+      const fp = antiDPI ? clientFingerprint : (node['client-fingerprint'] || '');
+      if (fp) tlsSettings.fingerprint = fp;
+      const defaultAlpn = network === 'ws' ? ['http/1.1'] : ['h2', 'http/1.1'];
+      const alpnArr = node.alpn
+        ? (Array.isArray(node.alpn) ? node.alpn : [node.alpn])
+        : (antiDPI ? defaultAlpn : []);
+      if (alpnArr.length > 0) tlsSettings.alpn = alpnArr;
+      ss.tlsSettings = tlsSettings;
+    } else if (ss.security === 'reality') {
+      ss.realitySettings = {
+        serverName: node.sni || node.servername || node.server,
+        fingerprint: antiDPI ? clientFingerprint : (node['client-fingerprint'] || 'chrome'),
+        publicKey: node.publicKey || '',
+        shortId: node.shortId || '',
+        spiderX: node.spiderX || '/'
+      };
+    }
 
-    // Transport object builder (ws, grpc, httpupgrade, etc.)
-    const buildTransport = () => {
-      const net = node.network;
-      if (!net || net === 'tcp') return undefined;
-      if (net === 'ws') {
-        const t = { type: 'ws' };
-        if (node['ws-opts']?.path) t.path = node['ws-opts'].path;
-        if (node['ws-opts']?.headers) t.headers = node['ws-opts'].headers;
-        if (node['ws-opts']?.['max-early-data']) t.early_data_header_name = 'Sec-WebSocket-Protocol';
-        return t;
-      }
-      if (net === 'grpc') {
-        return { type: 'grpc', service_name: node['grpc-opts']?.['grpc-service-name'] || '' };
-      }
-      if (net === 'h2') {
-        const t = { type: 'http' };
-        if (node['h2-opts']?.path) t.path = node['h2-opts'].path;
-        if (node['h2-opts']?.host) t.host = node['h2-opts'].host;
-        return t;
-      }
-      return undefined;
-    };
+    // Network-specific transport settings
+    if (network === 'ws') {
+      ss.wsSettings = {
+        path: node['ws-opts']?.path || '/',
+        headers: node['ws-opts']?.headers || { Host: node.server }
+      };
+    } else if (network === 'grpc') {
+      ss.grpcSettings = { serviceName: node['grpc-opts']?.['grpc-service-name'] || '', multiMode: false };
+    } else if (network === 'h2') {
+      ss.httpSettings = { path: node['h2-opts']?.path || '/', host: node['h2-opts']?.host || [node.server] };
+    } else if (network === 'httpupgrade') {
+      ss.httpupgradeSettings = { path: node['httpupgrade-opts']?.path || '/', host: node.server };
+    } else {
+      // TCP: explicit header type — shown as "Head Type" in V2Box
+      ss.tcpSettings = { header: { type: 'none' } };
+    }
+
+    // sockopt: anti-DPI TCP options applied per-node
+    const sockopt = {};
+    if (antiDPI && tcpConcurrent) { sockopt.TcpFastOpen = true; sockopt.tcpMptcp = true; }
+    if (antiDPI && tlsFragment) { sockopt.dialerProxy = 'freedom-fragment'; }
+    if (Object.keys(sockopt).length > 0) ss.sockopt = sockopt;
+
+    return ss;
+  };
+
+  // Convert internal node object to xray/V2Ray outbound format
+  const convertNodeToXray = (node) => {
+    const tag = node.name;
+    const address = node.server;
+    const port = node.port;
+    const streamSettings = buildXrayStreamSettings(node);
+    const mux = { enabled: false };
 
     switch (node.type) {
-      case 'ss': {
-        const out = { ...base, type: 'shadowsocks', tag: node.name, method: node.cipher, password: node.password };
-        const tls = buildTLS();
-        if (tls) out.tls = tls;
-        return out;
-      }
-      case 'vmess': {
-        const out = {
-          ...base, type: 'vmess', tag: node.name,
-          uuid: node.uuid, alter_id: node.alterId || 0,
-          security: node.cipher || 'auto'
+      case 'ss':
+        return {
+          tag, protocol: 'shadowsocks',
+          settings: { servers: [{ address, port, method: node.cipher, password: node.password, uot: true, uotVersion: 2 }] },
+          streamSettings, mux
         };
-        const tls = buildTLS();
-        if (tls) out.tls = tls;
-        const transport = buildTransport();
-        if (transport) out.transport = transport;
-        return out;
-      }
-      case 'vless': {
-        const out = { ...base, type: 'vless', tag: node.name, uuid: node.uuid };
-        if (node.flow && node.flow.trim()) out.flow = node.flow;
-        const tls = buildTLS();
-        // VLESS almost always uses TLS
-        if (tls) {
-          out.tls = tls;
-        } else {
-          out.tls = { enabled: true, insecure: true, server_name: node.server };
-          if (antiDPI) out.tls.utls = { enabled: true, fingerprint: clientFingerprint };
-        }
-        const transport = buildTransport();
-        if (transport) out.transport = transport;
-        return out;
-      }
-      case 'trojan': {
-        const out = { ...base, type: 'trojan', tag: node.name, password: node.password };
-        const tls = buildTLS();
-        if (tls) {
-          out.tls = tls;
-        } else {
-          out.tls = { enabled: true, insecure: true, server_name: node.sni || node.server };
-          if (antiDPI) out.tls.utls = { enabled: true, fingerprint: clientFingerprint };
-        }
-        const transport = buildTransport();
-        if (transport) out.transport = transport;
-        return out;
-      }
+      case 'vmess':
+        return {
+          tag, protocol: 'vmess',
+          settings: { vnext: [{ address, port, users: [{ id: node.uuid, alterId: node.alterId || 0, security: node.cipher || 'auto', level: 8 }] }] },
+          streamSettings, mux
+        };
+      case 'vless':
+        return {
+          tag, protocol: 'vless',
+          settings: { vnext: [{ address, port, users: [{ id: node.uuid, flow: node.flow || '', encryption: 'none', level: 8 }] }] },
+          streamSettings, mux
+        };
+      case 'trojan':
+        return {
+          tag, protocol: 'trojan',
+          settings: { servers: [{ address, port, password: node.password, level: 8 }] },
+          streamSettings, mux
+        };
       case 'hysteria2': {
-        const out = { ...base, type: 'hysteria2', tag: node.name, password: node.password };
-        out.tls = {
-          enabled: true,
-          insecure: node['skip-cert-verify'] !== false,
-          server_name: node.sni || node.server
+        // Hysteria2 uses V2Box's dedicated core (not xray) — output in V2Box-compatible format
+        const hy2tls = {
+          serverName: node.sni || address,
+          allowInsecure: node['skip-cert-verify'] !== false,
+          alpn: node.alpn ? (Array.isArray(node.alpn) ? node.alpn : [node.alpn]) : ['h3']
         };
-        if (node.alpn) out.tls.alpn = Array.isArray(node.alpn) ? node.alpn : [node.alpn];
-        return out;
+        if (antiDPI) hy2tls.fingerprint = clientFingerprint;
+        return {
+          tag, protocol: 'hysteria2',
+          settings: { servers: [{ address, port, password: node.password }] },
+          streamSettings: { network: 'udp', security: 'tls', tlsSettings: hy2tls }
+        };
       }
       default:
-        return { ...base, type: node.type, tag: node.name };
+        return { tag, protocol: node.type };
     }
   };
 
   const generateJSON = () => {
-    const displayName = unlim ? `${groupName} (Unlimited)` : groupName;
-    const mainTag = 'proxy';
+    const config = {};
 
     // ── Log ──
-    const config = {
-      log: { level: 'info' }
-    };
+    config.log = { loglevel: 'warning', access: 'none' };
 
     // ── DNS ──
-    const dnsServers = [];
-    const dnsRules = [];
-
     if (antiDPI && dohEnabled) {
-      dnsServers.push({
-        tag: 'remote-doh',
-        address: dohServer,
-        address_resolver: 'local-dns',
-        detour: mainTag
-      });
-      // Add extra DoH servers
-      if (dohServer !== 'https://1.1.1.1/dns-query') {
-        dnsServers.push({ tag: 'cf-doh', address: 'https://1.1.1.1/dns-query', address_resolver: 'local-dns', detour: mainTag });
-      }
-      if (dohServer !== 'https://dns.google/dns-query') {
-        dnsServers.push({ tag: 'google-doh', address: 'https://dns.google/dns-query', address_resolver: 'local-dns', detour: mainTag });
-      }
-      dnsServers.push({ tag: 'local-dns', address: 'local', detour: 'direct' });
-
-      if (fakeDNS) {
-        dnsServers.push({ tag: 'fakeip', address: 'fakeip' });
-      }
-
-      // DNS rule: outbound any → local (prevent DNS loops)
-      dnsRules.push({ outbound: 'any', server: 'local-dns' });
-
-      if (fakeDNS) {
-        // FakeIP for A/AAAA queries except filtered domains
-        dnsRules.push({
-          query_type: ['A', 'AAAA'],
-          server: 'fakeip',
-          rewrite_ttl: 1
-        });
-      }
-
-      const dns = {
-        servers: dnsServers,
-        rules: dnsRules,
-        final: 'remote-doh',
-        independent_cache: true
-      };
-
-      if (fakeDNS) {
-        dns.fakeip = {
-          enabled: true,
-          inet4_range: '198.18.0.0/15',
-          inet6_range: 'fc00::/18'
-        };
-      }
-
-      config.dns = dns;
+      const dnsServers = [dohServer];
+      if (dohServer !== 'https://1.1.1.1/dns-query') dnsServers.push('https://1.1.1.1/dns-query');
+      if (dohServer !== 'https://dns.google/dns-query') dnsServers.push('https://dns.google/dns-query');
+      dnsServers.push('localhost');
+      config.dns = { servers: dnsServers };
     } else {
-      config.dns = {
-        servers: [{ tag: 'default-dns', address: 'local' }],
-        final: 'default-dns'
-      };
+      config.dns = { servers: ['8.8.8.8', '1.1.1.1', 'localhost'] };
     }
 
     // ── Inbounds ──
+    const sniffDest = antiDPI && fakeDNS
+      ? ['http', 'tls', 'quic', 'fakedns']
+      : ['http', 'tls', 'quic'];
     config.inbounds = [
       {
-        type: 'tun',
-        tag: 'tun-in',
-        inet4_address: '172.19.0.1/30',
-        inet6_address: 'fdfe:dcba:9876::1/126',
-        auto_route: true,
-        strict_route: true,
-        stack: 'mixed',
-        sniff: true
+        tag: 'socks',
+        port: 10808,
+        listen: '127.0.0.1',
+        protocol: 'socks',
+        settings: { auth: 'noauth', udp: true },
+        sniffing: { enabled: true, destOverride: sniffDest }
       },
       {
-        type: 'mixed',
-        tag: 'mixed-in',
-        listen: '::',
-        listen_port: 7890,
-        sniff: true
+        tag: 'http',
+        port: 10809,
+        listen: '127.0.0.1',
+        protocol: 'http',
+        settings: {},
+        sniffing: { enabled: true, destOverride: ['http', 'tls'] }
       }
     ];
 
     // ── Outbounds ──
-    const nodeOutbounds = activeNodes.map(n => convertNodeToSingbox(n));
+    const nodeOutbounds = activeNodes.map(n => convertNodeToXray(n));
     const nodeTags = nodeOutbounds.map(n => n.tag);
+    const outbounds = [...nodeOutbounds];
 
-    const outbounds = [];
-
-    // Main selector
-    const selectorOutbounds = ['♻️ Auto Switch', '⚡ Fastest', '🛡️ Failover'];
-    if (loadBalance) selectorOutbounds.push(staticBalance ? '⚖️ Balanced' : '⚖️ Load Balance');
-    selectorOutbounds.push(...nodeTags, 'direct');
-    outbounds.push({ type: 'selector', tag: mainTag, outbounds: selectorOutbounds, default: '♻️ Auto Switch' });
-
-    // Auto Switch (url-test, longer interval)
-    outbounds.push({
-      type: 'urltest', tag: '♻️ Auto Switch',
-      outbounds: [...nodeTags],
-      url: 'http://www.gstatic.com/generate_204',
-      interval: `${autoSwitchInterval}s`,
-      tolerance: 150
-    });
-
-    // Fastest (url-test, shorter interval)
-    outbounds.push({
-      type: 'urltest', tag: '⚡ Fastest',
-      outbounds: [...nodeTags],
-      url: 'http://www.gstatic.com/generate_204',
-      interval: `${checkInterval}s`,
-      tolerance: 50
-    });
-
-    // Failover (url-test with high tolerance acts like fallback)
-    outbounds.push({
-      type: 'urltest', tag: '🛡️ Failover',
-      outbounds: [...nodeTags],
-      url: 'http://www.gstatic.com/generate_204',
-      interval: `${checkInterval}s`,
-      tolerance: 300
-    });
-
-    // Load Balance (urltest with idle_timeout for session spread)
-    if (loadBalance) {
+    // Anti-DPI: fragment freedom outbound — each node's sockopt.dialerProxy points here
+    if (antiDPI && tlsFragment) {
       outbounds.push({
-        type: 'urltest', tag: staticBalance ? '⚖️ Balanced' : '⚖️ Load Balance',
-        outbounds: [...nodeTags],
-        url: 'http://www.gstatic.com/generate_204',
-        interval: `${checkInterval}s`,
-        tolerance: 100,
-        idle_timeout: '30m'
+        tag: 'freedom-fragment',
+        protocol: 'freedom',
+        settings: {
+          fragment: { packets: 'tlshello', length: fragmentLength, interval: fragmentInterval }
+        },
+        streamSettings: { sockopt: { TcpFastOpen: true, tcpMptcp: true } }
       });
     }
 
-    // Proxy node outbounds
-    outbounds.push(...nodeOutbounds);
-
-    // Built-in outbounds
-    outbounds.push({ type: 'direct', tag: 'direct' });
-    outbounds.push({ type: 'dns', tag: 'dns-out' });
-    outbounds.push({ type: 'block', tag: 'block' });
+    // Direct outbound (with sockopt when tcpConcurrent is on)
+    if (antiDPI && tcpConcurrent) {
+      outbounds.push({ tag: 'direct', protocol: 'freedom', settings: {}, streamSettings: { sockopt: { TcpFastOpen: true, tcpMptcp: true } } });
+    } else {
+      outbounds.push({ tag: 'direct', protocol: 'freedom', settings: {} });
+    }
+    outbounds.push({ tag: 'dns-out', protocol: 'dns' });
+    outbounds.push({ tag: 'block', protocol: 'blackhole', settings: {} });
 
     config.outbounds = outbounds;
 
-    // ── Route ──
+    // ── Routing ──
     const routeRules = [];
 
     // DNS hijack
-    routeRules.push({ protocol: 'dns', outbound: 'dns-out' });
+    routeRules.push({ type: 'field', protocol: ['dns'], port: '53', outboundTag: 'dns-out' });
 
-    // Private IP bypass
-    routeRules.push({ ip_is_private: true, outbound: 'direct' });
+    // Private IPs → direct
+    routeRules.push({ type: 'field', ip: ['geoip:private'], outboundTag: 'direct' });
 
-    // Group app routing rules by target to minimise rule objects
-    const proxyDomainSuffix = [], proxyDomainKeyword = [], proxyIpCidr = [];
-    const directDomainSuffix = [], directDomainKeyword = [], directIpCidr = [];
+    // Build domain/IP arrays — xray combines suffix + keyword in one 'domain' field
+    const proxyDomains = [], proxyIPs = [];
+    const directDomains = [], directIPs = [];
 
     Object.entries(appRouting).forEach(([app, routeTarget]) => {
       const domains = appDomains[app] || [];
@@ -898,73 +817,72 @@ const JsonGeneratorPage = () => {
         const ruleType = parts[0];
         const ruleValue = parts[1];
         if (ruleType === 'DOMAIN-SUFFIX') {
-          (isProxy ? proxyDomainSuffix : directDomainSuffix).push(ruleValue);
+          (isProxy ? proxyDomains : directDomains).push(ruleValue);
         } else if (ruleType === 'DOMAIN-KEYWORD') {
-          (isProxy ? proxyDomainKeyword : directDomainKeyword).push(ruleValue);
+          (isProxy ? proxyDomains : directDomains).push(`keyword:${ruleValue}`);
         } else if (ruleType === 'IP-CIDR' || ruleType === 'IP-CIDR6') {
-          (isProxy ? proxyIpCidr : directIpCidr).push(ruleValue);
+          (isProxy ? proxyIPs : directIPs).push(ruleValue);
         }
       });
     });
 
-    // Custom proxy rules
+    // Custom rules
     proxyRules.forEach(r => {
-      if (r.match(/^\d+\.\d+\.\d+\.\d+/)) proxyIpCidr.push(`${r}/32`);
-      else proxyDomainSuffix.push(r);
+      if (r.match(/^\d+\.\d+\.\d+\.\d+/)) proxyIPs.push(`${r}/32`);
+      else proxyDomains.push(r);
     });
-    // Custom direct rules
     directRules.forEach(r => {
-      if (r.match(/^\d+\.\d+\.\d+\.\d+/)) directIpCidr.push(`${r}/32`);
-      else directDomainSuffix.push(r);
+      if (r.match(/^\d+\.\d+\.\d+\.\d+/)) directIPs.push(`${r}/32`);
+      else directDomains.push(r);
     });
 
-    // Proxy routing rules (each field type separate — sing-box ANDs different fields)
-    if (proxyDomainSuffix.length > 0) routeRules.push({ domain_suffix: proxyDomainSuffix, outbound: mainTag });
-    if (proxyDomainKeyword.length > 0) routeRules.push({ domain_keyword: proxyDomainKeyword, outbound: mainTag });
-    if (proxyIpCidr.length > 0) routeRules.push({ ip_cidr: proxyIpCidr, outbound: mainTag });
+    const hasNodes = nodeTags.length > 0;
 
-    // Direct routing rules
-    if (directDomainSuffix.length > 0) routeRules.push({ domain_suffix: directDomainSuffix, outbound: 'direct' });
-    if (directDomainKeyword.length > 0) routeRules.push({ domain_keyword: directDomainKeyword, outbound: 'direct' });
-    if (directIpCidr.length > 0) routeRules.push({ ip_cidr: directIpCidr, outbound: 'direct' });
+    if (proxyDomains.length > 0) {
+      const rule = { type: 'field', domain: proxyDomains };
+      if (hasNodes) rule.balancerTag = 'balancer-auto'; else rule.outboundTag = 'direct';
+      routeRules.push(rule);
+    }
+    if (proxyIPs.length > 0) {
+      const rule = { type: 'field', ip: proxyIPs };
+      if (hasNodes) rule.balancerTag = 'balancer-auto'; else rule.outboundTag = 'direct';
+      routeRules.push(rule);
+    }
+    if (directDomains.length > 0) routeRules.push({ type: 'field', domain: directDomains, outboundTag: 'direct' });
+    if (directIPs.length > 0) routeRules.push({ type: 'field', ip: directIPs, outboundTag: 'direct' });
 
-    config.route = {
-      rules: routeRules,
-      final: globalDefault === 'Proxy' ? mainTag : 'direct',
-      auto_detect_interface: true
-    };
-
-    // ── IPv6 ──
-    config.inbounds.forEach(inb => {
-      if (inb.type === 'tun') inb.auto_redirect_output_mark = 8872; // keep existing
-    });
-
-    // ── Anti-DPI extras ──
-    if (antiDPI && tcpConcurrent) {
-      config.dial_fields = { tcp_multi_path: true, tcp_fast_open: true };
+    // Final catch-all
+    if (globalDefault === 'Proxy' && hasNodes) {
+      routeRules.push({ type: 'field', network: 'tcp,udp', balancerTag: 'balancer-auto' });
+    } else {
+      routeRules.push({ type: 'field', network: 'tcp,udp', outboundTag: 'direct' });
     }
 
-    if (antiDPI && tlsFragment) {
-      config.tls_fragment = {
-        enabled: true,
-        size: fragmentLength,
-        sleep: fragmentInterval
+    config.routing = {
+      domainStrategy: 'IPIfNonMatch',
+      domainMatcher: 'hybrid',
+      rules: routeRules
+    };
+
+    // Balancer: leastping = auto latency select; roundRobin = load balance
+    if (hasNodes) {
+      const strategyType = loadBalance ? 'roundRobin' : 'leastping';
+      config.routing.balancers = [{
+        tag: 'balancer-auto',
+        selector: nodeTags,
+        strategy: { type: strategyType }
+      }];
+    }
+
+    // ── Observatory (latency probing for balancer) ──
+    if (hasNodes) {
+      config.observatory = {
+        subjectSelector: nodeTags,
+        probeUrl: 'http://www.gstatic.com/generate_204',
+        probeInterval: `${autoSwitchInterval}s`,
+        enableConcurrency: true
       };
     }
-
-    // ── IPv6 route ──
-    config.route.final_ipv6 = true;
-
-    // ── Experimental ──
-    config.experimental = {
-      clash_api: {
-        external_controller: '127.0.0.1:9090'
-      },
-      cache_file: {
-        enabled: true,
-        store_fakeip: !!(antiDPI && fakeDNS)
-      }
-    };
 
     const jsonStr = JSON.stringify(config, null, 2);
     setGeneratedJson(jsonStr);
