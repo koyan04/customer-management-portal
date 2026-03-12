@@ -867,7 +867,7 @@ const JsonGeneratorPage = () => {
 
   const [serverSaveStatus, setServerSaveStatus] = useState('');
   const [serverSaveMsg, setServerSaveMsg] = useState('');
-  const [subUrl, setSubUrl] = useState('');
+  const [subUrls, setSubUrls] = useState(null); // { base: '', raw: '', v2ray: '' }
 
   const saveToServer = async () => {
     if (!generatedJson.trim()) return;
@@ -910,8 +910,9 @@ const JsonGeneratorPage = () => {
         savedTxtToken = txtRes.data.token || txtRes.data.filename;
       }
 
-      // Build subscription URL for the .txt file using token + optional publicDomain
-      if (savedTxtToken) {
+      // Build subscription URLs from the JSON file token
+      const jsonToken = res.data.token || res.data.filename;
+      if (jsonToken) {
         const ksConfig = await axios.get(`${backendOrigin}/api/keyserver/config`, {
           headers: { Authorization: `Bearer ${token}` }
         });
@@ -922,8 +923,12 @@ const JsonGeneratorPage = () => {
           ? (rawDomain.match(/^https?:\/\//) ? rawDomain : `http://${rawDomain}`).replace(/\/+$/, '')
           : '';
         const baseHost = normDomain || `http://${window.location.hostname}:${ksPort}`;
-        const url = `${baseHost}/sub/${savedTxtToken}?key=${ksKey}`;
-        setSubUrl(url);
+        const base = `${baseHost}/sub/${jsonToken}?key=${ksKey}`;
+        setSubUrls({
+          base,
+          raw: `${base}&format=raw`,
+          v2ray: `${base}&format=v2ray`
+        });
       }
 
       setServerSaveStatus('saved');
@@ -1526,23 +1531,23 @@ const JsonGeneratorPage = () => {
               </span>
             )}
           </div>
-          {subUrl && (
-            <div className="sub-url-row">
-              <span className="sub-url-label">V2Box Sub URL:</span>
-              <input
-                type="text"
-                className="sub-url-input"
-                value={subUrl}
-                readOnly
-                onClick={e => e.target.select()}
-              />
-              <button
-                className="btn-copy-url"
-                onClick={() => { navigator.clipboard.writeText(subUrl); }}
-                title="Copy URL"
-              >
-                <FaCopy /> Copy
-              </button>
+          {subUrls && (
+            <div className="sub-urls-panel">
+              <div className="sub-url-row">
+                <span className="sub-url-label" title="Base64 proxy URI list — use with V2Box / V2RayNG / any standard subscription client">📋 Sub URL:</span>
+                <input type="text" className="sub-url-input" value={subUrls.base} readOnly onClick={e => e.target.select()} />
+                <button className="btn-copy-url" onClick={() => navigator.clipboard.writeText(subUrls.base)} title="Copy — paste into V2Box or V2RayNG 'Add Subscription'"><FaCopy /></button>
+              </div>
+              <div className="sub-url-row">
+                <span className="sub-url-label" title="Proxy-only sing-box JSON — use with V2Box or NekoBox native sing-box subscription">📦 Raw URL:</span>
+                <input type="text" className="sub-url-input" value={subUrls.raw} readOnly onClick={e => e.target.select()} />
+                <button className="btn-copy-url" onClick={() => navigator.clipboard.writeText(subUrls.raw)} title="Copy — paste into V2Box 'Add sing-box Subscription'"><FaCopy /></button>
+              </div>
+              <div className="sub-url-row">
+                <span className="sub-url-label" title="Full V2Ray/Xray JSON config — use with V2RayNG 'import v2ray json from clipboard'">⚙️ V2Ray URL:</span>
+                <input type="text" className="sub-url-input" value={subUrls.v2ray} readOnly onClick={e => e.target.select()} />
+                <button className="btn-copy-url" onClick={() => navigator.clipboard.writeText(subUrls.v2ray)} title="Copy — fetch and import in V2RayNG 'import v2ray json from clipboard'"><FaCopy /></button>
+              </div>
             </div>
           )}
           <textarea

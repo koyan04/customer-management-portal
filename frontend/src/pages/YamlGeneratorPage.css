@@ -668,18 +668,29 @@
   color: #f44336;
 }
 
+.sub-urls-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.75rem;
+  background: rgba(0, 180, 120, 0.06);
+  border: 1px solid rgba(0, 200, 140, 0.2);
+  border-radius: 8px;
+}
 .sub-url-row {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  margin-top: 0.6rem;
   flex-wrap: wrap;
 }
 .sub-url-label {
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: #a0d4c4;
   white-space: nowrap;
   font-weight: 600;
+  min-width: 72px;
+  cursor: help;
 }
 .sub-url-input {
   flex: 1;
