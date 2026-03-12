@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Customer Management Portal Installer
-# Version: v1.8.9
+# Version: v1.8.10
 # Features:
 #   - Downloads latest release tarball instead of cloning
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
@@ -14,7 +14,12 @@ set -euo pipefail
 #   - Integrity self-check if CMP_INSTALL_EXPECTED_SHA256 provided
 #   - GUI Update Manager (v1.6.0): in-panel version check + one-click unattended updates via SSE streaming
 #   - Update script self-healing: auto-installs prerequisites, retries on vite failure (v1.7.0)
-#   - JSON Generator reverted to sing-box format — restores multi-node V2Box subscription (v1.8.9)
+#   - JSON Generator v1.8.10: fix TLS/SNI/ALPN/fingerprint/REALITY in V2Box subscription URIs
+#       * keyserver outboundToURI: VMess now emits fp, alpn, allowInsecure
+#       * keyserver outboundToURI: VLESS now emits security=reality, pbk, sid, fp (REALITY nodes)
+#       * keyserver outboundToURI: VLESS TLS now emits alpn, allowInsecure
+#       * keyserver outboundToURI: Trojan now emits alpn, allowInsecure
+#       * buildSingboxTLS: always emit tls.utls.fingerprint (default clientFingerprint) for TLS nodes
 #       * xray format (v1.8.5) caused V2Box to treat entire config as 1 "JSON" entry (0 usable nodes)
 #       * sing-box outbounds ("type" field) display as individual selectable nodes in V2Box
 #       * buildSingboxTLS: REALITY (tls.reality.public_key/short_id + tls.utls.fingerprint)

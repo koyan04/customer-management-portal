@@ -128,6 +128,9 @@ const startKeyServer = (config) => {
             if (ob.tls && ob.tls.enabled) {
               vmessObj.tls = 'tls';
               vmessObj.sni = ob.tls.server_name || '';
+              if (ob.tls.utls && ob.tls.utls.fingerprint) vmessObj.fp = ob.tls.utls.fingerprint;
+              if (ob.tls.alpn && ob.tls.alpn.length) vmessObj.alpn = ob.tls.alpn.join(',');
+              if (ob.tls.insecure) vmessObj.allowInsecure = 1;
             }
             if (ob.transport) {
               if (ob.transport.type === 'ws') {
@@ -144,10 +147,19 @@ const startKeyServer = (config) => {
             const params = new URLSearchParams();
             params.set('type', ob.transport ? ob.transport.type || 'tcp' : 'tcp');
             if (ob.tls && ob.tls.enabled) {
-              params.set('security', 'tls');
-              if (ob.tls.server_name) params.set('sni', ob.tls.server_name);
-              if (ob.tls.utls && ob.tls.utls.fingerprint) params.set('fp', ob.tls.utls.fingerprint);
-              if (ob.tls.alpn && ob.tls.alpn.length) params.set('alpn', ob.tls.alpn.join(','));
+              if (ob.tls.reality && ob.tls.reality.enabled) {
+                params.set('security', 'reality');
+                if (ob.tls.server_name) params.set('sni', ob.tls.server_name);
+                if (ob.tls.reality.public_key) params.set('pbk', ob.tls.reality.public_key);
+                if (ob.tls.reality.short_id != null) params.set('sid', ob.tls.reality.short_id);
+                if (ob.tls.utls && ob.tls.utls.fingerprint) params.set('fp', ob.tls.utls.fingerprint);
+              } else {
+                params.set('security', 'tls');
+                if (ob.tls.server_name) params.set('sni', ob.tls.server_name);
+                if (ob.tls.utls && ob.tls.utls.fingerprint) params.set('fp', ob.tls.utls.fingerprint);
+                if (ob.tls.alpn && ob.tls.alpn.length) params.set('alpn', ob.tls.alpn.join(','));
+                if (ob.tls.insecure) params.set('allowInsecure', '1');
+              }
             }
             if (ob.flow) params.set('flow', ob.flow);
             if (ob.transport) {
@@ -168,6 +180,8 @@ const startKeyServer = (config) => {
               params.set('security', 'tls');
               if (ob.tls.server_name) params.set('sni', ob.tls.server_name);
               if (ob.tls.utls && ob.tls.utls.fingerprint) params.set('fp', ob.tls.utls.fingerprint);
+              if (ob.tls.alpn && ob.tls.alpn.length) params.set('alpn', ob.tls.alpn.join(','));
+              if (ob.tls.insecure) params.set('allowInsecure', '1');
             }
             if (ob.transport) {
               if (ob.transport.type === 'ws') {

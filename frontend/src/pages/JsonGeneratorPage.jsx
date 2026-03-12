@@ -663,8 +663,8 @@ const JsonGeneratorPage = () => {
       };
       tls.utls = { enabled: true, fingerprint: antiDPI ? clientFingerprint : (node['client-fingerprint'] || 'chrome') };
     } else {
-      const fp = antiDPI ? clientFingerprint : (node['client-fingerprint'] || '');
-      if (fp) tls.utls = { enabled: true, fingerprint: fp };
+      const fp = antiDPI ? clientFingerprint : (node['client-fingerprint'] || clientFingerprint);
+      tls.utls = { enabled: true, fingerprint: fp };
       if (forceAlpn || node.alpn) {
         const defaultAlpn = networkType === 'ws' ? ['http/1.1'] : ['h2', 'http/1.1'];
         tls.alpn = node.alpn
