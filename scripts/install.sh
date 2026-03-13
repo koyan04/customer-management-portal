@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Customer Management Portal Installer
-# Version: v1.8.14
+# Version: v1.8.15
 # Features:
 #   - Downloads latest release tarball instead of cloning
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
@@ -14,6 +14,23 @@ set -euo pipefail
 #   - Integrity self-check if CMP_INSTALL_EXPECTED_SHA256 provided
 #   - GUI Update Manager (v1.6.0): in-panel version check + one-click unattended updates via SSE streaming
 #   - Update script self-healing: auto-installs prerequisites, retries on vite failure (v1.7.0)
+#   - YAML Generator: TUN block, Anti-DPI on by default, proxy-group health tuning (v1.8.15)
+#       * tun block always included: enable:true, stack:system, mtu:1400, auto-route:true, auto-detect-interface:true
+#       * Anti-DPI panel now enabled by default (was off) — tcp-concurrent, global fingerprint, DoH DNS
+#       * ♻️ Auto Switch: tolerance:150, lazy:true added to url-test group
+#       * ⚡ Fastest: tolerance:50, lazy:true added to url-test group
+#       * 🛡️ Failover: lazy:true added to fallback group
+#       * ⚖️ Load Balance / Static Balance: lazy:true added
+#   - JSON Generator: Anti-DPI enabled by default (v1.8.15)
+#       * antiDPI state default changed false→true; sing-box output now includes fingerprint/DoH always
+#   - Docs: comprehensive guide set added (v1.8.15)
+#       * YAML_GENERATOR_BOT_INSTRUCTIONS.md — copy-paste system prompt for AI config bot
+#       * YAML_GENERATOR_BOT_GUIDE.md — 12-section technical reference for YAML bot
+#       * YAML_GENERATOR_USER_GUIDE.md — 14-section human-facing YAML Generator guide
+#       * JSON_GENERATOR_BOT_INSTRUCTIONS.md — updated: SS URI format, 3 subscription URLs, domain rules
+#       * JSON_GENERATOR_BOT_GUIDE.md — updated: SS prefix, 3-URL table, data_limit_gb metadata
+#       * JSON_GENERATOR_USER_GUIDE.md — updated: 3-URL table, /?outline=1&prefix= format
+#       * DEVELOPER_GUIDE.md — POST /api/users/transfer fully documented with error table
 #   - Fix: manual data limit now saved to subscription metadata (v1.8.14)
 #       * saveToServer was not including data_limit_gb in metadata when no user selected
 #       * V2Box showed 100 GB regardless of the Data Limit field value

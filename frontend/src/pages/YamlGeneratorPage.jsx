@@ -22,7 +22,7 @@ const YamlGeneratorPage = () => {
   const [globalDefault, setGlobalDefault] = useState('Proxy');
   
   // Anti-DPI / Censorship evasion settings
-  const [antiDPI, setAntiDPI] = useState(false);
+  const [antiDPI, setAntiDPI] = useState(true);
   const [tcpConcurrent, setTcpConcurrent] = useState(true);
   const [clientFingerprint, setClientFingerprint] = useState('random');
   const [dohEnabled, setDohEnabled] = useState(true);
@@ -669,6 +669,12 @@ const YamlGeneratorPage = () => {
     yaml += `log-level: info\n`;
     yaml += `ipv6: true\n`;
     yaml += `external-controller: 127.0.0.1:9090\n`;
+    yaml += `\ntun:\n`;
+    yaml += `  enable: true\n`;
+    yaml += `  stack: system\n`;
+    yaml += `  mtu: 1400\n`;
+    yaml += `  auto-route: true\n`;
+    yaml += `  auto-detect-interface: true\n`;
     
     // Anti-DPI settings
     if (antiDPI) {
@@ -800,6 +806,8 @@ const YamlGeneratorPage = () => {
     yaml += `    type: url-test\n`;
     yaml += `    url: http://www.gstatic.com/generate_204\n`;
     yaml += `    interval: ${autoSwitchInterval}\n`;
+    yaml += `    tolerance: 150\n`;
+    yaml += `    lazy: true\n`;
     yaml += `    proxies:\n`;
     nodeNames.forEach(name => yaml += `      - ${name}\n`);
     yaml += `\n`;
@@ -809,6 +817,8 @@ const YamlGeneratorPage = () => {
     yaml += `    type: url-test\n`;
     yaml += `    url: http://www.gstatic.com/generate_204\n`;
     yaml += `    interval: ${checkInterval}\n`;
+    yaml += `    tolerance: 50\n`;
+    yaml += `    lazy: true\n`;
     yaml += `    proxies:\n`;
     nodeNames.forEach(name => yaml += `      - ${name}\n`);
     yaml += `\n`;
@@ -818,6 +828,7 @@ const YamlGeneratorPage = () => {
     yaml += `    type: fallback\n`;
     yaml += `    url: http://www.gstatic.com/generate_204\n`;
     yaml += `    interval: ${checkInterval}\n`;
+    yaml += `    lazy: true\n`;
     yaml += `    proxies:\n`;
     nodeNames.forEach(name => yaml += `      - ${name}\n`);
     yaml += `\n`;
@@ -828,6 +839,7 @@ const YamlGeneratorPage = () => {
       yaml += `    type: load-balance\n`;
       yaml += `    url: http://www.gstatic.com/generate_204\n`;
       yaml += `    interval: ${checkInterval}\n`;
+      yaml += `    lazy: true\n`;
       yaml += `    strategy: ${staticBalance ? 'consistent-hashing' : 'round-robin'}\n`;
       yaml += `    proxies:\n`;
       nodeNames.forEach(name => yaml += `      - ${name}\n`);
