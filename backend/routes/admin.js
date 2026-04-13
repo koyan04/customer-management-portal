@@ -3730,13 +3730,17 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
           } catch (_) { /* keep original on error */ }
         }
         try {
+          await client.query('SAVEPOINT admin_insert_sp');
           await client.query(
             `INSERT INTO admins (id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
             [a.id, a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', insertAvatarUrl, insertAvatarData, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
           );
+          await client.query('RELEASE SAVEPOINT admin_insert_sp');
         } catch (insertErr) {
           if (insertErr.code === '23505') {
+            await client.query('ROLLBACK TO SAVEPOINT admin_insert_sp');
+            await client.query('RELEASE SAVEPOINT admin_insert_sp');
             // PK conflict on id (different user holds that id) — insert without explicit id, let DB assign
             await client.query(
               `INSERT INTO admins (display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
@@ -3744,6 +3748,8 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
               [a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', insertAvatarUrl, insertAvatarData, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
             );
           } else {
+            try { await client.query('ROLLBACK TO SAVEPOINT admin_insert_sp'); } catch (_) {}
+            try { await client.query('RELEASE SAVEPOINT admin_insert_sp'); } catch (_) {}
             throw insertErr;
           }
         }
