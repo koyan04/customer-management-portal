@@ -311,7 +311,16 @@ const KeyManagerPage = () => {
       fetchConfig();
       fetchKeys();
     } catch (err) {
-      showFeedback(err.response?.data?.error || 'Restore failed', 'error');
+      const status = err?.response?.status;
+      if (status === 413) {
+        showFeedback('Restore file is too large for server upload limit', 'error');
+        return;
+      }
+      const backendMsg =
+        (typeof err?.response?.data === 'string' && err.response.data) ||
+        err?.response?.data?.error ||
+        err?.response?.data?.msg;
+      showFeedback(backendMsg || 'Restore failed', 'error');
     }
   };
 
