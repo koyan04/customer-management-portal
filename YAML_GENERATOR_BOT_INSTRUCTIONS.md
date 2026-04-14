@@ -257,14 +257,14 @@ Create groups in this order:
    type: url-test
    url: http://www.gstatic.com/generate_204
    interval: {autoSwitchInterval}
-   tolerance: 150
+   tolerance: 10
    lazy: false
 
 3) âš¡ Fastest
    type: url-test
    url: http://www.gstatic.com/generate_204
    interval: {checkInterval}
-   tolerance: 50
+   tolerance: 10
    lazy: false
 
 4) ðŸ›¡ï¸ Failover
