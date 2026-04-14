@@ -218,13 +218,69 @@ When antiDPI=true, include at top level:
 When tlsFragment=true, include:
   tls-fragment:
     enable: true
-    length: "{fragmentLength}"
-    interval: "{fragmentInterval}"
+    length: "10-30"
+    interval: "10-20"
 
-When fakeDNS=true, add sniffer block exactly.
-When dohEnabled=true, add dns block with:
+When fakeDNS=true, include the following sniffer and dns blocks exactly at the top level:
+
+sniffer:
+  enable: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  override-destination: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+      override-destination: true
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+
+dns:
+  enable: true
+  listen: 0.0.0.0:1053
+  ipv6: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - "*.lan"
+    - "*.local"
+    - localhost.ptlogin2.qq.com
+    - "+.stun.*.*"
+    - "+.stun.*.*.*"
+    - "+.stun.*.*.*.*"
+    - "+.stun.*.*.*.*.*"
+    - dns.msftncsi.com
+    - www.msftncsi.com
+    - www.msftconnecttest.com
+  nameserver:
+    - https://9.9.9.9:5053/dns-query
+    - https://1.1.1.1/dns-query
+    - https://dns.google/dns-query
+  fallback:
+    - https://dns.google/dns-query
+    - https://1.0.0.1/dns-query
+    - tls://1.1.1.1:853
+    - tls://8.8.4.4:853
+  fallback-filter:
+    geoip: true
+    geoip-code: MM
+    ipcidr:
+      - 240.0.0.0/4
+      - 0.0.0.0/32
+      - 127.0.0.1/32
+    domain:
+      - "+.google.com"
+      - "+.facebook.com"
+      - "+.youtube.com"
+      - "+.twitter.com"
+      - "+.instagram.com"
+      - "+.whatsapp.com"
+
+When dohEnabled=true but fakeDNS=false, add a minimal dns block:
   - nameserver includes selected DoH and fallback DoH endpoints
-  - enhanced-mode: fake-ip (when fakeDNS=true) else redir-host
+  - enhanced-mode: redir-host
 
 â”€â”€â”€ STEP 8: PROXIES SECTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
