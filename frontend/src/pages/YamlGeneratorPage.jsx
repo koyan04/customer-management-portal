@@ -22,7 +22,8 @@ const YamlGeneratorPage = () => {
   const [globalDefault, setGlobalDefault] = useState('Proxy');
   
   // Anti-DPI / Censorship evasion settings
-  const [antiDPI, setAntiDPI] = useState(true);
+  // Load user default, or disable by default so it's not shown on load
+  const [antiDPI, setAntiDPI] = useState(false);
   const [tcpConcurrent, setTcpConcurrent] = useState(true);
   const [clientFingerprint, setClientFingerprint] = useState('random');
   const [dohEnabled, setDohEnabled] = useState(true);

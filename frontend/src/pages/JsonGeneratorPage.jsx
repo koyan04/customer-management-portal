@@ -23,8 +23,8 @@ const JsonGeneratorPage = () => {
   const [autoSwitchInterval, setAutoSwitchInterval] = useState(900);
   const [globalDefault, setGlobalDefault] = useState('Proxy');
 
-  // Anti-DPI / Censorship evasion settings
-  const [antiDPI, setAntiDPI] = useState(true);
+  // Anti-DPI / Censorship evasion settings (Hidden/Off by default on load)
+  const [antiDPI, setAntiDPI] = useState(false);
   const [tcpConcurrent, setTcpConcurrent] = useState(true);
   const [clientFingerprint, setClientFingerprint] = useState('random');
   const [allowInsecure, setAllowInsecure] = useState(true);
