@@ -808,7 +808,7 @@ const YamlGeneratorPage = () => {
     yaml += `    url: http://www.gstatic.com/generate_204\n`;
     yaml += `    interval: ${autoSwitchInterval}\n`;
     yaml += `    tolerance: 4\n`;
-    yaml += `    lazy: true\n`;
+    yaml += `    lazy: false\n`;
     yaml += `    proxies:\n`;
     nodeNames.forEach(name => yaml += `      - ${name}\n`);
     yaml += `\n`;
@@ -819,7 +819,7 @@ const YamlGeneratorPage = () => {
     yaml += `    url: http://www.gstatic.com/generate_204\n`;
     yaml += `    interval: ${checkInterval}\n`;
     yaml += `    tolerance: 50\n`;
-    yaml += `    lazy: true\n`;
+    yaml += `    lazy: false\n`;
     yaml += `    proxies:\n`;
     nodeNames.forEach(name => yaml += `      - ${name}\n`);
     yaml += `\n`;
@@ -829,7 +829,7 @@ const YamlGeneratorPage = () => {
     yaml += `    type: fallback\n`;
     yaml += `    url: http://www.gstatic.com/generate_204\n`;
     yaml += `    interval: ${checkInterval}\n`;
-    yaml += `    lazy: true\n`;
+    yaml += `    lazy: false\n`;
     yaml += `    proxies:\n`;
     nodeNames.forEach(name => yaml += `      - ${name}\n`);
     yaml += `\n`;
@@ -840,7 +840,7 @@ const YamlGeneratorPage = () => {
       yaml += `    type: load-balance\n`;
       yaml += `    url: http://www.gstatic.com/generate_204\n`;
       yaml += `    interval: ${checkInterval}\n`;
-      yaml += `    lazy: true\n`;
+      yaml += `    lazy: false\n`;
       yaml += `    strategy: ${staticBalance ? 'consistent-hashing' : 'round-robin'}\n`;
       yaml += `    proxies:\n`;
       nodeNames.forEach(name => yaml += `      - ${name}\n`);
