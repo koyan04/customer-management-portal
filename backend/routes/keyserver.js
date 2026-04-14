@@ -3,6 +3,7 @@ const router = express.Router();
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { exec } = require('child_process');
 const { authenticateToken, isAdmin, isAdminOrServerAdmin } = require('../middleware/authMiddleware');
 
 // Key server config file path
@@ -73,6 +74,62 @@ const loadConfig = () => {
 // Save config
 const saveConfig = (config) => {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
+};
+
+// Sync Nginx reverse proxy port configuration
+const syncNginxConfig = (config) => {
+  return new Promise((resolve) => {
+    if (!config || !config.publicDomain || !config.port) return resolve();
+    const match = config.publicDomain.match(/^https?:\/\/([^\/:]+)/);
+    if (!match) return resolve();
+    const domain = match[1];
+    const port = config.port;
+
+    const sitesAvailable = '/etc/nginx/sites-available';
+    if (!fs.existsSync(sitesAvailable)) return resolve();
+
+    let reloadNeeded = false;
+
+    try {
+      const files = fs.readdirSync(sitesAvailable);
+      for (const file of files) {
+        const filePath = path.join(sitesAvailable, file);
+        if (fs.statSync(filePath).isDirectory()) continue;
+        
+        let content = fs.readFileSync(filePath, 'utf-8');
+        
+        const blockRegex = new RegExp('(server_name[^;]*' + domain.replace(/\\./g, '\\\\.') + '[^;]*;(?:(?!server_name)[\\\\s\\\\S])*?proxy_pass\\\\s+http:\\/\\/127\\.0\\.0\\.1:)(\\d+)(;)', 'g');
+        
+        if (blockRegex.test(content)) {
+          const newContent = content.replace(blockRegex, (m, p1, p2, p3) => {
+            if (p2 !== String(port)) {
+              reloadNeeded = true;
+              return p1 + port + p3;
+            }
+            return m;
+          });
+          
+          if (content !== newContent) {
+            fs.writeFileSync(filePath, newContent, 'utf-8');
+            console.log('[KeyServer] Updated port to ' + port + ' for ' + domain + ' in ' + file);
+          }
+        }
+      }
+      
+      if (reloadNeeded) {
+        exec('nginx -t && systemctl reload nginx', (err) => {
+          if (err) console.error('[KeyServer] Failed to reload nginx:', err.message);
+          else console.log('[KeyServer] Nginx reloaded successfully');
+          resolve();
+        });
+      } else {
+        resolve();
+      }
+    } catch (e) {
+      console.error('[KeyServer] Error syncing nginx config:', e.message);
+      resolve();
+    }
+  });
 };
 
 // In-memory key server instance
@@ -585,6 +642,7 @@ router.put('/config', authenticateToken, isAdmin, (req, res) => {
     if (autoStart != null) config.autoStart = autoStart;
     if (publicDomain != null) config.publicDomain = publicDomain;
     saveConfig(config);
+    syncNginxConfig(config);
     res.json({ message: 'Config saved', config });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -615,6 +673,7 @@ router.post('/start', authenticateToken, isAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Secret key is not configured' });
     }
     await startKeyServer(config);
+    syncNginxConfig(config);
     res.json({ message: 'Key server started', status: 'running' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -640,6 +699,7 @@ router.post('/restart', authenticateToken, isAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Secret key is not configured' });
     }
     await startKeyServer(config);
+    syncNginxConfig(config);
     res.json({ message: 'Key server restarted', status: 'running' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -842,6 +902,7 @@ router.post('/restore', authenticateToken, isAdmin, (req, res) => {
         };
         saveConfig(merged);
       }
+      syncNginxConfig(loadConfig());
       results.configRestored = true;
     }
 
