@@ -731,6 +731,11 @@ const JsonGeneratorPage = () => {
 
   const generateJSON = () => {
     const config = {};
+    const displayName = unlim ? `${groupName} (Unlimited)` : groupName;
+    const autoSwitchTag = `♻️ Auto Switch (${displayName})`;
+    const fastestTag = `⚡ Fastest (${displayName})`;
+    const failoverTag = `🛡️ Failover (${displayName})`;
+    const testUrl = 'https://cp.cloudflare.com/generate_204';
 
     // ── Log ──
     config.log = { level: 'info' };
@@ -769,10 +774,10 @@ const JsonGeneratorPage = () => {
     const interval = `${autoSwitchInterval}s`;
 
     config.outbounds = [
-      { type: 'selector', tag: 'proxy', outbounds: ['♻️ Auto Switch', '⚡ Fastest', '🛡️ Failover', ...nodeTags, 'direct'], default: 'proxy' },
-      { type: 'urltest', tag: '♻️ Auto Switch', outbounds: nodeTags, url: 'http://www.gstatic.com/generate_204', interval, tolerance: 4 },
-      { type: 'urltest', tag: '⚡ Fastest', outbounds: nodeTags, url: 'http://www.gstatic.com/generate_204', interval: '120s', tolerance: 50 },
-      { type: 'urltest', tag: '🛡️ Failover', outbounds: nodeTags, url: 'http://www.gstatic.com/generate_204', interval: '120s', tolerance: 300 },
+      { type: 'selector', tag: 'proxy', outbounds: [autoSwitchTag, fastestTag, failoverTag, ...nodeTags, 'direct'], default: 'proxy' },
+      { type: 'urltest', tag: autoSwitchTag, outbounds: nodeTags, url: testUrl, interval, tolerance: 4 },
+      { type: 'urltest', tag: fastestTag, outbounds: nodeTags, url: testUrl, interval: '120s', tolerance: 50 },
+      { type: 'urltest', tag: failoverTag, outbounds: nodeTags, url: testUrl, interval: '120s', tolerance: 300 },
       ...nodeOutbounds,
       { type: 'direct', tag: 'direct' },
       { type: 'dns', tag: 'dns-out' },

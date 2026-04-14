@@ -657,6 +657,10 @@ const YamlGeneratorPage = () => {
   const generateYAML = () => {
     const displayName = unlim ? `${groupName} (Unlimited)` : groupName;
     const mainGroupName = `🚀 ${displayName}`;
+    const autoSwitchGroupName = `♻️ Auto Switch (${displayName})`;
+    const fastestGroupName = `⚡ Fastest (${displayName})`;
+    const failoverGroupName = `🛡️ Failover (${displayName})`;
+    const testUrl = 'https://cp.cloudflare.com/generate_204';
     
     let yaml = `# ${displayName}\n`;
     if (expireDate) {
@@ -792,9 +796,9 @@ const YamlGeneratorPage = () => {
     yaml += `  - name: "${mainGroupName}"\n`;
     yaml += `    type: select\n`;
     yaml += `    proxies:\n`;
-    yaml += `      - ♻️ Auto Switch\n`;
-    yaml += `      - ⚡ Fastest\n`;
-    yaml += `      - 🛡️ Failover\n`;
+    yaml += `      - ${autoSwitchGroupName}\n`;
+    yaml += `      - ${fastestGroupName}\n`;
+    yaml += `      - ${failoverGroupName}\n`;
     if (loadBalance) {
       yaml += `      - ${staticBalance ? '⚖️ Static Balance' : '⚖️ Load Balance'}\n`;
     }
@@ -803,9 +807,9 @@ const YamlGeneratorPage = () => {
     yaml += `\n`;
     
     // Auto Switch
-    yaml += `  - name: "♻️ Auto Switch"\n`;
+    yaml += `  - name: "${autoSwitchGroupName}"\n`;
     yaml += `    type: url-test\n`;
-    yaml += `    url: http://www.gstatic.com/generate_204\n`;
+    yaml += `    url: ${testUrl}\n`;
     yaml += `    interval: ${autoSwitchInterval}\n`;
     yaml += `    tolerance: 4\n`;
     yaml += `    lazy: false\n`;
@@ -814,9 +818,9 @@ const YamlGeneratorPage = () => {
     yaml += `\n`;
     
     // Fastest
-    yaml += `  - name: "⚡ Fastest"\n`;
+    yaml += `  - name: "${fastestGroupName}"\n`;
     yaml += `    type: url-test\n`;
-    yaml += `    url: http://www.gstatic.com/generate_204\n`;
+    yaml += `    url: ${testUrl}\n`;
     yaml += `    interval: ${checkInterval}\n`;
     yaml += `    tolerance: 50\n`;
     yaml += `    lazy: false\n`;
@@ -825,9 +829,9 @@ const YamlGeneratorPage = () => {
     yaml += `\n`;
     
     // Failover
-    yaml += `  - name: "🛡️ Failover"\n`;
+    yaml += `  - name: "${failoverGroupName}"\n`;
     yaml += `    type: fallback\n`;
-    yaml += `    url: http://www.gstatic.com/generate_204\n`;
+    yaml += `    url: ${testUrl}\n`;
     yaml += `    interval: ${checkInterval}\n`;
     yaml += `    lazy: false\n`;
     yaml += `    proxies:\n`;
@@ -838,7 +842,7 @@ const YamlGeneratorPage = () => {
     if (loadBalance) {
       yaml += `  - name: "${staticBalance ? '⚖️ Static Balance' : '⚖️ Load Balance'}"\n`;
       yaml += `    type: load-balance\n`;
-      yaml += `    url: http://www.gstatic.com/generate_204\n`;
+      yaml += `    url: ${testUrl}\n`;
       yaml += `    interval: ${checkInterval}\n`;
       yaml += `    lazy: false\n`;
       yaml += `    strategy: ${staticBalance ? 'consistent-hashing' : 'round-robin'}\n`;
