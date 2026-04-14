@@ -807,7 +807,7 @@ const YamlGeneratorPage = () => {
     yaml += `    type: url-test\n`;
     yaml += `    url: http://www.gstatic.com/generate_204\n`;
     yaml += `    interval: ${autoSwitchInterval}\n`;
-    yaml += `    tolerance: 150\n`;
+    yaml += `    tolerance: 4\n`;
     yaml += `    lazy: true\n`;
     yaml += `    proxies:\n`;
     nodeNames.forEach(name => yaml += `      - ${name}\n`);

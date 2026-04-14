@@ -770,7 +770,7 @@ const JsonGeneratorPage = () => {
 
     config.outbounds = [
       { type: 'selector', tag: 'proxy', outbounds: ['♻️ Auto Switch', '⚡ Fastest', '🛡️ Failover', ...nodeTags, 'direct'], default: 'proxy' },
-      { type: 'urltest', tag: '♻️ Auto Switch', outbounds: nodeTags, url: 'http://www.gstatic.com/generate_204', interval, tolerance: 150 },
+      { type: 'urltest', tag: '♻️ Auto Switch', outbounds: nodeTags, url: 'http://www.gstatic.com/generate_204', interval, tolerance: 4 },
       { type: 'urltest', tag: '⚡ Fastest', outbounds: nodeTags, url: 'http://www.gstatic.com/generate_204', interval: '120s', tolerance: 50 },
       { type: 'urltest', tag: '🛡️ Failover', outbounds: nodeTags, url: 'http://www.gstatic.com/generate_204', interval: '120s', tolerance: 300 },
       ...nodeOutbounds,
