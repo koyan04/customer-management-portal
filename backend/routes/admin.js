@@ -2340,6 +2340,12 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       }
       console.log(`Restored ${snapshotCount} financial snapshots (backup data overwrote target)`);
     }
+
+    // Fix sequences so new inserts don't collide with restored IDs
+    try { await client.query("SELECT setval('domains_id_seq', COALESCE((SELECT MAX(id) FROM domains), 1))"); } catch (_) {}
+    try { await client.query("SELECT setval('servers_id_seq', COALESCE((SELECT MAX(id) FROM servers), 1))"); } catch (_) {}
+    try { await client.query("SELECT setval('server_keys_id_seq', COALESCE((SELECT MAX(id) FROM server_keys), 1))"); } catch (_) {}
+    try { await client.query("SELECT setval('users_id_seq', COALESCE((SELECT MAX(id) FROM users), 1))"); } catch (_) {}
     
     await client.query('COMMIT');
     // refresh general settings cache after snapshot restore
