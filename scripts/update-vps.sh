@@ -148,6 +148,14 @@ echo ""
 # Ensure key server configs directory exists
 mkdir -p "$APP_DIR/configs"
 
+# Re-apply TLS repair and renewal hook after updates in case the vhost or hook drifted.
+if [ -x "$APP_DIR/scripts/quick-fix-keyserver-tls.sh" ]; then
+    echo "→ Re-applying TLS and keyserver quick-fix..."
+    bash "$APP_DIR/scripts/quick-fix-keyserver-tls.sh" || true
+    echo "  ✓ Quick-fix checked"
+    echo ""
+fi
+
 # Start services
 echo "→ Starting services..."
 systemctl start cmp-backend

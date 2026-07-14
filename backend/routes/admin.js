@@ -2961,6 +2961,11 @@ router.post('/control/cert/renew', authenticateToken, isAdmin, async (req, res) 
     await writeControlAudit(req.user && req.user.id, 'cert_renew', { domain });
     try {
       const { stdout, stderr } = await runCmd('certbot renew --quiet', process.cwd());
+      try {
+        await runCmd('nginx -t && systemctl reload nginx', process.cwd());
+      } catch (_) {
+        try { await runCmd('systemctl restart nginx', process.cwd()); } catch (_) {}
+      }
       return res.json({ ok: true, stdout: stdout.slice(0,4000), stderr: stderr.slice(0,4000) });
     } catch (e) {
       return res.status(500).json({ ok: false, error: e.err && e.err.message ? e.err.message : 'renew failed', stderr: e.stderr && e.stderr.slice ? e.stderr.slice(0,4000) : null });

@@ -1026,9 +1026,8 @@ RENEW_HOOK="/usr/local/bin/cmp-post-renew.sh"
 cat > "$RENEW_HOOK" <<'EOF'
 #!/usr/bin/env bash
 set -e
-CHANGED=0
-if systemctl is-active --quiet cmp-backend.service; then
-  systemctl restart cmp-backend.service || true
+if command -v nginx >/dev/null 2>&1; then
+  nginx -t && systemctl reload nginx || systemctl restart nginx || true
 fi
 EOF
 chmod +x "$RENEW_HOOK"

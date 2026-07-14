@@ -2,7 +2,7 @@
 
 Full-stack portal for managing servers and user accounts with role-based access (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and financial reporting.
 
-**Current Version:** `cmp ver 1.4.6`
+**Current Version:** `cmp ver 1.9.0`
 
 **Repository:** https://github.com/koyan04/customer-management-portal
 
@@ -129,7 +129,7 @@ node seedUsers.js
 - [Testing Guide](TESTING_GUIDE.md) - Testing and verification procedures
 - [Contributing](CONTRIBUTING.md) - Development workflow and PR guidelines
 - [Security](SECURITY.md) - Responsible disclosure for vulnerabilities
-- [Release Notes v1.4.6](release-notes-1.4.6.md) - Latest release details
+- [Release Notes v1.9.0](release-notes-1.9.0.md) - Latest release details
 - [Release Notes v1.4.5](release-notes-1.4.5.md) - Previous release
 
 ## Development
@@ -174,33 +174,31 @@ If certificate generation fails during installation (DNS-01 or HTTP-01):
 
 **Quick Fix (Interactive):**
 ```bash
-# Download and run interactively
-wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/fix-tls.sh
-chmod +x fix-tls.sh
-sudo ./fix-tls.sh
+# Download the quick-fix helper and run it on the server
+wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/quick-fix-keyserver-tls.sh
+chmod +x quick-fix-keyserver-tls.sh
+sudo ./quick-fix-keyserver-tls.sh
 ```
 
-**Quick Fix (One-liner with domain):**
+**Quick Fix (Domain-specific):**
 ```bash
-# Pass domain as argument when piped
-curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/fix-tls.sh | sudo bash -s YOUR_DOMAIN
+# Repair a specific keyserver domain, reinstall the renewal hook, and reload nginx
+sudo ./quick-fix-keyserver-tls.sh --domain key.vchannel.dpdns.org
 ```
 
-The script will:
-- Auto-detect domain from existing config if not provided
-- Check port accessibility and DNS resolution
-- Identify if you're using dynamic DNS (dpdns, no-ip, etc.)
-- Automatically choose the best fix method
-- Configure firewall if needed
-- Retry certificate generation
-- Configure nginx with TLS
+The quick-fix script will:
+- Auto-detect the domain from `.env` or nginx if it is not passed on the command line
+- Repair the common keyserver vhost mistake where the public domain still proxies to port `3001` instead of `8088`
+- Install a certbot deploy hook that reloads nginx after renewals
+- Reload nginx after a successful fix so new certificates take effect immediately
 
 **Common Issues:**
 
 1. **Dynamic DNS Domains** (dpdns.org, no-ip.com, etc.)
    - Cannot use Cloudflare DNS-01 challenge
    - Must use HTTP-01 (requires port 80 open)
-   - Run fix script and choose option 1
+   - Run the quick-fix script so the vhost and renewal hook are corrected
+   - If you still need to issue a new certificate, run `scripts/fix-tls.sh` after fixing DNS/port access
 
 2. **Port 80 blocked**
    - Configure firewall: `sudo ufw allow 80/tcp && sudo ufw allow 443/tcp`
@@ -224,13 +222,18 @@ sudo certbot certonly --standalone -d YOUR_DOMAIN
 sudo systemctl start nginx cmp-backend
 ```
 
+**Automatic renewal behavior:**
+- The installer and update flow now install a certbot deploy hook that reloads nginx after renewal
+- Manual renewals from the admin API also reload nginx after `certbot renew`
+- If a keyserver domain ever points at the wrong upstream again, rerun `scripts/quick-fix-keyserver-tls.sh`
+
 ### Health check
 ```bash
 # Verify backend is running
 curl -s http://127.0.0.1:3001/api/health | jq
 
 # Expected response:
-# {"ok":true,"versions":{"appVersion":"cmp ver 1.4.6",...}}
+# {"ok":true,"versions":{"appVersion":"cmp ver 1.9.0",...}}
 ```
 
 ## Security
