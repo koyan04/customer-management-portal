@@ -370,13 +370,21 @@ const YamlGeneratorPage = () => {
       port: parseInt(url.port),
       password: url.username,
       udp: true,
+      tls: true,
       'skip-cert-verify': true
     };
     
-    if (params.get('sni')) node.sni = params.get('sni');
+    const serverName = params.get('sni') || params.get('servername');
+    if (serverName) {
+      node.sni = serverName;
+      node.servername = serverName;
+    }
     if (params.get('type')) node.network = params.get('type');
+    if (params.get('fp')) node['client-fingerprint'] = params.get('fp');
+    if (params.get('alpn')) node.alpn = params.get('alpn').split(',').map(v => v.trim()).filter(Boolean);
     
     if (node.network === 'ws') {
+      if (!node.alpn) node.alpn = ['h2', 'http/1.1'];
       node['ws-opts'] = {
         path: params.get('path') || '/',
         headers: { Host: params.get('host') || url.hostname }
@@ -424,8 +432,12 @@ const YamlGeneratorPage = () => {
       }
       if (node.type === 'trojan') {
         const params = new URLSearchParams();
-        if (node.sni) params.set('sni', node.sni);
+        params.set('security', 'tls');
+        if (node.servername || node.sni) params.set('sni', node.servername || node.sni);
         if (node.network) params.set('type', node.network);
+        if (node['client-fingerprint']) params.set('fp', node['client-fingerprint']);
+        if (node.alpn && node.alpn.length) params.set('alpn', node.alpn.join(','));
+        else if (node.network === 'ws') params.set('alpn', 'h2,http/1.1');
         if (node['ws-opts']) { params.set('path', node['ws-opts'].path || '/'); params.set('host', node['ws-opts'].headers?.Host || node.server); }
         return `trojan://${encodeURIComponent(node.password)}@${node.server}:${node.port}?${params.toString()}#${encodeURIComponent(name)}`;
       }
@@ -495,6 +507,9 @@ const YamlGeneratorPage = () => {
           }
           if (newNode.servername === node.server) {
             newNode.servername = newServer;
+          }
+          if (newNode.sni === node.server) {
+            newNode.sni = newServer;
           }
           
           return newNode;
@@ -771,6 +786,12 @@ const YamlGeneratorPage = () => {
     yaml += `proxies:\n`;
     activeNodes.forEach(node => {
       let nodeObj = { ...node };
+      if (nodeObj.type === 'trojan') {
+        nodeObj.tls = true;
+        if (!nodeObj.servername && nodeObj.sni) nodeObj.servername = nodeObj.sni;
+        if (!nodeObj.sni && nodeObj.servername) nodeObj.sni = nodeObj.servername;
+        if (nodeObj.network === 'ws' && !nodeObj.alpn) nodeObj.alpn = ['h2', 'http/1.1'];
+      }
       // Add anti-DPI per-proxy settings
       if (antiDPI) {
         nodeObj['client-fingerprint'] = clientFingerprint;

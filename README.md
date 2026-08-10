@@ -2,7 +2,7 @@
 
 Full-stack portal for managing servers and user accounts with role-based access (Admin, Server Admin, Viewer), Telegram notifications, XLSX import/export, audit trails, and financial reporting.
 
-**Current Version:** `cmp ver 1.9.1`
+**Current Version:** `cmp ver 1.9.3`
 
 **Repository:** https://github.com/koyan04/customer-management-portal
 
@@ -129,7 +129,7 @@ node seedUsers.js
 - [Testing Guide](TESTING_GUIDE.md) - Testing and verification procedures
 - [Contributing](CONTRIBUTING.md) - Development workflow and PR guidelines
 - [Security](SECURITY.md) - Responsible disclosure for vulnerabilities
-- [Release Notes v1.9.1](release-notes-1.9.1.md) - Latest release details
+- [Release Notes v1.9.3](release-notes-1.9.3.md) - Latest release details
 - [Release Notes v1.4.5](release-notes-1.4.5.md) - Previous release
 
 ## Development
@@ -233,7 +233,7 @@ sudo systemctl start nginx cmp-backend
 curl -s http://127.0.0.1:3001/api/health | jq
 
 # Expected response:
-# {"ok":true,"versions":{"appVersion":"cmp ver 1.9.1",...}}
+# {"ok":true,"versions":{"appVersion":"cmp ver 1.9.3",...}}
 ```
 
 ## Security
