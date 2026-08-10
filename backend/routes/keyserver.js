@@ -225,6 +225,11 @@ const startKeyServer = (config) => {
                 if (ob.transport.headers && ob.transport.headers.Host) params.set('host', ob.transport.headers.Host);
               } else if (ob.transport.type === 'grpc') {
                 params.set('serviceName', ob.transport.service_name || '');
+              } else if (ob.transport.type === 'xhttp') {
+                params.set('path', ob.transport.path || '/');
+                if (ob.transport.host) params.set('host', ob.transport.host);
+                if (ob.transport.mode) params.set('mode', ob.transport.mode);
+                if (ob.transport.extra !== undefined) params.set('extra', typeof ob.transport.extra === 'string' ? ob.transport.extra : JSON.stringify(ob.transport.extra));
               }
             }
             return `vless://${ob.uuid}@${server}:${port}?${params.toString()}#${encodeURIComponent(tag)}`;
@@ -246,6 +251,11 @@ const startKeyServer = (config) => {
                 if (ob.transport.headers && ob.transport.headers.Host) params.set('host', ob.transport.headers.Host);
               } else if (ob.transport.type === 'grpc') {
                 params.set('serviceName', ob.transport.service_name || '');
+              } else if (ob.transport.type === 'xhttp') {
+                params.set('path', ob.transport.path || '/');
+                if (ob.transport.host) params.set('host', ob.transport.host);
+                if (ob.transport.mode) params.set('mode', ob.transport.mode);
+                if (ob.transport.extra !== undefined) params.set('extra', typeof ob.transport.extra === 'string' ? ob.transport.extra : JSON.stringify(ob.transport.extra));
               }
             }
             return `trojan://${ob.password}@${server}:${port}?${params.toString()}#${encodeURIComponent(tag)}`;
@@ -311,18 +321,38 @@ const startKeyServer = (config) => {
               streamSettings.grpcSettings = {
                 serviceName: ob.transport.service_name || ''
               };
+            } else if (ob.transport.type === 'xhttp') {
+              streamSettings.xhttpSettings = {
+                host: ob.transport.host || ob.tls?.server_name || server,
+                path: ob.transport.path || '/',
+                mode: ob.transport.mode || 'auto'
+              };
+              if (ob.transport.extra !== undefined) streamSettings.xhttpSettings.extra = ob.transport.extra;
             }
           }
 
           if (ob.tls && ob.tls.enabled) {
-            streamSettings.security = 'tls';
-            streamSettings.tlsSettings = {
-              serverName: ob.tls.server_name || server,
-              allowInsecure: ob.tls.insecure || false,
-              alpn: ob.tls.alpn || ['h2', 'http/1.1']
-            };
-            if (ob.tls.utls && ob.tls.utls.fingerprint) {
-              streamSettings.tlsSettings.fingerprint = ob.tls.utls.fingerprint;
+            if (ob.tls.reality && ob.tls.reality.enabled) {
+              streamSettings.security = 'reality';
+              streamSettings.realitySettings = {
+                serverName: ob.tls.server_name || server,
+                publicKey: ob.tls.reality.public_key || '',
+                shortId: ob.tls.reality.short_id != null ? ob.tls.reality.short_id : '',
+                spiderX: ob.tls.reality.spider_x || ''
+              };
+              if (ob.tls.utls && ob.tls.utls.fingerprint) {
+                streamSettings.realitySettings.fingerprint = ob.tls.utls.fingerprint;
+              }
+            } else {
+              streamSettings.security = 'tls';
+              streamSettings.tlsSettings = {
+                serverName: ob.tls.server_name || server,
+                allowInsecure: ob.tls.insecure || false,
+                alpn: ob.tls.alpn || ['h2', 'http/1.1']
+              };
+              if (ob.tls.utls && ob.tls.utls.fingerprint) {
+                streamSettings.tlsSettings.fingerprint = ob.tls.utls.fingerprint;
+              }
             }
           }
 

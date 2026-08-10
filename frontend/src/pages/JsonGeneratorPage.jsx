@@ -334,6 +334,20 @@ const JsonGeneratorPage = () => {
         path: params.get('path') || '/',
         headers: { Host: params.get('host') || url.hostname }
       };
+    } else if (network === 'xhttp') {
+      node['xhttp-opts'] = {
+        host: params.get('host') || url.hostname,
+        mode: params.get('mode') || 'auto',
+        path: params.get('path') || '/'
+      };
+      const extra = params.get('extra');
+      if (extra) {
+        try {
+          node['xhttp-opts'].extra = JSON.parse(extra);
+        } catch {
+          node['xhttp-opts'].extra = extra;
+        }
+      }
     }
     return node;
   };
@@ -404,6 +418,12 @@ const JsonGeneratorPage = () => {
         if (node['client-fingerprint']) params.set('fp', node['client-fingerprint']);
         if (node.flow) params.set('flow', node.flow);
         if (node['ws-opts']) { params.set('path', node['ws-opts'].path || '/'); params.set('host', node['ws-opts'].headers?.Host || node.server); }
+        if (node['xhttp-opts']) {
+          params.set('path', node['xhttp-opts'].path || '/');
+          params.set('host', node['xhttp-opts'].host || node.server);
+          if (node['xhttp-opts'].mode) params.set('mode', node['xhttp-opts'].mode);
+          if (node['xhttp-opts'].extra !== undefined) params.set('extra', typeof node['xhttp-opts'].extra === 'string' ? node['xhttp-opts'].extra : JSON.stringify(node['xhttp-opts'].extra));
+        }
         return `vless://${node.uuid}@${node.server}:${node.port}?${params.toString()}#${encodeURIComponent(name)}`;
       }
       if (node.type === 'trojan') {
@@ -513,6 +533,7 @@ const JsonGeneratorPage = () => {
           const newNode = { ...node, server: newServer };
           if (newNode['ws-opts']?.headers?.Host === node.server) newNode['ws-opts'].headers.Host = newServer;
           if (newNode.servername === node.server) newNode.servername = newServer;
+          if (newNode['xhttp-opts']?.host === node.server) newNode['xhttp-opts'].host = newServer;
           return newNode;
         }
       }
@@ -560,6 +581,7 @@ const JsonGeneratorPage = () => {
           parsed.server = serverEntry.domain;
           if (parsed['ws-opts']?.headers?.Host) parsed['ws-opts'].headers.Host = serverEntry.domain;
           if (parsed.servername) parsed.servername = serverEntry.domain;
+          if (parsed['xhttp-opts']?.host) parsed['xhttp-opts'].host = serverEntry.domain;
           if (parsed.sni) parsed.sni = serverEntry.domain;
           const countryMatch = serverEntry.server.match(/^([A-Z]{2})/i);
           const countryCode = countryMatch ? countryMatch[1].toUpperCase() : '';
@@ -706,6 +728,7 @@ const JsonGeneratorPage = () => {
         const tls = buildSingboxTLS(node, network);
         if (tls) out.tls = tls;
         if (network === 'ws') out.transport = { type: 'ws', path: node['ws-opts']?.path || '/', headers: { Host: node['ws-opts']?.headers?.Host || node.server } };
+        else if (network === 'xhttp') out.transport = { type: 'xhttp', host: node['xhttp-opts']?.host || node.server, path: node['xhttp-opts']?.path || '/', mode: node['xhttp-opts']?.mode || 'auto', extra: node['xhttp-opts']?.extra };
         return out;
       }
 

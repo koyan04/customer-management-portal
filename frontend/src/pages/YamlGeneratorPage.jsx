@@ -332,11 +332,21 @@ const YamlGeneratorPage = () => {
     
     const network = params.get('type') || params.get('network');
     if (network) node.network = network;
-    
+    const serverName = params.get('sni');
+    if (serverName) node.servername = serverName;
+
     if (params.get('security') === 'tls') {
       node.tls = true;
-      if (params.get('sni')) node.servername = params.get('sni');
+    } else if (params.get('security') === 'reality') {
+      node.tls = true;
+      node['reality-opts'] = {};
+      if (serverName) node.servername = serverName;
+      if (params.get('pbk')) node['reality-opts']['public-key'] = params.get('pbk');
+      if (params.get('sid') !== null) node['reality-opts']['short-id'] = params.get('sid');
+      if (params.get('spx')) node['reality-opts'].spiderX = decodeURIComponent(params.get('spx'));
     }
+
+    if (params.get('fp')) node['client-fingerprint'] = params.get('fp');
     
     // VLESS Cloudflare Fix
     if (network === 'ws') {
@@ -353,6 +363,15 @@ const YamlGeneratorPage = () => {
         path: params.get('path') || '/',
         headers: { Host: params.get('host') || url.hostname }
       };
+    } else if (network === 'xhttp') {
+      const xhttpOpts = {
+        host: params.get('host') || url.hostname,
+        mode: params.get('mode') || 'auto',
+        path: params.get('path') || '/'
+      };
+      const paddingBytes = params.get('x-padding-bytes') || params.get('padding') || params.get('xpadding');
+      if (paddingBytes) xhttpOpts['x-padding-bytes'] = paddingBytes;
+      node['xhttp-opts'] = xhttpOpts;
     }
     
     return node;
@@ -424,10 +443,26 @@ const YamlGeneratorPage = () => {
       if (node.type === 'vless') {
         const params = new URLSearchParams();
         if (node.network) params.set('type', node.network);
-        if (node.tls) { params.set('security', 'tls'); if (node.servername) params.set('sni', node.servername); }
+        if (node['reality-opts'] || node.security === 'reality') {
+          params.set('security', 'reality');
+          if (node.servername) params.set('sni', node.servername);
+          const realityOpts = node['reality-opts'] || {};
+          if (realityOpts['public-key'] || node.publicKey) params.set('pbk', realityOpts['public-key'] || node.publicKey);
+          if (realityOpts['short-id'] !== undefined || node.shortId !== undefined) params.set('sid', realityOpts['short-id'] ?? node.shortId);
+          if (realityOpts.spiderX || node.spiderX) params.set('spx', realityOpts.spiderX || node.spiderX);
+        } else if (node.tls) {
+          params.set('security', 'tls');
+          if (node.servername) params.set('sni', node.servername);
+        }
         if (node['client-fingerprint']) params.set('fp', node['client-fingerprint']);
         if (node.flow) params.set('flow', node.flow);
         if (node['ws-opts']) { params.set('path', node['ws-opts'].path || '/'); params.set('host', node['ws-opts'].headers?.Host || node.server); }
+        if (node['xhttp-opts']) {
+          params.set('path', node['xhttp-opts'].path || '/');
+          params.set('host', node['xhttp-opts'].host || node.server);
+          if (node['xhttp-opts'].mode) params.set('mode', node['xhttp-opts'].mode);
+          if (node['xhttp-opts']['x-padding-bytes']) params.set('x-padding-bytes', node['xhttp-opts']['x-padding-bytes']);
+        }
         return `vless://${node.uuid}@${node.server}:${node.port}?${params.toString()}#${encodeURIComponent(name)}`;
       }
       if (node.type === 'trojan') {
@@ -511,6 +546,9 @@ const YamlGeneratorPage = () => {
           if (newNode.sni === node.server) {
             newNode.sni = newServer;
           }
+          if (newNode['xhttp-opts']?.host === node.server) {
+            newNode['xhttp-opts'].host = newServer;
+          }
           
           return newNode;
         }
@@ -576,6 +614,9 @@ const YamlGeneratorPage = () => {
           if (parsed.sni) {
             parsed.sni = serverEntry.domain;
           }
+          if (parsed['xhttp-opts']?.host) {
+            parsed['xhttp-opts'].host = serverEntry.domain;
+          }
           
           // Extract country code from server name (e.g., SG01 -> SG)
           const countryMatch = serverEntry.server.match(/^([A-Z]{2})/i);
@@ -631,6 +672,7 @@ const YamlGeneratorPage = () => {
     for (const [key, value] of Object.entries(obj)) {
       if (value === null || value === undefined) continue;
       if (key.startsWith('_')) continue; // skip internal fields (e.g. _prefix)
+      if (key === 'security' || key === 'publicKey' || key === 'shortId' || key === 'spiderX') continue;
       const prefix = first ? '  - ' : '    ';
       first = false;
       if (typeof value === 'object' && !Array.isArray(value)) {
@@ -786,6 +828,25 @@ const YamlGeneratorPage = () => {
     yaml += `proxies:\n`;
     activeNodes.forEach(node => {
       let nodeObj = { ...node };
+      if (nodeObj.type === 'vless' && (nodeObj['reality-opts'] || nodeObj.security === 'reality' || nodeObj.publicKey || nodeObj.shortId || nodeObj.spiderX)) {
+        const realityOpts = { ...(nodeObj['reality-opts'] || {}) };
+        if (nodeObj.publicKey && !realityOpts['public-key']) realityOpts['public-key'] = nodeObj.publicKey;
+        if (nodeObj.shortId !== undefined && realityOpts['short-id'] === undefined) realityOpts['short-id'] = nodeObj.shortId;
+        if (nodeObj.spiderX && !realityOpts.spiderX) realityOpts.spiderX = nodeObj.spiderX;
+        nodeObj['reality-opts'] = realityOpts;
+        delete nodeObj.security;
+        delete nodeObj.publicKey;
+        delete nodeObj.shortId;
+        delete nodeObj.spiderX;
+        nodeObj.tls = true;
+      }
+      if (nodeObj.type === 'vless' && nodeObj.network === 'xhttp' && !nodeObj['xhttp-opts']) {
+        nodeObj['xhttp-opts'] = {
+          host: nodeObj.server,
+          mode: 'auto',
+          path: '/'
+        };
+      }
       if (nodeObj.type === 'trojan') {
         nodeObj.tls = true;
         if (!nodeObj.servername && nodeObj.sni) nodeObj.servername = nodeObj.sni;
