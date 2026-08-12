@@ -5,6 +5,34 @@ import axios from 'axios';
 import { getBackendOrigin } from '../lib/backendOrigin';
 import './YamlGeneratorPage.css';
 
+export function normalizeTrojanNode(nodeObj = {}) {
+  const normalized = { ...nodeObj };
+  normalized.type = 'trojan';
+  normalized.tls = true;
+  normalized.udp = normalized.udp !== undefined ? normalized.udp : true;
+
+  if (!normalized.servername && normalized.sni) normalized.servername = normalized.sni;
+  if (!normalized.sni && normalized.servername) normalized.sni = normalized.servername;
+  if (!normalized['client-fingerprint']) normalized['client-fingerprint'] = 'chrome';
+  if (!normalized.alpn && normalized.network === 'ws') normalized.alpn = ['h2', 'http/1.1'];
+
+  if (normalized.network === 'ws') {
+    const hostValue = normalized['ws-opts']?.headers?.Host || normalized.servername || normalized.sni || normalized.server;
+    normalized['ws-opts'] = {
+      ...(normalized['ws-opts'] || {}),
+      path: normalized['ws-opts']?.path || '/',
+      headers: {
+        ...(normalized['ws-opts']?.headers || {}),
+        Host: hostValue
+      }
+    };
+    if (!normalized.servername && hostValue) normalized.servername = hostValue;
+    if (!normalized.sni && hostValue) normalized.sni = hostValue;
+  }
+
+  return normalized;
+}
+
 const YamlGeneratorPage = () => {
   const { token } = useAuth();
   // Top menu settings
@@ -540,10 +568,10 @@ const YamlGeneratorPage = () => {
           if (newNode['ws-opts']?.headers?.Host === node.server) {
             newNode['ws-opts'].headers.Host = newServer;
           }
-          if (newNode.servername === node.server) {
+          if (newNode.servername === node.server && newNode.type !== 'xhttp') {
             newNode.servername = newServer;
           }
-          if (newNode.sni === node.server) {
+          if (newNode.sni === node.server && newNode.type !== 'xhttp') {
             newNode.sni = newServer;
           }
           if (newNode['xhttp-opts']?.host === node.server) {
@@ -608,10 +636,10 @@ const YamlGeneratorPage = () => {
           if (parsed['ws-opts']?.headers?.Host) {
             parsed['ws-opts'].headers.Host = serverEntry.domain;
           }
-          if (parsed.servername) {
+          if (parsed.servername && parsed.type !== 'xhttp') {
             parsed.servername = serverEntry.domain;
           }
-          if (parsed.sni) {
+          if (parsed.sni && parsed.type !== 'xhttp') {
             parsed.sni = serverEntry.domain;
           }
           if (parsed['xhttp-opts']?.host) {
@@ -672,15 +700,17 @@ const YamlGeneratorPage = () => {
     for (const [key, value] of Object.entries(obj)) {
       if (value === null || value === undefined) continue;
       if (key.startsWith('_')) continue; // skip internal fields (e.g. _prefix)
-      if (key === 'security' || key === 'publicKey' || key === 'shortId' || key === 'spiderX') continue;
+      if (key === 'security' || key === 'publicKey' || key === 'shortId' || key === 'spiderX' || key === 'skip-cert-verify') continue;
       const prefix = first ? '  - ' : '    ';
       first = false;
       if (typeof value === 'object' && !Array.isArray(value)) {
         lines.push(`${prefix}${key}:`);
         for (const [k2, v2] of Object.entries(value)) {
+          if (k2 === 'spiderX') continue;
           if (typeof v2 === 'object' && !Array.isArray(v2)) {
             lines.push(`      ${k2}:`);
             for (const [k3, v3] of Object.entries(v2)) {
+              if (k3 === 'spiderX') continue;
               lines.push(`        ${k3}: ${yamlVal(v3)}`);
             }
           } else if (Array.isArray(v2)) {
@@ -848,15 +878,12 @@ const YamlGeneratorPage = () => {
         };
       }
       if (nodeObj.type === 'trojan') {
-        nodeObj.tls = true;
-        if (!nodeObj.servername && nodeObj.sni) nodeObj.servername = nodeObj.sni;
-        if (!nodeObj.sni && nodeObj.servername) nodeObj.sni = nodeObj.servername;
-        if (nodeObj.network === 'ws' && !nodeObj.alpn) nodeObj.alpn = ['h2', 'http/1.1'];
+        nodeObj = normalizeTrojanNode(nodeObj);
+        if (nodeObj.network === 'ws' && Number(nodeObj.port) === 443) nodeObj.port = 80;
       }
       // Add anti-DPI per-proxy settings
       if (antiDPI) {
         nodeObj['client-fingerprint'] = clientFingerprint;
-        nodeObj['skip-cert-verify'] = true;
       }
       // Strip internal _prefix field (stream prefix for Outline/SS — not supported by Clash/Mihomo)
       // The prefix won't take effect in Clash; it is preserved in the exported ss:// URI for other clients.

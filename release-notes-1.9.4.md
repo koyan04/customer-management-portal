@@ -1,17 +1,18 @@
-# v1.9.4 — JSON Generator XHTTP/REALITY Packing Fix
+# v1.9.5 — Trojan YAML Generator Clash Mi Compatibility Fix
 
 ## What's New
 
-### JSON Generator — XHTTP and REALITY Compatibility
-- VLESS xhttp nodes now preserve `xhttp-opts` during import/export
-- `extra` payloads are preserved so the packed JSON matches the working xray-client URI shape
-- REALITY metadata is kept in sync for xhttp nodes, including `pbk`, `sid`, and `spx`
-- Domain remapping now updates xhttp host fields as well as SNI/servername
+### YAML Generator — Trojan WS/TLS Compatibility
+- Trojan imports and exports now preserve TLS metadata more reliably for Clash Mi
+- Trojan nodes now retain both `sni` and `servername` when present
+- Trojan WS exports now include the TLS `security=tls` parameter and default ALPN for WS transport
+- Client fingerprint is preserved through Trojan URI round-trips when available
 
 ## Bug Fixes
 
-- Fixed JSON output so xhttp connections that work as single-line URIs also work when saved as packed JSON
-- Prevented xhttp and REALITY fields from being dropped during generator round-trips
+- Fixed Trojan + WS + TLS YAML output so it matches the working 3x-ui style layout used by Clash Mi
+- Prevented domain remapping from dropping Trojan SNI/servername alignment
+- Normalized Trojan node output so generated Clash YAML includes the proper TLS and WebSocket fields used by the working reference config
 
 ## Upgrade Notes
 
@@ -19,5 +20,5 @@ No database migrations or backend configuration changes are required.
 
 ## Verification
 
-- Confirm a VLESS xhttp URI still imports and exports correctly
-- Confirm the app reports `cmp ver 1.9.4`
+- Confirm Trojan WS/TLS YAML exports include `tls: true`, `servername`, `sni`, and `ws-opts`
+- Confirm the app reports `cmp ver 1.9.5`
