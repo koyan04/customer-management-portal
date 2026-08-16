@@ -139,10 +139,68 @@ fix_keyserver_vhost() {
   fi
 }
 
+fix_keyserver_cert_paths() {
+  if [[ "$DOMAIN" != key.* ]]; then
+    return 0
+  fi
+
+  local files=()
+  while IFS= read -r file; do
+    files+=("$file")
+  done < <(
+    for dir in "$NGINX_SITES_AVAILABLE_DIR" "$NGINX_SITES_ENABLED_DIR" "$NGINX_CONFD_DIR"; do
+      if [ -d "$dir" ]; then
+        find "$dir" -maxdepth 2 -type f -name '*.conf' 2>/dev/null
+      fi
+    done | sort -u
+  )
+
+  local matched_files=()
+  for file in "${files[@]}"; do
+    if [ -f "$file" ] && grep -Eq "server_name[[:space:]]+[^;]*${DOMAIN}[^;]*;" "$file" 2>/dev/null; then
+      matched_files+=("$file")
+    fi
+  done
+
+  if [ ${#matched_files[@]} -eq 0 ]; then
+    return 0
+  fi
+
+  local expected_cert="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+  local expected_key="/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
+  local changed=0
+
+  for file in "${matched_files[@]}"; do
+    if grep -q "ssl_certificate" "$file" 2>/dev/null; then
+      local backup="${file}.certfix.$(date +%Y%m%d%H%M%S)"
+      cp "$file" "$backup"
+      local before
+      before=$(grep -c "ssl_certificate" "$file" 2>/dev/null || echo 0)
+
+      sed -i "s|ssl_certificate[[:space:]]*/etc/letsencrypt/live/[^;]*;|ssl_certificate ${expected_cert};|g" "$file"
+      sed -i "s|ssl_certificate_key[[:space:]]*/etc/letsencrypt/live/[^;]*;|ssl_certificate_key ${expected_key};|g" "$file"
+
+      local after
+      after=$(grep -c "ssl_certificate" "$file" 2>/dev/null || echo 0)
+      if [ "$before" -eq "$after" ] 2>/dev/null; then
+        rm -f "$backup"
+      else
+        log "Fixed SSL certificate paths in ${file} to point to ${DOMAIN} (backup: ${backup})"
+        changed=1
+      fi
+    fi
+  done
+
+  if [ "$changed" -eq 0 ]; then
+    log "SSL certificate paths already correct for ${DOMAIN}"
+  fi
+}
+
 install_post_renew_hook
 
 if [ "$INSTALL_HOOK_ONLY" = false ]; then
   fix_keyserver_vhost
+  fix_keyserver_cert_paths
 fi
 
 if command -v nginx >/dev/null 2>&1; then
