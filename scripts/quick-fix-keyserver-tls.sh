@@ -13,10 +13,15 @@ warn() {
   echo "[keyserver-tls-fix] $*" >&2
 }
 
-if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+if [ "${CMP_ALLOW_NO_ROOT:-0}" != "1" ] && [ "${EUID:-$(id -u)}" -ne 0 ]; then
   warn "Run this script as root"
   exit 1
 fi
+
+NGINX_ROOT="${NGINX_ROOT:-/etc/nginx}"
+NGINX_SITES_AVAILABLE_DIR="${NGINX_SITES_AVAILABLE_DIR:-$NGINX_ROOT/sites-available}"
+NGINX_SITES_ENABLED_DIR="${NGINX_SITES_ENABLED_DIR:-$NGINX_ROOT/sites-enabled}"
+NGINX_CONFD_DIR="${NGINX_CONFD_DIR:-$NGINX_ROOT/conf.d}"
 
 DOMAIN=""
 INSTALL_HOOK_ONLY=false
@@ -94,33 +99,43 @@ fix_keyserver_vhost() {
     return 0
   fi
 
-  local candidates=(
-    "/etc/nginx/sites-available/cmp"
-    "/etc/nginx/sites-enabled/cmp"
-    "/etc/nginx/sites-available/cmp-${DOMAIN}.conf"
-    "/etc/nginx/sites-enabled/cmp-${DOMAIN}.conf"
+  local files=()
+  while IFS= read -r file; do
+    files+=("$file")
+  done < <(
+    for dir in "$NGINX_SITES_AVAILABLE_DIR" "$NGINX_SITES_ENABLED_DIR" "$NGINX_CONFD_DIR"; do
+      if [ -d "$dir" ]; then
+        find "$dir" -maxdepth 2 -type f -name '*.conf' 2>/dev/null
+      fi
+    done | sort -u
   )
 
-  local file=""
-  for candidate in "${candidates[@]}"; do
-    if [ -f "$candidate" ] && grep -q "server_name[[:space:]]\+${DOMAIN}" "$candidate"; then
-      file="$candidate"
-      break
+  local matched_files=()
+  for file in "${files[@]}"; do
+    if [ -f "$file" ] && grep -Eq "server_name[[:space:]]+[^;]*${DOMAIN}[^;]*;" "$file" 2>/dev/null; then
+      matched_files+=("$file")
     fi
   done
 
-  if [ -z "$file" ]; then
+  if [ ${#matched_files[@]} -eq 0 ]; then
     warn "No nginx vhost found for ${DOMAIN}"
     return 0
   fi
 
-  if grep -q "proxy_pass http://127.0.0.1:${DEFAULT_APP_PORT};" "$file"; then
-    local backup="${file}.bak.$(date +%Y%m%d%H%M%S)"
-    cp "$file" "$backup"
-    sed -i "s#proxy_pass http://127.0.0.1:${DEFAULT_APP_PORT};#proxy_pass http://127.0.0.1:${DEFAULT_KEY_PORT};#g" "$file"
-    log "Updated ${file} to proxy ${DOMAIN} to ${DEFAULT_KEY_PORT} (backup: ${backup})"
-  else
-    log "Proxy target already looks correct in ${file}"
+  local changed=0
+  for file in "${matched_files[@]}"; do
+    if grep -Eq "server[[:space:]]+127\.0\.0\.1:${DEFAULT_APP_PORT};|proxy_pass[[:space:]]+http://127\.0\.0\.1:${DEFAULT_APP_PORT};|proxy_pass[[:space:]]+http://cmp_backend;" "$file" 2>/dev/null; then
+      local backup="${file}.bak.$(date +%Y%m%d%H%M%S)"
+      cp "$file" "$backup"
+      sed -i "s#server 127.0.0.1:${DEFAULT_APP_PORT};#server 127.0.0.1:${DEFAULT_KEY_PORT};#g" "$file"
+      sed -i "s#proxy_pass http://127.0.0.1:${DEFAULT_APP_PORT};#proxy_pass http://127.0.0.1:${DEFAULT_KEY_PORT};#g" "$file"
+      log "Updated ${file} to proxy ${DOMAIN} to ${DEFAULT_KEY_PORT} (backup: ${backup})"
+      changed=1
+    fi
+  done
+
+  if [ "$changed" -eq 0 ]; then
+    log "Proxy target already looks correct for ${DOMAIN}"
   fi
 }
 
