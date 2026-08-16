@@ -67,6 +67,18 @@ if [ -z "$DOMAIN" ] && [ -f /etc/nginx/sites-enabled/cmp ]; then
   DOMAIN=$(grep -oE 'server_name[[:space:]]+[^;]+' /etc/nginx/sites-enabled/cmp | head -1 | awk '{print $2}' | xargs || true)
 fi
 
+# Auto-detect from any cmp-*.conf vhost (fresh installs create these, e.g. cmp-key.<domain>.conf)
+if [ -z "$DOMAIN" ]; then
+  for f in "$NGINX_SITES_AVAILABLE_DIR"/cmp-*.conf "$NGINX_SITES_ENABLED_DIR"/cmp-*.conf; do
+    [ -f "$f" ] || continue
+    d=$(grep -oE 'server_name[[:space:]]+[^;]+' "$f" | head -1 | awk '{print $2}' | xargs || true)
+    if [ -n "$d" ]; then
+      DOMAIN="$d"
+      break
+    fi
+  done
+fi
+
 if [ -z "$DOMAIN" ]; then
   warn "Could not detect a domain. Pass one with --domain or run on the server with nginx already configured."
   exit 1
@@ -288,11 +300,52 @@ fix_keyserver_cert_paths() {
   fi
 }
 
+# Ensure existing vhosts for the domain allow large JSON bodies (restore backups)
+fix_keyserver_body_size() {
+  if [[ "$DOMAIN" != key.* ]]; then
+    return 0
+  fi
+
+  local files=()
+  while IFS= read -r file; do
+    files+=("$file")
+  done < <(
+    for dir in "$NGINX_SITES_AVAILABLE_DIR" "$NGINX_SITES_ENABLED_DIR" "$NGINX_CONFD_DIR"; do
+      if [ -d "$dir" ]; then
+        find "$dir" -maxdepth 2 -type f -name '*.conf' 2>/dev/null
+      fi
+    done | sort -u
+  )
+
+  local changed=0
+  for file in "${files[@]}"; do
+    if [ -f "$file" ] && grep -Eq "server_name[[:space:]]+[^;]*${DOMAIN}[^;]*;" "$file" 2>/dev/null; then
+      if ! grep -q "client_max_body_size" "$file"; then
+        local backup="${file}.bodysize.$(date +%Y%m%d%H%M%S)"
+        cp "$file" "$backup"
+        # Inject client_max_body_size after each server_name line for this domain
+        sed -i "s#^[[:space:]]*server_name[[:space:]]\+${DOMAIN};#server_name ${DOMAIN};\n\n    # Allow large JSON payloads (key server backup/restore)\n    client_max_body_size 200m;#" "$file"
+        if grep -q "client_max_body_size" "$file"; then
+          log "Added client_max_body_size 200m to ${file} (backup: ${backup})"
+          changed=1
+        else
+          rm -f "$backup"
+        fi
+      fi
+    fi
+  done
+
+  if [ "$changed" -eq 0 ]; then
+    log "client_max_body_size already present for ${DOMAIN}"
+  fi
+}
+
 install_post_renew_hook
 
 if [ "$INSTALL_HOOK_ONLY" = false ]; then
   fix_keyserver_vhost
   fix_keyserver_cert_paths
+  fix_keyserver_body_size
 fi
 
 if command -v nginx >/dev/null 2>&1; then
