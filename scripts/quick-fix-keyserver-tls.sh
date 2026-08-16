@@ -117,8 +117,10 @@ fix_keyserver_vhost() {
     fi
   done
 
+  # ── No vhost exists → create one ──────────────────────────────────────
   if [ ${#matched_files[@]} -eq 0 ]; then
-    warn "No nginx vhost found for ${DOMAIN}"
+    log "No nginx vhost found for ${DOMAIN} — creating one"
+    ensure_keyserver_vhost
     return 0
   fi
 
@@ -137,6 +139,90 @@ fix_keyserver_vhost() {
   if [ "$changed" -eq 0 ]; then
     log "Proxy target already looks correct for ${DOMAIN}"
   fi
+}
+
+ensure_keyserver_vhost() {
+  local conf_name="cmp-${DOMAIN}.conf"
+  local conf_path="$NGINX_SITES_AVAILABLE_DIR/$conf_name"
+  local enabled_path="$NGINX_SITES_ENABLED_DIR/$conf_name"
+
+  # Check if Let's Encrypt cert exists for this domain
+  local cert_path="/etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+  local key_path="/etc/letsencrypt/live/${DOMAIN}/privkey.pem"
+  local has_cert=false
+  if [ -f "$cert_path" ] && [ -f "$key_path" ]; then
+    has_cert=true
+  fi
+
+  mkdir -p /var/www/letsencrypt
+
+  if [ "$has_cert" = true ]; then
+    cat > "$conf_path" <<NGINXEOF
+upstream cmp_keyserver {
+    server 127.0.0.1:${DEFAULT_KEY_PORT};
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${DOMAIN};
+
+    ssl_certificate ${cert_path};
+    ssl_certificate_key ${key_path};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    location / {
+        proxy_pass http://cmp_keyserver;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINXEOF
+  else
+    cat > "$conf_path" <<NGINXEOF
+upstream cmp_keyserver {
+    server 127.0.0.1:${DEFAULT_KEY_PORT};
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${DOMAIN};
+
+    location / {
+        proxy_pass http://cmp_keyserver;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINXEOF
+  fi
+
+  ln -sf "$conf_path" "$enabled_path"
+  log "Created nginx vhost for ${DOMAIN} at ${conf_path} (proxying to ${DEFAULT_KEY_PORT})"
 }
 
 fix_keyserver_cert_paths() {
