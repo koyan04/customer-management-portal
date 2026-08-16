@@ -182,6 +182,9 @@ server {
     listen [::]:443 ssl http2;
     server_name ${DOMAIN};
 
+    # Allow large JSON payloads (key server backup/restore)
+    client_max_body_size 200m;
+
     ssl_certificate ${cert_path};
     ssl_certificate_key ${key_path};
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -208,6 +211,9 @@ server {
     listen 80;
     listen [::]:80;
     server_name ${DOMAIN};
+
+    # Allow large JSON payloads
+    client_max_body_size 200m;
 
     location / {
         proxy_pass http://cmp_keyserver;

@@ -199,6 +199,16 @@ fi
 
 prompt_if_empty LE_EMAIL "Enter email for Let's Encrypt notices"
 prompt_if_empty BACKEND_PORT "Backend port" false 3001
+# Key server: public domain + port (config written to backend/data/keyserver.json)
+KEYSERVER_PORT="${KEYSERVER_PORT:-8088}"
+KEYSERVER_CONFIG_DIR="${KEYSERVER_CONFIG_DIR:-$APP_DIR/configs}"
+prompt_if_empty KEYSERVER_DOMAIN "Key server public domain (e.g. key.example.com) — optional"
+if [ -n "$KEYSERVER_DOMAIN" ]; then
+  prompt_if_empty KEYSERVER_PORT "Key server port" false 8088
+else
+  warn "No key server domain provided; key server will be configured but not exposed via a public HTTPS domain."
+fi
+
 prompt_if_empty ADMIN_USER "Admin username" false admin
 prompt_if_empty ADMIN_PASS "Admin password (will be stored hashed in DB)" true admin123
 
@@ -478,6 +488,46 @@ else
     fi
   done
 fi
+
+# ── Configure the built-in Key Server ───────────────────────────────────────
+# Generates backend/data/keyserver.json so the key server is ready to run after install.
+KEYSERVER_CONFIG_FILE="$BACKEND_DIR/data/keyserver.json"
+# Auto-generate a secret key (32 random hex chars / 128-bit) unless one is provided
+KEYSERVER_SECRET_KEY="${KEYSERVER_SECRET_KEY:-}"
+if [ -z "$KEYSERVER_SECRET_KEY" ] && [ -f "$KEYSERVER_CONFIG_FILE" ]; then
+  existing_secret=$(grep -o '"secretKey"[[:space:]]*:[[:space:]]*"[^"]*"' "$KEYSERVER_CONFIG_FILE" | head -1 | sed -E 's/.*"secretKey"[[:space:]]*:[[:space:]]*"([^"]*)"/\1/' || true)
+  if [ -n "$existing_secret" ]; then
+    KEYSERVER_SECRET_KEY="$existing_secret"
+    color "Reusing existing key server secret key from $KEYSERVER_CONFIG_FILE"
+  fi
+fi
+if [ -z "$KEYSERVER_SECRET_KEY" ]; then
+  KEYSERVER_SECRET_KEY=$(openssl rand -hex 32)
+  color "Generated key server secret key"
+fi
+
+# Resolve the public domain (prefer explicit prompt; fall back to key.$DOMAIN)
+if [ -n "$KEYSERVER_DOMAIN" ]; then
+  KEYSERVER_PUBLIC_DOMAIN="$KEYSERVER_DOMAIN"
+else
+  KEYSERVER_PUBLIC_DOMAIN="${KEYSERVER_PUBLIC_DOMAIN:-key.${DOMAIN}}"
+fi
+# Normalize: strip any scheme so config stores a bare domain
+KEYSERVER_PUBLIC_DOMAIN=$(echo "$KEYSERVER_PUBLIC_DOMAIN" | sed -E 's#^https?://##; s#/.*$##')
+
+mkdir -p "$BACKEND_DIR/data"
+mkdir -p "$KEYSERVER_CONFIG_DIR"
+cat > "$KEYSERVER_CONFIG_FILE" <<EOF
+{
+  "port": ${KEYSERVER_PORT},
+  "secretKey": "${KEYSERVER_SECRET_KEY}",
+  "configDir": "${KEYSERVER_CONFIG_DIR}",
+  "autoStart": true,
+  "publicDomain": "${KEYSERVER_PUBLIC_DOMAIN}"
+}
+EOF
+color "Key server configured: port ${KEYSERVER_PORT}, config dir ${KEYSERVER_CONFIG_DIR}, public domain ${KEYSERVER_PUBLIC_DOMAIN}"
+color "Key server config written to $KEYSERVER_CONFIG_FILE"
 
 # Database preparation (PostgreSQL local assumed)
 color "Preparing database..."
@@ -961,6 +1011,9 @@ server {
     listen [::]:443 ssl http2;
     server_name $DOMAIN;
 
+    # Allow large JSON payloads (key server backup/restore, admin restore)
+    client_max_body_size 200m;
+
     ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -998,6 +1051,9 @@ server {
     listen 80;
     listen [::]:80;
     server_name $DOMAIN;
+
+    # Allow large JSON payloads (key server backup/restore, admin restore)
+    client_max_body_size 200m;
 
     location / {
         proxy_pass http://cmp_backend;

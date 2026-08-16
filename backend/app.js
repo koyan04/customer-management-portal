@@ -168,7 +168,7 @@ app.use((req, res, next) => {
 
 // Pre-parse JSON bodies for admin routes using raw-body so we can accept very large payloads
 // This runs BEFORE the global express.json() parser and avoids raw-body throwing 413 prematurely
-app.use('/api/admin', async (req, res, next) => {
+const parseLargeJson = async (req, res, next) => {
 	try {
 		const ct = (req.headers['content-type'] || '').toLowerCase();
 		if (ct.includes('application/json')) {
@@ -186,7 +186,12 @@ app.use('/api/admin', async (req, res, next) => {
 		return next(err);
 	}
 	next();
-});
+};
+
+// Pre-parse JSON bodies for admin routes (large backup/restore payloads)
+app.use('/api/admin', parseLargeJson);
+// Pre-parse JSON bodies for keyserver routes (large backup/restore bundles)
+app.use('/api/keyserver', parseLargeJson);
 
 // allow very large JSON payloads during development; global parser remains as a fallback
 app.use(express.json({ limit: '200mb' }));
