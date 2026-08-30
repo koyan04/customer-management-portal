@@ -168,6 +168,47 @@ node run_migrations.js
 ### Timezone issues
 Use IANA timezone names (e.g., `Asia/Yangon`) not offsets (e.g., `GMT+6:30`) in Settings → General.
 
+### Integrating with an existing nginx (multiple domains)
+
+If your VPS already runs nginx serving other domains, the installer will add the
+portal and key server as **separate vhost files** without touching your existing
+sites. It uses `systemctl reload nginx` (non-disruptive) instead of `restart`.
+
+**Option A — Let the installer do it (recommended):**
+```bash
+# Provide the portal domain and key server domain up front
+sudo DOMAIN=portal.example.com KEYSERVER_DOMAIN=key.example.com \
+  bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/bootstrap.sh | bash"
+```
+The installer now:
+- Creates `cmp-<portal>.conf` and `cmp-<key>.conf` vhosts under `/etc/nginx/sites-available/`
+- Never overwrites an existing vhost file
+- Reloads nginx (existing domains keep serving during the apply)
+- Exposes the key server on its public domain → `127.0.0.1:8088`
+
+**Option B — Add vhosts to an already-running nginx manually:**
+```bash
+wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/integrate-nginx.sh
+chmod +x integrate-nginx.sh
+sudo ./integrate-nginx.sh \
+  --portal-domain portal.example.com \
+  --key-domain key.example.com \
+  --backend-port 3001 \
+  --key-port 8088
+```
+The `integrate-nginx.sh` helper:
+- Adds the portal and key server vhosts as isolated files
+- Runs `nginx -t` before applying anything
+- Uses `systemctl reload nginx` so existing domains are never interrupted
+- Never stops nginx and never overwrites existing vhost files
+- Falls back to HTTP-only automatically if no certificate exists yet
+
+**Verify the key server is reachable:**
+```bash
+curl -fsS http://127.0.0.1:8088/health   # key server process
+curl -fsS https://key.example.com/health # through nginx (if TLS configured)
+```
+
 ### TLS/Certificate issues
 
 If certificate generation fails during installation (DNS-01 or HTTP-01):

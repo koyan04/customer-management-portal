@@ -985,6 +985,11 @@ if [ "$CMP_ENABLE_NGINX" = "1" ]; then
     color "Configuring nginx for $DOMAIN..."
     mkdir -p /var/www/letsencrypt
     NCONF="/etc/nginx/sites-available/cmp-$DOMAIN.conf"
+    # Never overwrite an existing vhost (nginx may already be serving this domain)
+    if [ -f "$NCONF" ]; then
+      warn "Vhost $NCONF already exists; leaving it untouched."
+      ln -sf "$NCONF" "/etc/nginx/sites-enabled/cmp-$DOMAIN.conf" 2>/dev/null || true
+    else
     if [ "$CERT_OK" -eq 1 ]; then
       cat > "$NCONF" <<EOF
 upstream cmp_backend {
@@ -1068,11 +1073,105 @@ EOF
       warn "TLS not configured; serving HTTP only. Re-run installer with valid Cloudflare credentials or obtain certs later."
     fi
     ln -sf "$NCONF" "/etc/nginx/sites-enabled/cmp-$DOMAIN.conf"
+    fi # end: vhost did not already exist
     if nginx -t; then
-      systemctl restart nginx
-      color "nginx configured and restarted"
+      # Use reload (non-disruptive) so existing domains keep serving during apply
+      systemctl reload nginx 2>/dev/null || systemctl restart nginx || true
+      color "nginx configured and reloaded"
     else
       err "nginx configuration test failed; please review $NCONF"
+    fi
+  fi
+fi
+
+# ── Key server nginx vhost (proxies the key server on :8088) ───────────────
+# Creates an isolated vhost for the key server public domain so it is exposed
+# over HTTPS alongside the portal, without touching existing nginx domains.
+if command -v nginx >/dev/null 2>&1 && [ -n "${KEYSERVER_PUBLIC_DOMAIN:-}" ]; then
+  KEY_NCONF="/etc/nginx/sites-available/cmp-${KEYSERVER_PUBLIC_DOMAIN}.conf"
+  if [ -f "$KEY_NCONF" ]; then
+    warn "Key server vhost $KEY_NCONF already exists; leaving it untouched."
+    ln -sf "$KEY_NCONF" "/etc/nginx/sites-enabled/cmp-${KEYSERVER_PUBLIC_DOMAIN}.conf" 2>/dev/null || true
+  else
+    KEY_CERT_PATH="/etc/letsencrypt/live/${KEYSERVER_PUBLIC_DOMAIN}/fullchain.pem"
+    KEY_KEY_PATH="/etc/letsencrypt/live/${KEYSERVER_PUBLIC_DOMAIN}/privkey.pem"
+    if [ -f "$KEY_CERT_PATH" ] && [ -f "$KEY_KEY_PATH" ]; then
+      cat > "$KEY_NCONF" <<EOF
+upstream cmp_keyserver {
+    server 127.0.0.1:${KEYSERVER_PORT};
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${KEYSERVER_PUBLIC_DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name ${KEYSERVER_PUBLIC_DOMAIN};
+
+    # Allow large JSON payloads (key server backup/restore)
+    client_max_body_size 200m;
+
+    ssl_certificate ${KEY_CERT_PATH};
+    ssl_certificate_key ${KEY_KEY_PATH};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    location / {
+        proxy_pass http://cmp_keyserver;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+    else
+      cat > "$KEY_NCONF" <<EOF
+upstream cmp_keyserver {
+    server 127.0.0.1:${KEYSERVER_PORT};
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${KEYSERVER_PUBLIC_DOMAIN};
+
+    # Allow large JSON payloads (key server backup/restore)
+    client_max_body_size 200m;
+
+    location / {
+        proxy_pass http://cmp_keyserver;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+EOF
+      warn "No certificate for key server domain ${KEYSERVER_PUBLIC_DOMAIN}; serving HTTP only."
+    fi
+    ln -sf "$KEY_NCONF" "/etc/nginx/sites-enabled/cmp-${KEYSERVER_PUBLIC_DOMAIN}.conf"
+    if nginx -t; then
+      systemctl reload nginx 2>/dev/null || systemctl restart nginx || true
+      color "Key server nginx vhost configured for ${KEYSERVER_PUBLIC_DOMAIN} (port ${KEYSERVER_PORT})"
+    else
+      err "nginx configuration test failed for key server vhost; please review $KEY_NCONF"
     fi
   fi
 fi
