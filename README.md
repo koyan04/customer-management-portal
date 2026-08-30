@@ -256,6 +256,36 @@ Then restart Xray: `systemctl restart xray`
 > handshake presents the portal's certificate to probing clients, while the
 > `fallbacks` entry forwards real browser traffic to nginx.
 
+### Serving the portal + key server on a free port (no Xray changes)
+
+If you prefer **not** to modify Xray at all, run nginx on a **free port** and
+proxy both the portal (`:3001`) and key server (`:8088`) there with valid
+Let's Encrypt certificates:
+
+```
+https://portal.example.com:8444  -> nginx -> backend :3001
+https://key.example.com:8444     -> nginx -> key server :8088
+```
+
+**Automated setup:**
+```bash
+wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/setup-ports.sh
+chmod +x setup-ports.sh
+sudo ./setup-ports.sh \
+  --portal-domain ynparadise.dpdns.org \
+  --key-domain key.vchannel.dpdns.org
+```
+The `setup-ports.sh` helper:
+- Obtains Let's Encrypt certificates for both domains (HTTP-01)
+- Auto-detects a free port (e.g. `8444`) and creates nginx vhosts there
+- Proxies the portal to `:3001` and the key server to `:8088`
+- Reloads nginx non-disruptively
+- Leaves Xray completely untouched
+
+> **Note:** This requires port 80 to be reachable for the HTTP-01 challenge.
+> If Xray owns port 80, you may need to temporarily free it or use a DNS
+> challenge. The URLs will include the port (e.g. `https://portal:8444`).
+
 ### TLS/Certificate issues
 
 If certificate generation fails during installation (DNS-01 or HTTP-01):
