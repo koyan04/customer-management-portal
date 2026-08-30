@@ -232,19 +232,24 @@ sudo ./setup-portal-443.sh --domain ynparadise.dpdns.org
 ```
 The `setup-portal-443.sh` helper:
 - Obtains a Let's Encrypt certificate for the portal domain (HTTP-01)
-- Creates an nginx vhost listening on `127.0.0.1:8443` (NOT 443) that terminates
+- Auto-detects a free port (e.g. `127.0.0.1:8443`, or `8444`/`9443` if Xray
+  already owns 8443) and creates an nginx vhost there (NOT 443) that terminates
   TLS and proxies to the backend
 - Prints the exact Xray `fallbacks` block to add to your 443 inbound
 - Reloads nginx non-disruptively
 
 **Manual Xray fallback config** — add this to the inbound that listens on 443,
-inside its `streamSettings` → `realitySettings` (or `tlsSettings`):
+inside its `streamSettings` → `realitySettings` (or `tlsSettings`), using the
+port nginx actually listens on (check with `sudo ss -ltnp | grep nginx`):
 ```json
 "fallbacks": [
     { "dest": "127.0.0.1:8443", "xver": 1 }
 ]
 ```
 Then restart Xray: `systemctl restart xray`
+
+> **Note:** If Xray already owns port 8443 (common on 3x-ui panels), pick a
+> different free port for nginx (e.g. `8444`) and use that in the fallback.
 
 > **Note:** For a REALITY inbound, the `dest` in `realitySettings` should point
 > to the portal domain (e.g. `"dest": "ynparadise.dpdns.org:443"`) so the TLS

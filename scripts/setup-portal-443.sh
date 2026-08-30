@@ -44,7 +44,7 @@ fi
 # ── Defaults ────────────────────────────────────────────────────────────────
 DOMAIN="${DOMAIN:-}"
 BACKEND_PORT="${BACKEND_PORT:-3001}"
-NGINX_LISTEN_PORT="${NGINX_LISTEN_PORT:-8443}"   # nginx listens here (NOT 443)
+NGINX_LISTEN_PORT="${NGINX_LISTEN_PORT:-}"       # auto-detected if empty
 LE_EMAIL="${LE_EMAIL:-admin@${DOMAIN:-example.com}}"
 NO_RELOAD=false
 
@@ -64,12 +64,12 @@ while [ $# -gt 0 ]; do
 Usage: setup-portal-443.sh --domain example.com [options]
 
 Serves the CMP portal on https://example.com/ (port 443) alongside Xray
-using Xray's fallback feature. nginx listens on 127.0.0.1:8443 (not 443).
+using Xray's fallback feature. nginx listens on 127.0.0.1:<port> (not 443).
 
 Options:
   --domain <d>        Portal domain (required)
   --backend-port <p>  Backend port (default 3001)
-  --listen-port <p>   nginx listen port (default 8443)
+  --listen-port <p>   nginx listen port (auto-detected if omitted)
   --no-reload         Do not reload nginx at the end
 EOF
       exit 0 ;;
@@ -92,6 +92,21 @@ fi
 if ! command -v certbot >/dev/null 2>&1; then
   err "certbot is not installed. Install it first (apt-get install -y certbot)."
   exit 1
+fi
+
+# ── Auto-detect a free port for nginx (Xray may own 8443) ───────────────────
+if [ -z "$NGINX_LISTEN_PORT" ]; then
+  for p in 8443 8444 8445 9443 10443 11443 12443; do
+    if ! ss -ltn 2>/dev/null | grep -q ":$p "; then
+      NGINX_LISTEN_PORT="$p"
+      break
+    fi
+  done
+  if [ -z "$NGINX_LISTEN_PORT" ]; then
+    err "Could not find a free port for nginx. Pass --listen-port explicitly."
+    exit 1
+  fi
+  log "Auto-selected free port $NGINX_LISTEN_PORT for nginx."
 fi
 
 mkdir -p "$SITES_AVAILABLE" "$SITES_ENABLED"
@@ -140,21 +155,13 @@ if [ "$CERT_OK" = false ]; then
 fi
 log "Certificate ready for $DOMAIN."
 
-# ── 2. Create nginx vhost on 127.0.0.1:8443 (NOT 443) ──────────────────────
+# ── 2. Create nginx vhost on 127.0.0.1:$NGINX_LISTEN_PORT (NOT 443) ────────
 NCONF="$SITES_AVAILABLE/cmp-$DOMAIN.conf"
 log "Creating nginx vhost listening on 127.0.0.1:$NGINX_LISTEN_PORT (proxying to :$BACKEND_PORT)"
 cat > "$NCONF" <<EOF
 upstream cmp_backend {
     server 127.0.0.1:$BACKEND_PORT;
     keepalive 32;
-}
-
-# HTTP -> HTTPS redirect (only reachable if Xray forwards port 80 here too)
-server {
-    listen 127.0.0.1:80;
-    server_name $DOMAIN;
-    location /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
-    location / { return 301 https://\$host\$request_uri; }
 }
 
 # TLS termination on a non-conflicting port (Xray fallback forwards here)
