@@ -209,6 +209,48 @@ curl -fsS http://127.0.0.1:8088/health   # key server process
 curl -fsS https://key.example.com/health # through nginx (if TLS configured)
 ```
 
+### Serving the portal on port 443 alongside Xray (VPN server)
+
+If your VPS runs **Xray** (which owns ports 80/443 for VPN traffic), nginx
+cannot bind to 443 directly. The standard solution is **Xray's `fallback`**
+feature: Xray keeps 443 for VPN, and forwards non-VPN (browser) traffic to
+nginx on a non-conflicting port (e.g. `127.0.0.1:8443`), where nginx terminates
+TLS with the portal's certificate.
+
+```
+Browser → https://DOMAIN (443)
+   → Xray (owns 443)
+      → VPN client?  → handled by Xray (untouched)
+      → Browser?     → fallback → nginx 127.0.0.1:8443 → backend :3001
+```
+
+**Automated setup:**
+```bash
+wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/setup-portal-443.sh
+chmod +x setup-portal-443.sh
+sudo ./setup-portal-443.sh --domain ynparadise.dpdns.org
+```
+The `setup-portal-443.sh` helper:
+- Obtains a Let's Encrypt certificate for the portal domain (HTTP-01)
+- Creates an nginx vhost listening on `127.0.0.1:8443` (NOT 443) that terminates
+  TLS and proxies to the backend
+- Prints the exact Xray `fallbacks` block to add to your 443 inbound
+- Reloads nginx non-disruptively
+
+**Manual Xray fallback config** — add this to the inbound that listens on 443,
+inside its `streamSettings` → `realitySettings` (or `tlsSettings`):
+```json
+"fallbacks": [
+    { "dest": "127.0.0.1:8443", "xver": 1 }
+]
+```
+Then restart Xray: `systemctl restart xray`
+
+> **Note:** For a REALITY inbound, the `dest` in `realitySettings` should point
+> to the portal domain (e.g. `"dest": "ynparadise.dpdns.org:443"`) so the TLS
+> handshake presents the portal's certificate to probing clients, while the
+> `fallbacks` entry forwards real browser traffic to nginx.
+
 ### TLS/Certificate issues
 
 If certificate generation fails during installation (DNS-01 or HTTP-01):
