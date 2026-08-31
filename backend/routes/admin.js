@@ -2026,6 +2026,8 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
     const users = await pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users ORDER BY id');
     let domainsRows = [];
     try { const dr = await pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains ORDER BY id'); domainsRows = dr.rows || []; } catch (_) {}
+    let snapshotsRows = [];
+    try { const sr = await pool.query('SELECT id, month_start::text as month_start, month_end::text as month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC'); snapshotsRows = sr.rows || []; } catch (_) {}
     const keyserverConfig = loadKeyserverConfig();
     const payload = {
       type: 'db-backup-v1',
@@ -2041,6 +2043,7 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
       server_admin_permissions: serverAdmins.rows || [],
       app_settings: (settings.rows || []).map(r => ({ settings_key: r.settings_key, data: maskSecrets(r.settings_key, r.data), updated_at: r.updated_at })),
       domains: domainsRows,
+      financial_snapshots: snapshotsRows,
       keyserver_config: keyserverConfig || null,
     };
     const json = JSON.stringify(payload);
@@ -2543,6 +2546,54 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           console.warn('Could not restore domains:', e.message);
         }
       }
+      // financial_snapshots: DELETE existing for each month/server in backup, then INSERT.
+      const parseDateToFirstOfMonth = (raw) => {
+        if (!raw) return null;
+        const s = String(raw);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s.slice(0, 7) + '-01';
+        const d = new Date(new Date(s).getTime() + 7 * 60 * 60 * 1000);
+        return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`;
+      };
+      let snapshotCount = 0;
+      if (Array.isArray(payload.financial_snapshots)) {
+        for (const s of payload.financial_snapshots) {
+          if (!s.month_start) continue;
+          const monthStartVal = parseDateToFirstOfMonth(s.month_start);
+          if (!monthStartVal) continue;
+          const monthEndVal = (() => {
+            if (!s.month_end) return null;
+            const raw = String(s.month_end);
+            if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+            const d = new Date(new Date(raw).getTime() + 7 * 60 * 60 * 1000);
+            return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+          })();
+          const serverId = s.server_id != null && s.server_id !== '' ? Number(s.server_id) : null;
+          try {
+            await client.query(`SAVEPOINT snap_restore`);
+            if (serverId != null) {
+              await client.query('DELETE FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id = $2', [monthStartVal, serverId]);
+            } else {
+              await client.query('DELETE FROM monthly_financial_snapshots WHERE month_start = $1 AND server_id IS NULL', [monthStartVal]);
+            }
+            await client.query(
+              `INSERT INTO monthly_financial_snapshots
+                 (month_start, month_end, server_id, mini_count, basic_count, unlimited_count,
+                  price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, notes)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11,NOW()),$12)`,
+              [monthStartVal, monthEndVal, serverId,
+               Number(s.mini_count || 0), Number(s.basic_count || 0), Number(s.unlimited_count || 0),
+               Number(s.price_mini_cents || 0), Number(s.price_basic_cents || 0), Number(s.price_unlimited_cents || 0),
+               Number(s.revenue_cents || 0), s.created_at || null, s.notes || null]
+            );
+            await client.query(`RELEASE SAVEPOINT snap_restore`);
+            snapshotCount++;
+          } catch (e) {
+            await client.query(`ROLLBACK TO SAVEPOINT snap_restore`).catch(() => {});
+            console.warn('Could not restore financial snapshot for', monthStartVal, ':', e.message);
+          }
+        }
+        console.log(`Restored ${snapshotCount} financial snapshots (db backup)`);
+      }
       // keyserver config: Restore from backup if present
       if (payload.keyserver_config && typeof payload.keyserver_config === 'object') {
         try {
@@ -2565,6 +2616,7 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           server_admin_perms: payload.server_admin_permissions ? payload.server_admin_permissions.length : 0,
           settings: payload.app_settings ? payload.app_settings.length : 0,
           domains: payload.domains ? payload.domains.length : 0,
+          financial_snapshots: snapshotCount,
           keyserver_config: payload.keyserver_config ? true : false,
         }
       });

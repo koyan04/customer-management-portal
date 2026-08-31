@@ -1083,14 +1083,15 @@ async function createBackupSnapshot() {
     const now = new Date().toISOString().replace(/[:.]/g, '-');
     const tmpdir = os.tmpdir();
     const outPath = path.join(tmpdir, `cmp-backup-${now}.json`);
-    // Fetch app settings, servers, server_keys, users, admins (with avatars), and domains
-    const [settingsRes, serversRes, serverKeysRes, usersRes, adminsRes, domainsRes] = await Promise.all([
+    // Fetch app settings, servers, server_keys, users, admins (with avatars), domains, and financial snapshots
+    const [settingsRes, serversRes, serverKeysRes, usersRes, adminsRes, domainsRes, snapshotsRes] = await Promise.all([
       pool.query('SELECT * FROM app_settings'),
       pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers'),
       pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys'),
       pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users'),
       pool.query('SELECT id, display_name, username, role, avatar_url, avatar_data, created_at FROM admins'),
-      pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains').catch(() => ({ rows: [] }))
+      pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains').catch(() => ({ rows: [] })),
+      pool.query('SELECT id, month_start::text as month_start, month_end::text as month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC').catch(() => ({ rows: [] }))
     ]);
     // Load keyserver config from file
     let keyserverConfig = null;
@@ -1111,6 +1112,7 @@ async function createBackupSnapshot() {
       })),
       admins: adminsRes.rows || [],
       domains: domainsRes.rows || [],
+      financial_snapshots: snapshotsRes.rows || [],
       keyserver_config: keyserverConfig || null,
       note: 'Avatar files in public/uploads/ are not included - backup that directory separately'
     };
