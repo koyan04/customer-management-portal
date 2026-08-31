@@ -388,7 +388,21 @@ TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
 TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
 if [ "$TOTAL_MEM_GB" -lt 2 ]; then
   warn "Low memory detected (${TOTAL_MEM_GB}GB). Creating temporary swap for build..."
-  SWAP_FILE="/tmp/cmp-build-swap"
+  # Prefer disk-backed locations over tmpfs (which may be too small)
+  SWAP_FILE=""
+  for candidate in "$APP_DIR/cmp-build-swap" "/var/tmp/cmp-build-swap" "/tmp/cmp-build-swap"; do
+    parent="$(dirname "$candidate")"
+    if [ -d "$parent" ]; then
+      available_kb=$(df "$parent" | awk 'NR==2 {print $4}')
+      if [ "$available_kb" -ge 2097152 ]; then
+        SWAP_FILE="$candidate"
+        break
+      fi
+    fi
+  done
+  if [ -z "$SWAP_FILE" ]; then
+    die "No location with 2GB+ free space found for swap file. Free up space or increase memory to 2GB+."
+  fi
   dd if=/dev/zero of="$SWAP_FILE" bs=1M count=2048 status=progress 2>/dev/null || dd if=/dev/zero of="$SWAP_FILE" bs=1M count=2048
   chmod 600 "$SWAP_FILE"
   mkswap "$SWAP_FILE"
