@@ -168,172 +168,42 @@ node run_migrations.js
 ### Timezone issues
 Use IANA timezone names (e.g., `Asia/Yangon`) not offsets (e.g., `GMT+6:30`) in Settings → General.
 
-### Integrating with an existing nginx (multiple domains)
+### HTTPS setup for the portal and key server (fresh VPS)
 
-If your VPS already runs nginx serving other domains, the installer will add the
-portal and key server as **separate vhost files** without touching your existing
-sites. It uses `systemctl reload nginx` (non-disruptive) instead of `restart`.
+On a fresh VPS, the installer configures nginx to serve **both** the portal and
+the key server over HTTPS with valid Let's Encrypt certificates:
 
-**Option A — Let the installer do it (recommended):**
+```
+https://portal.example.com  -> nginx -> backend :3001
+https://key.example.com     -> nginx -> key server :8088
+```
+
+**Provide both domains up front:**
 ```bash
-# Provide the portal domain and key server domain up front
 sudo DOMAIN=portal.example.com KEYSERVER_DOMAIN=key.example.com \
   bash -lc "curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/bootstrap.sh | bash"
 ```
-The installer now:
-- Creates `cmp-<portal>.conf` and `cmp-<key>.conf` vhosts under `/etc/nginx/sites-available/`
-- Never overwrites an existing vhost file
-- Reloads nginx (existing domains keep serving during the apply)
-- Exposes the key server on its public domain → `127.0.0.1:8088`
 
-**Option B — Add vhosts to an already-running nginx manually:**
-```bash
-wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/integrate-nginx.sh
-chmod +x integrate-nginx.sh
-sudo ./integrate-nginx.sh \
-  --portal-domain portal.example.com \
-  --key-domain key.example.com \
-  --backend-port 3001 \
-  --key-port 8088
-```
-The `integrate-nginx.sh` helper:
-- Adds the portal and key server vhosts as isolated files
-- Runs `nginx -t` before applying anything
-- Uses `systemctl reload nginx` so existing domains are never interrupted
-- Never stops nginx and never overwrites existing vhost files
-- Falls back to HTTP-only automatically if no certificate exists yet
-
-**Verify the key server is reachable:**
-```bash
-curl -fsS http://127.0.0.1:8088/health   # key server process
-curl -fsS https://key.example.com/health # through nginx (if TLS configured)
-```
-
-### Serving the portal on port 443 alongside Xray (VPN server)
-
-If your VPS runs **Xray** (which owns ports 80/443 for VPN traffic), nginx
-cannot bind to 443 directly. The standard solution is **Xray's `fallback`**
-feature: Xray keeps 443 for VPN, and forwards non-VPN (browser) traffic to
-nginx on a non-conflicting port (e.g. `127.0.0.1:8443`), where nginx terminates
-TLS with the portal's certificate.
-
-```
-Browser → https://DOMAIN (443)
-   → Xray (owns 443)
-      → VPN client?  → handled by Xray (untouched)
-      → Browser?     → fallback → nginx 127.0.0.1:8443 → backend :3001
-```
-
-**Automated setup:**
-```bash
-wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/setup-portal-443.sh
-chmod +x setup-portal-443.sh
-sudo ./setup-portal-443.sh --domain ynparadise.dpdns.org
-```
-The `setup-portal-443.sh` helper:
-- Obtains a Let's Encrypt certificate for the portal domain (HTTP-01)
-- Auto-detects a free port (e.g. `127.0.0.1:8443`, or `8444`/`9443` if Xray
-  already owns 8443) and creates an nginx vhost there (NOT 443) that terminates
-  TLS and proxies to the backend
-- Prints the exact Xray `fallbacks` block to add to your 443 inbound
-- Reloads nginx non-disruptively
-
-**Manual Xray fallback config** — add this to the inbound that listens on 443,
-inside its `streamSettings` → `realitySettings` (or `tlsSettings`), using the
-port nginx actually listens on (check with `sudo ss -ltnp | grep nginx`):
-```json
-"fallbacks": [
-    { "dest": "127.0.0.1:8443", "xver": 1 }
-]
-```
-Then restart Xray: `systemctl restart xray`
-
-> **Note:** If Xray already owns port 8443 (common on 3x-ui panels), pick a
-> different free port for nginx (e.g. `8444`) and use that in the fallback.
-
-> **Note:** For a REALITY inbound, the `dest` in `realitySettings` should point
-> to the portal domain (e.g. `"dest": "ynparadise.dpdns.org:443"`) so the TLS
-> handshake presents the portal's certificate to probing clients, while the
-> `fallbacks` entry forwards real browser traffic to nginx.
-
-### Serving the portal + key server on a free port (no Xray changes)
-
-If you prefer **not** to modify Xray at all, run nginx on a **free port** and
-proxy both the portal (`:3001`) and key server (`:8088`) there with valid
-Let's Encrypt certificates:
-
-```
-https://portal.example.com:8444  -> nginx -> backend :3001
-https://key.example.com:8444     -> nginx -> key server :8088
-```
-
-**Automated setup:**
-```bash
-wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/setup-ports.sh
-chmod +x setup-ports.sh
-sudo ./setup-ports.sh \
-  --portal-domain ynparadise.dpdns.org \
-  --key-domain key.vchannel.dpdns.org
-```
-The `setup-ports.sh` helper:
-- Obtains Let's Encrypt certificates for both domains (HTTP-01)
-- Auto-detects a free port (e.g. `8444`) and creates nginx vhosts there
+The installer:
+- Issues a Let's Encrypt certificate covering **both** the portal domain and
+  the key server domain (DNS-01 via Cloudflare, or HTTP-01 fallback)
+- Creates `cmp-<portal>.conf` and `cmp-<key>.conf` vhosts under
+  `/etc/nginx/sites-available/`
 - Proxies the portal to `:3001` and the key server to `:8088`
 - Reloads nginx non-disruptively
-- Leaves Xray completely untouched
 
-> **Note:** This requires port 80 to be reachable for the HTTP-01 challenge.
-> If Xray owns port 80, you may need to temporarily free it or use a DNS
-> challenge. The URLs will include the port (e.g. `https://portal:8444`).
-
-### Restoring old subscription links (keep existing clients working)
-
-If you already distributed subscription links and don't want to re-distribute
-new ones, restore the **old secret key** and **old token** so the old URLs work
-again:
-
+**Verify both are reachable:**
 ```bash
-wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/restore-old-links.sh
-chmod +x restore-old-links.sh
-sudo ./restore-old-links.sh \
-  --secret-key 88f24d617ed0fa519f02762c600ea8f7 \
-  --token 403321bd3156bd36d6042dd154e8519f \
-  --file vchannel-config-admin-test.yaml \
-  --public-domain https://key.vchannel.dpdns.org:8444
+curl -fsS http://127.0.0.1:3001/api/health   # portal backend
+curl -fsS http://127.0.0.1:8088/health       # key server process
+curl -fsS https://portal.example.com/        # portal via nginx
+curl -fsS https://key.example.com/health     # key server via nginx
 ```
 
-The `restore-old-links.sh` helper:
-- Restores the old `secretKey` in `keyserver.json`
-- Adds the old token → config file mapping in `token_map.json`
-- Sets `publicDomain` (optional)
-- Restarts the backend
-
-**Important:** The old links must reach the key server. If the old links have
-**no port** (port 443, owned by Xray), you must add a fallback in the 3x-ui
-panel (see below). If they use a custom port (e.g. `:8444`), they work via
-nginx immediately.
-
-### Adding the Xray fallback via the 3x-ui panel
-
-On 3x-ui panels, the 443 inbound is stored in the panel's database, not the
-base `config.json`. To forward browser traffic to nginx (so port-443 links
-work), add the fallback through the panel UI:
-
-1. Log into the **3x-ui panel**.
-2. Go to **Inbound List**.
-3. Find the inbound on **port 443**.
-4. Click **Edit**.
-5. In the **stream settings**, find the **Fallback** field (JSON textarea).
-6. Add (using the port nginx listens on, e.g. `8444`):
-```json
-[
-  { "dest": "127.0.0.1:8444", "xver": 1 }
-]
-```
-7. Save and restart Xray.
-
-For a **VLESS + WebSocket + TLS** inbound, the fallback goes inside
-`tlsSettings`. For a **REALITY** inbound, it goes inside `realitySettings`.
+> **Note:** If the VPS already runs another service on ports 80/443 (e.g. Xray
+> for VPN), nginx cannot bind to 443. In that case the installer serves HTTP
+> only, and you must configure the other service to forward browser traffic to
+> nginx (e.g. Xray's `fallback` feature) to get HTTPS on 443.
 
 ### TLS/Certificate issues
 

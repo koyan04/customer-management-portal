@@ -833,14 +833,24 @@ fi
 
 # Certificate issuance (DNS-01 via Cloudflare, optional HTTP fallback)
 CERT_PRIMARY_PATH="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+# Include the key server public domain in certificate issuance so the key
+# server vhost gets a valid HTTPS cert on a fresh install.
 ALL_DOMAINS=("$DOMAIN" "${EXTRA_DOMAINS[@]}")
+if [ -n "${KEYSERVER_PUBLIC_DOMAIN:-}" ] && [ "$KEYSERVER_PUBLIC_DOMAIN" != "$DOMAIN" ]; then
+  ALL_DOMAINS+=("$KEYSERVER_PUBLIC_DOMAIN")
+fi
 build_domain_args() { for host in "${ALL_DOMAINS[@]}"; do printf -- " -d %s" "$host"; done; }
 
 CERT_OK=0
+# Determine if any cert is missing (portal or key server) so we issue for all.
+KEY_CERT_PATH="/etc/letsencrypt/live/${KEYSERVER_PUBLIC_DOMAIN:-none}/fullchain.pem"
+CERT_NEEDED=0
+[ ! -f "$CERT_PRIMARY_PATH" ] && CERT_NEEDED=1
+[ -n "${KEYSERVER_PUBLIC_DOMAIN:-}" ] && [ ! -f "$KEY_CERT_PATH" ] && CERT_NEEDED=1
 if [ "${CMP_SKIP_CERT:-}" = "1" ]; then
   warn "Skipping certificate issuance per CMP_SKIP_CERT=1"
 else
-  if [ ! -f "$CERT_PRIMARY_PATH" ]; then
+  if [ "$CERT_NEEDED" -eq 1 ]; then
     color "Requesting certificate (DNS-01 Cloudflare) for: ${ALL_DOMAINS[*]}"
     # Ensure dns-cloudflare plugin present (Debian/Ubuntu best-effort)
     if ! certbot plugins 2>/dev/null | grep -q dns-cloudflare; then
