@@ -286,6 +286,55 @@ The `setup-ports.sh` helper:
 > If Xray owns port 80, you may need to temporarily free it or use a DNS
 > challenge. The URLs will include the port (e.g. `https://portal:8444`).
 
+### Restoring old subscription links (keep existing clients working)
+
+If you already distributed subscription links and don't want to re-distribute
+new ones, restore the **old secret key** and **old token** so the old URLs work
+again:
+
+```bash
+wget https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/restore-old-links.sh
+chmod +x restore-old-links.sh
+sudo ./restore-old-links.sh \
+  --secret-key 88f24d617ed0fa519f02762c600ea8f7 \
+  --token 403321bd3156bd36d6042dd154e8519f \
+  --file vchannel-config-admin-test.yaml \
+  --public-domain https://key.vchannel.dpdns.org:8444
+```
+
+The `restore-old-links.sh` helper:
+- Restores the old `secretKey` in `keyserver.json`
+- Adds the old token → config file mapping in `token_map.json`
+- Sets `publicDomain` (optional)
+- Restarts the backend
+
+**Important:** The old links must reach the key server. If the old links have
+**no port** (port 443, owned by Xray), you must add a fallback in the 3x-ui
+panel (see below). If they use a custom port (e.g. `:8444`), they work via
+nginx immediately.
+
+### Adding the Xray fallback via the 3x-ui panel
+
+On 3x-ui panels, the 443 inbound is stored in the panel's database, not the
+base `config.json`. To forward browser traffic to nginx (so port-443 links
+work), add the fallback through the panel UI:
+
+1. Log into the **3x-ui panel**.
+2. Go to **Inbound List**.
+3. Find the inbound on **port 443**.
+4. Click **Edit**.
+5. In the **stream settings**, find the **Fallback** field (JSON textarea).
+6. Add (using the port nginx listens on, e.g. `8444`):
+```json
+[
+  { "dest": "127.0.0.1:8444", "xver": 1 }
+]
+```
+7. Save and restart Xray.
+
+For a **VLESS + WebSocket + TLS** inbound, the fallback goes inside
+`tlsSettings`. For a **REALITY** inbound, it goes inside `realitySettings`.
+
 ### TLS/Certificate issues
 
 If certificate generation fails during installation (DNS-01 or HTTP-01):
