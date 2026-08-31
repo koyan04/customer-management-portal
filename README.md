@@ -85,6 +85,43 @@ node backend/run_migrations.js
 systemctl restart cmp-backend  # or restart manually
 ```
 
+## Uninstall
+
+> ⚠️ The uninstaller is **destructive** and irreversible. It removes the app, services, nginx configs, Let's Encrypt certs, Cloudflare credentials, and optionally the database. Back up anything you need first (see [Quick Update](#quick-update) — use the same backup commands / `--keep-env`).
+
+The current release ships `scripts/uninstall.sh` in the app, so on a server where the portal is already installed simply run:
+
+```bash
+# Run the bundled uninstaller on the server (requires root)
+sudo bash /srv/cmp/scripts/uninstall.sh
+```
+
+Or download and run the standalone script from GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/uninstall.sh -o uninstall.sh
+sudo bash uninstall.sh
+```
+
+The script stops and disables all services/timers, removes systemd units, nginx vhosts, Let's Encrypt certs, `/root/.cloudflare.ini`, the renew hook, the app directory (`/srv/cmp`), and the PostgreSQL database + role. You must type `YES` to confirm. It intentionally leaves system packages (Node.js, nginx, PostgreSQL, certbot) installed so you can remove them separately if desired:
+
+```bash
+sudo apt remove --purge nginx postgresql certbot
+```
+
+### Options
+
+```bash
+sudo bash uninstall.sh --yes          # skip all confirmation prompts
+sudo bash uninstall.sh --purge-all    # remove app + nginx + certs + db
+sudo bash uninstall.sh --dry-run      # preview what would be removed (no changes)
+sudo bash uninstall.sh --keep-env     # back up .env + keyserver.json to /root/cmp-uninstall-backup
+sudo bash uninstall.sh --keep-db      # keep the PostgreSQL database/role
+sudo bash uninstall.sh --keep-nginx   # keep nginx vhosts
+sudo bash uninstall.sh --keep-certs   # keep Let's Encrypt certs
+sudo bash uninstall.sh --keep-configs # keep /root/.cloudflare.ini + renew hook
+```
+
 ## Configuration
 
 **Environment Variables** (`backend/.env`):

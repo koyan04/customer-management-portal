@@ -1,4 +1,14 @@
-﻿cmp ver 1.9.13
+﻿cmp ver 1.9.14
+
+What's new
+- Server uninstaller: added scripts/uninstall.sh that cleanly removes the portal (systemd units/timers, Nginx vhosts, Let's Encrypt certs, Cloudflare creds, /srv/cmp, and optionally the PostgreSQL role+DB) with confirmation, --dry-run, --keep-* and --yes options
+- Docs: added an Uninstall section to README.md and VPS_DEPLOYMENT.md
+
+See release-notes-1.9.14.md for full details.
+
+---
+
+cmp ver 1.9.13
 
 What's new
 - Key Server HTTPS: installer now issues a certificate for the key server domain and writes a proper HTTPS vhost (with HTTP→HTTPS redirect); fixes HTTPS requests falling through to the portal React app

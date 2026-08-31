@@ -120,6 +120,48 @@ sudo journalctl -u cmp-backend -f
 sudo journalctl -u cmp-telegram-bot -f
 ```
 
+### Uninstall / Cleanup
+
+> ⚠️ **Destructive and irreversible.** Back up your database and `backend/.env` first if you may need to restore.
+
+The portal ships an uninstaller at `scripts/uninstall.sh`. On an installed server:
+
+```bash
+# Run the bundled uninstaller (requires root)
+sudo bash /srv/cmp/scripts/uninstall.sh
+```
+
+Or download the standalone script and run it:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/koyan04/customer-management-portal/main/scripts/uninstall.sh -o uninstall.sh
+sudo bash uninstall.sh
+```
+
+What it removes:
+- All systemd services & timers (`cmp-backend`, `cmp-telegram-bot`, `cmp-worker`, `cmp-cert-expiry`, `cmp-matview-refresh`)
+- Nginx vhosts for the portal and key server domains
+- Let's Encrypt certs and the `cmp-post-renew.sh` deploy hook
+- `/root/.cloudflare.ini` (Cloudflare credentials)
+- `/srv/cmp` (the application, incl. `.env` unless you pass `--keep-env`)
+- PostgreSQL database + role
+
+Useful variants:
+
+```bash
+sudo bash uninstall.sh --yes          # no confirmations
+sudo bash uninstall.sh --dry-run      # preview only, make no changes
+sudo bash uninstall.sh --keep-env     # back up .env + keyserver.json to /root/cmp-uninstall-backup
+sudo bash uninstall.sh --keep-db      # keep PostgreSQL database/role
+sudo bash uninstall.sh --purge-all    # remove everything selected (default behaviour with confirmations)
+```
+
+After the script finishes, system packages (Node.js, nginx, PostgreSQL, certbot) remain installed. Remove them separately if desired:
+
+```bash
+sudo apt remove --purge nginx postgresql certbot
+```
+
 ## Troubleshooting
 
 ### Logos Not Showing After Update
