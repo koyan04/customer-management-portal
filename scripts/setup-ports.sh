@@ -160,9 +160,13 @@ ensure_cert "$PORTAL_DOMAIN" || { err "No cert for $PORTAL_DOMAIN. Aborting."; e
 ensure_cert "$KEY_DOMAIN"    || { err "No cert for $KEY_DOMAIN. Aborting."; exit 1; }
 
 # ── 2. Create nginx vhosts on the free port ─────────────────────────────────
+# Listen on all interfaces so external browsers can reach the portal.
+# (Xray owns 80/443; this free port is dedicated to nginx.)
+LISTEN_ADDR="${LISTEN_ADDR:-0.0.0.0}"
+
 # Portal vhost
 PCONF="$SITES_AVAILABLE/cmp-$PORTAL_DOMAIN.conf"
-log "Creating portal vhost on 127.0.0.1:$LISTEN_PORT (proxying to :$BACKEND_PORT)"
+log "Creating portal vhost on $LISTEN_ADDR:$LISTEN_PORT (proxying to :$BACKEND_PORT)"
 cat > "$PCONF" <<EOF
 upstream cmp_backend {
     server 127.0.0.1:$BACKEND_PORT;
@@ -170,7 +174,7 @@ upstream cmp_backend {
 }
 
 server {
-    listen 127.0.0.1:$LISTEN_PORT ssl http2;
+    listen $LISTEN_ADDR:$LISTEN_PORT ssl http2;
     server_name $PORTAL_DOMAIN;
 
     # Allow large JSON payloads (key server backup/restore, admin restore)
@@ -206,7 +210,7 @@ ln -sf "$PCONF" "$SITES_ENABLED/cmp-$PORTAL_DOMAIN.conf"
 
 # Key server vhost
 KCONF="$SITES_AVAILABLE/cmp-$KEY_DOMAIN.conf"
-log "Creating key server vhost on 127.0.0.1:$LISTEN_PORT (proxying to :$KEY_PORT)"
+log "Creating key server vhost on $LISTEN_ADDR:$LISTEN_PORT (proxying to :$KEY_PORT)"
 cat > "$KCONF" <<EOF
 upstream cmp_keyserver {
     server 127.0.0.1:$KEY_PORT;
@@ -214,7 +218,7 @@ upstream cmp_keyserver {
 }
 
 server {
-    listen 127.0.0.1:$LISTEN_PORT ssl http2;
+    listen $LISTEN_ADDR:$LISTEN_PORT ssl http2;
     server_name $KEY_DOMAIN;
 
     # Allow large JSON payloads (key server backup/restore)
@@ -262,9 +266,16 @@ cat <<EOF
    (If you prefer no port in the URL, you would need Xray fallback on 443 —
     but this setup avoids touching Xray entirely.)
 
-Verify:
+Verify (from the server):
    curl -k https://127.0.0.1:$LISTEN_PORT/ -H "Host: $PORTAL_DOMAIN"
    curl -k https://127.0.0.1:$LISTEN_PORT/health -H "Host: $KEY_DOMAIN"
+
+Verify (from the internet / a browser):
+   https://$PORTAL_DOMAIN:$LISTEN_PORT/
+   https://$KEY_DOMAIN:$LISTEN_PORT/health
+
+   IMPORTANT: Ensure the firewall allows inbound TCP on port $LISTEN_PORT:
+     sudo ufw allow $LISTEN_PORT/tcp
 ================================================================================
 EOF
 log "Done."
