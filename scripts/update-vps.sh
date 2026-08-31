@@ -19,6 +19,18 @@ echo "  Latest release: $LATEST_TAG"
 echo ""
 
 # Show current version
+if [ ! -d "$APP_DIR" ]; then
+    echo ""
+    echo "ERROR: No existing installation found at $APP_DIR."
+    echo ""
+    echo "update-vps.sh only UPDATES an already-installed portal."
+    echo "For a fresh server, use the installer instead:"
+    echo ""
+    echo "    curl -fsSL https://raw.githubusercontent.com/${OWNER}/${REPO}/main/scripts/bootstrap.sh | sudo bash"
+    echo ""
+    echo "Aborting without making any changes."
+    exit 1
+fi
 echo "→ Current version:"
 if [ -f "$APP_DIR/VERSION" ]; then
     cat "$APP_DIR/VERSION"
@@ -26,6 +38,18 @@ else
     echo "  Unknown (VERSION file not found)"
 fi
 echo ""
+
+# Require node/npm before touching anything (prevents half-installs)
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    echo ""
+    echo "ERROR: node / npm not found on this server."
+    echo "Install Node.js first, or use the installer which handles it:"
+    echo ""
+    echo "    curl -fsSL https://raw.githubusercontent.com/${OWNER}/${REPO}/main/scripts/bootstrap.sh | sudo bash"
+    echo ""
+    echo "Aborting without making any changes."
+    exit 1
+fi
 
 # Backup current installation
 echo "→ Creating backup at $BACKUP_DIR..."
