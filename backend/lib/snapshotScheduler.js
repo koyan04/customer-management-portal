@@ -13,6 +13,10 @@ const pool = require('../db');
 
 let scheduledTask = null;
 
+function getPreviousMonthDate(baseDate = new Date()) {
+  return new Date(baseDate.getFullYear(), baseDate.getMonth() - 1, 1);
+}
+
 /** 
  * Core snapshot logic — same calculation as POST /financial/snapshot.
  * Always generates the GLOBAL admin snapshot (server_id = NULL).
@@ -129,7 +133,7 @@ function startSnapshotScheduler() {
   scheduledTask = cron.schedule('0 1 1 * *', async () => {
     const now = new Date();
     // Previous month
-    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevMonth = getPreviousMonthDate(now);
     console.log(`[snapshotScheduler] Running auto-snapshot for ${prevMonth.toISOString().slice(0, 7)}`);
     try {
       await generateMonthlySnapshot(prevMonth);
@@ -139,6 +143,18 @@ function startSnapshotScheduler() {
   });
 
   console.log('[snapshotScheduler] Monthly auto-snapshot scheduler started (runs at 01:00 on 1st of each month)');
+
+  // Catch up the most recently completed month on startup so a missed cron run
+  // (for example, after a restart or outage around month-end) still creates the snapshot.
+  setImmediate(async () => {
+    try {
+      const prevMonth = getPreviousMonthDate(new Date());
+      console.log(`[snapshotScheduler] Startup catch-up for ${prevMonth.toISOString().slice(0, 7)}`);
+      await generateMonthlySnapshot(prevMonth);
+    } catch (err) {
+      console.error('[snapshotScheduler] Startup catch-up failed:', err && err.message ? err.message : err);
+    }
+  });
 }
 
 function stopSnapshotScheduler() {

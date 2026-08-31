@@ -1,4 +1,15 @@
-﻿cmp ver 1.9.11
+﻿cmp ver 1.9.12
+
+What's new
+- Financial Snapshots: monthly auto-snapshot now performs a startup catch-up so a missed month-end snapshot gets generated automatically after restart
+- Financial page: "Current" month status now uses the app timezone, so the correct month is labeled instead of the previous one
+- Nav bar generator menu: clicking Key Manager / YAML Generator / JSON Generator no longer leaks the click and re-collapses the menu
+
+See release-notes-1.9.12.md for full details.
+
+---
+
+cmp ver 1.9.11
 
 What's new
 - Hide Disabled Users: New checkbox under Settings → General (default on) hides disabled users from the server user list and dashboard tier modal; disabled accounts remain visible via the Disabled status filter

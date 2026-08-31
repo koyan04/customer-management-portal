@@ -679,13 +679,20 @@ function App() {
             </button>
             
             {keyMenuOpen && (
-              <div className="key-menu" role="menu" aria-label="Generators menu">
+              <div
+                className="key-menu"
+                role="menu"
+                aria-label="Generators menu"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+              >
                 {(role === 'ADMIN' || role === 'SERVER_ADMIN') && (
                   <Link
                     to="/key-manager"
                     className="key-menu-item"
                     role="menuitem"
-                    onClick={() => setKeyMenuOpen(false)}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => { e.stopPropagation(); setKeyMenuOpen(false); }}
                   >
                     Key Manager
                   </Link>
@@ -694,7 +701,8 @@ function App() {
                   to="/yaml-generator"
                   className="key-menu-item"
                   role="menuitem"
-                  onClick={() => setKeyMenuOpen(false)}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); setKeyMenuOpen(false); }}
                 >
                   YAML Generator
                 </Link>
@@ -702,7 +710,8 @@ function App() {
                   to="/json-generator"
                   className="key-menu-item"
                   role="menuitem"
-                  onClick={() => setKeyMenuOpen(false)}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); setKeyMenuOpen(false); }}
                 >
                   JSON Generator
                 </Link>

@@ -254,6 +254,14 @@ export default function FinancialPage() {
     }
   }, [data]);
 
+  const currentMonthKey = useMemo(() => {
+    const tz = getStoredTimezone();
+    const now = new Date();
+    const opts = { year: 'numeric', month: '2-digit' };
+    if (tz && tz !== 'auto') opts.timeZone = tz;
+    return new Intl.DateTimeFormat('en-CA', opts).format(now);
+  }, []);
+
   if (loading) return (
     <div className="app-container">
       <TopProgressBar active={true} />
@@ -686,7 +694,7 @@ export default function FinancialPage() {
           const fmtOpts = tz && tz !== 'auto' ? { month: 'long', timeZone: tz } : { month: 'long' };
           const monthName = monthDate ? new Intl.DateTimeFormat(undefined, fmtOpts).format(monthDate) : (m.month || '');
           const year = monthDate ? monthDate.getUTCFullYear() : (m.month || '').slice(0,4);
-          const isCurrentMonth = m.month === new Date().toISOString().slice(0, 7);
+          const isCurrentMonth = m.month === currentMonthKey;
           const role = user && (user.user?.role || user.role);
           return (
             <tr key={m.month}>
@@ -721,7 +729,7 @@ export default function FinancialPage() {
                           color: '#856404',
                           fontSize: '0.75rem',
                           fontWeight: '600'
-                        }} title="Current month - changes in real-time">
+                        }} title="Current month - changes in real time">
                           Current
                         </span>
                       ) : (role === 'ADMIN' || role === 'SERVER_ADMIN') ? (
