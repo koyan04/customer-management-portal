@@ -101,11 +101,16 @@ function ServerDetailPage() {
       if (v === 'unlimited') return 'Unlimited';
       return s || '';
     };
+    // Hide disabled users by default (configurable via Settings > General)
+    let hideDisabled = true;
+    try { hideDisabled = localStorage.getItem('hideDisabledUsers') !== '0'; } catch (_) {}
     return ordered.filter(u => {
       // text
       const name = (u.account_name || '').toLowerCase();
       const remark = (u.remark || '').toLowerCase();
       if (q && !(name.includes(q) || remark.includes(q))) return false;
+      // hide disabled users unless the user explicitly filters for them
+      if (hideDisabled && u.enabled === false && statusFilter !== 'disabled') return false;
       // status
       if (statusFilter === 'disabled') {
         if (u.enabled !== false) return false;

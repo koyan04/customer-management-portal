@@ -137,6 +137,9 @@ function validateSettings(key, body) {
     // Only set showTooltips when provided; do not coerce missing field to false
     if (typeof body.showTooltips !== 'undefined') cleaned.showTooltips = !!body.showTooltips;
 
+    // Hide disabled users from user lists (default true)
+    if (typeof body.hideDisabledUsers !== 'undefined') cleaned.hideDisabledUsers = !!body.hideDisabledUsers;
+
   // Accept either integer-cent fields (preferred) or decimal price fields from clients.
   // If *_cents is present, validate it as a non-negative integer and use it. Otherwise fall back
   // to the decimal *price fields and convert to cents.

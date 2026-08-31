@@ -31,6 +31,7 @@ export default function SettingsPage() {
     title: 'VChannel',
     theme: (() => { try { return localStorage.getItem('themeOverride') || 'system'; } catch (_) { return 'system'; } })(),
     showTooltips: true,
+    hideDisabledUsers: true,
     logo_url: '',
     logo_url_2x: '',
     favicon_url: '',
@@ -140,6 +141,7 @@ export default function SettingsPage() {
       title: (typeof data.title === 'string' && data.title.trim()) ? data.title : (prev.title || 'VChannel'),
       theme: data.theme || prev.theme || 'system',
       showTooltips: typeof data.showTooltips === 'boolean' ? data.showTooltips : (typeof prev.showTooltips === 'boolean' ? prev.showTooltips : true),
+      hideDisabledUsers: typeof data.hideDisabledUsers === 'boolean' ? data.hideDisabledUsers : (typeof prev.hideDisabledUsers === 'boolean' ? prev.hideDisabledUsers : true),
       logo_url: data.logo_url || prev.logo_url || '',
       logo_url_2x: data.logo_url_2x || prev.logo_url_2x || '',
   favicon_url: data.favicon_url || prev.favicon_url || '',
@@ -984,6 +986,10 @@ export default function SettingsPage() {
                   <label className="show-tooltips-field full chk">
                     <input type="checkbox" checked={!!generalForm.showTooltips} onChange={(e) => setGeneralForm({ ...generalForm, showTooltips: e.target.checked })} />
                     <span>Show Tooltips</span>
+                  </label>
+                  <label className="show-tooltips-field full chk">
+                    <input type="checkbox" checked={!!generalForm.hideDisabledUsers} onChange={(e) => setGeneralForm({ ...generalForm, hideDisabledUsers: e.target.checked })} />
+                    <span>Hide disabled users</span>
                   </label>
                 </div>
               </div>

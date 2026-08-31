@@ -149,6 +149,12 @@ function App() {
           }
         }
       } catch (_) {}
+      // Persist hide-disabled-users preference so user lists can apply it immediately
+      try {
+        if (general && typeof general.hideDisabledUsers === 'boolean') {
+          try { localStorage.setItem('hideDisabledUsers', general.hideDisabledUsers ? '1' : '0'); } catch (_) {}
+        }
+      } catch (_) {}
       try {
         const el = document.querySelector('.main-logo');
         if (el) {

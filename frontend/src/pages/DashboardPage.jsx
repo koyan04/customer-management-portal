@@ -292,11 +292,15 @@ function DashboardPage() {
           .catch(() => ({ id: s.id, users: [] }))
       ));
       const results = await Promise.all(reqs);
+      // Hide disabled users by default (configurable via Settings > General)
+      let hideDisabled = true;
+      try { hideDisabled = localStorage.getItem('hideDisabledUsers') !== '0'; } catch (_) {}
       const users = [];
       for (const { id, users: arr } of results) {
         const s = byId.get(id);
         for (const u of arr) {
           if (normalizeService(u?.service_type) === normTier) {
+            if (hideDisabled && u?.enabled === false) continue;
             users.push({ ...u, server_name: s?.server_name });
           }
         }

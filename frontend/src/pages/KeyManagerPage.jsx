@@ -407,9 +407,11 @@ const KeyManagerPage = () => {
   useEffect(() => {
     if (!openMenu) return;
     const handler = () => setOpenMenu(null);
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
+    document.addEventListener('pointerdown', handler);
+    return () => document.removeEventListener('pointerdown', handler);
   }, [openMenu]);
+
+  const closeMenu = () => setOpenMenu(null);
 
   const toggleMenu = (filename, e) => {
     e.stopPropagation();
@@ -808,6 +810,7 @@ const KeyManagerPage = () => {
                       {/* Mobile hamburger menu */}
                       <div className="km-actions-mobile">
                         <button
+                          type="button"
                           className="km-btn km-btn-sm km-btn-menu"
                           onClick={e => toggleMenu(k.filename, e)}
                           title="Actions"
@@ -817,15 +820,16 @@ const KeyManagerPage = () => {
                         {openMenu && openMenu.filename === k.filename && (
                           <div
                             className={`km-popup-menu ${openMenu.prefersLightTheme ? 'km-ui-light' : 'km-ui-dark'}`}
+                            onMouseDown={e => e.stopPropagation()}
                             onClick={e => e.stopPropagation()}
                           >
-                            <button className="km-popup-item" onClick={() => { openCopyModal(k); setOpenMenu(null); }}>
+                            <button type="button" className="km-popup-item" onMouseDown={e => e.stopPropagation()} onClick={() => { openCopyModal(k); closeMenu(); }}>
                               <FaLink /> Copy URL
                             </button>
-                            <button className="km-popup-item" onClick={() => { handlePreview(k.filename); setOpenMenu(null); }}>
+                            <button type="button" className="km-popup-item" onMouseDown={e => e.stopPropagation()} onClick={() => { handlePreview(k.filename); closeMenu(); }}>
                               <FaEye /> Preview
                             </button>
-                            <button className="km-popup-item km-popup-item-danger" onClick={() => { handleDeleteKey(k.filename); setOpenMenu(null); }}>
+                            <button type="button" className="km-popup-item km-popup-item-danger" onMouseDown={e => e.stopPropagation()} onClick={() => { handleDeleteKey(k.filename); closeMenu(); }}>
                               <FaTrash /> Delete
                             </button>
                           </div>

@@ -894,6 +894,7 @@
   position: relative;
   white-space: nowrap;
   width: 1%;
+  z-index: 1;
 }
 
 /* Desktop: show inline buttons, hide hamburger */
@@ -905,6 +906,7 @@
 .km-actions-mobile {
   display: none;
   position: relative;
+  z-index: 2;
 }
 
 /* ─── Mobile Popup Menu ─── */
@@ -926,7 +928,7 @@
   right: 0;
   top: 100%;
   margin-top: 6px;
-  z-index: 1000;
+  z-index: 30;
   min-width: 160px;
   background: rgba(13, 26, 30, 0.98);
   border: 1px solid rgba(255, 255, 255, 0.11);
@@ -935,6 +937,7 @@
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
   animation: kmFadeIn 0.12s ease;
   overflow: hidden;
+  pointer-events: auto;
 }
 
 .km-popup-item {
@@ -1558,7 +1561,9 @@ body.theme-light .km-btn-restore-overwrite:hover {
   }
 
   .km-table-wrap {
-    overflow: visible;
+    overflow-x: auto;
+    overflow-y: visible;
+    position: relative;
   }
 
   .km-table {
@@ -1594,6 +1599,7 @@ body.theme-light .km-btn-restore-overwrite:hover {
     width: 1%;
     white-space: nowrap;
     text-align: center;
+    z-index: 2;
   }
 
   .km-table thead th:last-child {

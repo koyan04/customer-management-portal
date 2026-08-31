@@ -1,4 +1,14 @@
-﻿cmp ver 1.5.0
+﻿cmp ver 1.9.11
+
+What's new
+- Hide Disabled Users: New checkbox under Settings → General (default on) hides disabled users from the server user list and dashboard tier modal; disabled accounts remain visible via the Disabled status filter
+- Key Manager: Fixed mobile action menu so clicks no longer leak through to underlying rows or page elements
+
+See release-notes-1.9.11.md for full details.
+
+---
+
+cmp ver 1.5.0
 
 What's new
 - Domain Manager: Full CRUD management for proxy domains with CDN and Anti-DPI flags
