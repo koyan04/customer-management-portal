@@ -123,7 +123,10 @@ const newInbound = {
   settings: {
     clients: [],
     decryption: 'none',
-    fallbacks: []
+    // VLESS fallbacks go in settings.fallbacks (NOT tlsSettings)
+    fallbacks: [
+      { dest: dest, xver: 1 }
+    ]
   },
   streamSettings: {
     network: 'tcp',
@@ -145,10 +148,7 @@ const newInbound = {
         }
       ],
       alpn: ['h2', 'http/1.1'],
-      settings: { fingerprint: 'chrome' },
-      fallbacks: [
-        { dest: dest, xver: 1 }
-      ]
+      settings: { fingerprint: 'chrome' }
     }
   },
   sniffing: { enabled: false }

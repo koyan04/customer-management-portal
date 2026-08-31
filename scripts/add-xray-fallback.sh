@@ -98,22 +98,12 @@ if (!target) {
 // Build the fallbacks array
 const fb = [{ dest: dest, xver: 1 }];
 
-// For ws/tls inbounds, fallbacks go inside tlsSettings
-if (target.streamSettings && target.streamSettings.tlsSettings) {
-  target.streamSettings.tlsSettings.fallbacks = fb;
-  console.log('Added fallbacks to tlsSettings');
-}
-// For reality inbounds, fallbacks go inside realitySettings
-else if (target.streamSettings && target.streamSettings.realitySettings) {
-  target.streamSettings.realitySettings.fallbacks = fb;
-  console.log('Added fallbacks to realitySettings');
-}
-// Fallback: add at streamSettings level
-else if (target.streamSettings) {
-  target.streamSettings.fallbacks = fb;
-  console.log('Added fallbacks to streamSettings');
+// VLESS fallbacks go in settings.fallbacks (NOT tlsSettings/realitySettings)
+if (target.settings) {
+  target.settings.fallbacks = fb;
+  console.log('Added fallbacks to settings.fallbacks');
 } else {
-  console.error('No streamSettings found on the inbound');
+  console.error('No settings found on the inbound');
   process.exit(1);
 }
 
