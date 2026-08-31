@@ -254,13 +254,15 @@ export default function FinancialPage() {
     }
   }, [data]);
 
+  // Derive the current month from the server data (the last month in the array)
+  // instead of the browser clock, to avoid timezone mismatch between client and server.
   const currentMonthKey = useMemo(() => {
-    const tz = getStoredTimezone();
+    if (data && data.months && data.months.length > 0) {
+      return data.months[data.months.length - 1].month;
+    }
     const now = new Date();
-    const opts = { year: 'numeric', month: '2-digit' };
-    if (tz && tz !== 'auto') opts.timeZone = tz;
-    return new Intl.DateTimeFormat('en-CA', opts).format(now);
-  }, []);
+    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  }, [data]);
 
   if (loading) return (
     <div className="app-container">

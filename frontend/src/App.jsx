@@ -579,8 +579,10 @@ function App() {
   }, []);
   
   // Close key menu when clicking outside or on Escape
+  // Uses pointerdown instead of click so React's stopPropagation on menu items
+  // can intercept the event before it reaches the document listener.
   useEffect(() => {
-    const onDocClick = (e) => {
+    const onDocPointerDown = (e) => {
       if (!keyRef.current) return;
       if (!keyRef.current.contains(e.target)) {
         setKeyMenuOpen(false);
@@ -589,10 +591,10 @@ function App() {
     const onKey = (e) => {
       if (e.key === 'Escape') setKeyMenuOpen(false);
     };
-    document.addEventListener('click', onDocClick);
+    document.addEventListener('pointerdown', onDocPointerDown);
     document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener('click', onDocClick);
+      document.removeEventListener('pointerdown', onDocPointerDown);
       document.removeEventListener('keydown', onKey);
       clearTimeout(keyHoverTimerRef.current);
       clearTimeout(keyLeaveTimerRef.current);
@@ -683,7 +685,7 @@ function App() {
                 className="key-menu"
                 role="menu"
                 aria-label="Generators menu"
-                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => e.stopPropagation()}
               >
                 {(role === 'ADMIN' || role === 'SERVER_ADMIN') && (
@@ -691,7 +693,7 @@ function App() {
                     to="/key-manager"
                     className="key-menu-item"
                     role="menuitem"
-                    onMouseDown={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => { e.stopPropagation(); setKeyMenuOpen(false); }}
                   >
                     Key Manager
@@ -701,7 +703,7 @@ function App() {
                   to="/yaml-generator"
                   className="key-menu-item"
                   role="menuitem"
-                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); setKeyMenuOpen(false); }}
                 >
                   YAML Generator
@@ -710,7 +712,7 @@ function App() {
                   to="/json-generator"
                   className="key-menu-item"
                   role="menuitem"
-                  onMouseDown={(e) => e.stopPropagation()}
+                  onPointerDown={(e) => e.stopPropagation()}
                   onClick={(e) => { e.stopPropagation(); setKeyMenuOpen(false); }}
                 >
                   JSON Generator
