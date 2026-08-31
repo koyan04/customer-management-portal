@@ -1,4 +1,16 @@
-﻿cmp ver 1.9.12
+﻿cmp ver 1.9.13
+
+What's new
+- Key Server HTTPS: installer now issues a certificate for the key server domain and writes a proper HTTPS vhost (with HTTP→HTTPS redirect); fixes HTTPS requests falling through to the portal React app
+- Key Server live secret key: /sub/:id now reads keyserver.json per-request, so secret key / config dir updates take effect immediately without a backend restart
+- Installer UI polish: color banner, section headers, and ✔ status markers; fixed mojibake text
+- Installer line-ending fix: shell scripts normalized to LF and enforced via .gitattributes (prevents bash $'\r' errors)
+
+See release-notes-1.9.13.md for full details.
+
+---
+
+cmp ver 1.9.12
 
 What's new
 - Financial Snapshots: monthly auto-snapshot now performs a startup catch-up so a missed month-end snapshot gets generated automatically after restart

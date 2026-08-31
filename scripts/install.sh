@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Customer Management Portal Installer
-# Version: v1.8.15
+# Version: v1.9.13
 # Features:
 #   - Downloads latest release tarball instead of cloning
 #   - Installs Node.js automatically (Debian/Ubuntu) unless CMP_SKIP_NODE_AUTO_INSTALL=1
@@ -93,9 +93,17 @@ BACKEND_SERVICE="cmp-backend.service"
 BOT_SERVICE="cmp-telegram-bot.service"
 ROOT_ENV="$APP_DIR/.env"
 
+RESET() { [ -t 1 ] && printf '\033[0m'; }
 color() { echo -e "\033[1;32m$1\033[0m"; }
 warn() { echo -e "\033[1;33m$1\033[0m"; }
 err() { echo -e "\033[1;31m$1\033[0m"; }
+info() { echo -e "\033[1;36m$1\033[0m"; }
+dim()  { echo -e "\033[2m$1\033[0m"; }
+divider() { echo -e "\033[1;34m────────────────────────────────────────────────────────\033[0m"; }
+banner() { divider; info "$1"; divider; }
+section() { echo -e "\033[1;36m▸ $1\033[0m"; }
+ok() { echo -e "\033[1;32m ✔ $1\033[0m"; }
+skip() { echo -e "\033[2m - $1\033[0m"; }
 
 die() { err "ERROR: $1"; exit 1; }
 require_root() { [ "$(id -u)" -eq 0 ] || die "Run as root"; }
@@ -106,7 +114,7 @@ auto_install_node() {
   if [ "${CMP_SKIP_NODE_AUTO_INSTALL:-}" = "1" ]; then
     die "Missing required command: node (auto-install skipped due to CMP_SKIP_NODE_AUTO_INSTALL=1)"
   fi
-  warn "Node.js not found Î“Ã‡Ã´ attempting automatic install (20.x LTS)."
+  warn "Node.js not found (installing 20.x LTS)."
   if command -v curl >/dev/null 2>&1; then
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || die "NodeSource setup failed"
     apt-get install -y nodejs || die "Node.js install failed"
@@ -162,6 +170,11 @@ prompt_if_empty() {
     fi
   done
 }
+
+# ─── Setup ────────────────────────────────────────────────────────────────
+banner "Customer Management Portal Installer"
+dim "Version: v1.8.15+  |  Will install/update portal + key server"
+divider
 
 # Collect inputs
 require_root
@@ -322,6 +335,8 @@ else
 fi
 TARBALL_URL="https://github.com/${OWNER}/${REPO}/archive/refs/tags/${TAG}.tar.gz"
 
+divider
+section "Downloading release ${TAG}..."
 color "Downloading release ${TAG}..."
 # Use a temporary directory for download and extraction
 TMP_DIR=$(mktemp -d)
@@ -377,8 +392,10 @@ if [ "$CF_AUTH_MODE" = "token" ]; then
 fi
 
 # Install Node dependencies
+section "Installing backend dependencies..."
 color "Installing backend dependencies..."
 (cd "$BACKEND_DIR" && npm install --no-audit --no-fund)
+section "Installing frontend dependencies..."
 color "Installing frontend dependencies..."
 (cd "$FRONTEND_DIR" && npm install --no-audit --no-fund)
 
@@ -412,6 +429,7 @@ if [ "$TOTAL_MEM_GB" -lt 2 ]; then
 fi
 
 # Build frontend with memory limit for Node.js
+section "Building frontend..."
 color "Building frontend..."
 export NODE_OPTIONS="--max-old-space-size=1536"
 (cd "$FRONTEND_DIR" && npm run build)
@@ -544,6 +562,7 @@ color "Key server configured: port ${KEYSERVER_PORT}, config dir ${KEYSERVER_CON
 color "Key server config written to $KEYSERVER_CONFIG_FILE"
 
 # Database preparation (PostgreSQL local assumed)
+section "Preparing database..."
 color "Preparing database..."
 # Create role & DB if not exist
 psql_cmd="psql -v ON_ERROR_STOP=1"
@@ -869,7 +888,7 @@ else
     # Ensure dns-cloudflare plugin present (Debian/Ubuntu best-effort)
     if ! certbot plugins 2>/dev/null | grep -q dns-cloudflare; then
       if command -v apt-get >/dev/null 2>&1; then
-        warn "dns-cloudflare plugin missing Î“Ã‡Ã´ attempting apt install..."
+        warn "dns-cloudflare plugin missing (installing via apt)..."
         apt-get update -y || true
         apt-get install -y python3-certbot-dns-cloudflare || warn "Failed to install python3-certbot-dns-cloudflare; proceeding (may fail)"
       else
@@ -983,6 +1002,7 @@ fi
 if [ "$CMP_ENABLE_NGINX" = "1" ]; then
   if ! command -v nginx >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then
+      section "Installing nginx..."
       color "Installing nginx..."
       
       # Wait for dpkg locks to be released (max 300 seconds)
@@ -1006,6 +1026,7 @@ if [ "$CMP_ENABLE_NGINX" = "1" ]; then
     fi
   fi
   if command -v nginx >/dev/null 2>&1; then
+    section "Configuring nginx..."
     color "Configuring nginx for $DOMAIN..."
     mkdir -p /var/www/letsencrypt
     NCONF="/etc/nginx/sites-available/cmp-$DOMAIN.conf"
@@ -1111,21 +1132,46 @@ fi
 # ── Key server nginx vhost (proxies the key server on :8088) ───────────────
 # Creates an isolated vhost for the key server public domain so it is exposed
 # over HTTPS alongside the portal, without touching existing nginx domains.
+# Ensures a valid HTTPS vhost is applied: if the key-domain certificate is
+# missing, it is issued (HTTP-01) before the vhost is written.
 if command -v nginx >/dev/null 2>&1 && [ -n "${KEYSERVER_PUBLIC_DOMAIN:-}" ]; then
   KEY_NCONF="/etc/nginx/sites-available/cmp-${KEYSERVER_PUBLIC_DOMAIN}.conf"
-  if [ -f "$KEY_NCONF" ]; then
-    warn "Key server vhost $KEY_NCONF already exists; leaving it untouched."
-    ln -sf "$KEY_NCONF" "/etc/nginx/sites-enabled/cmp-${KEYSERVER_PUBLIC_DOMAIN}.conf" 2>/dev/null || true
-  else
-    KEY_CERT_PATH="/etc/letsencrypt/live/${KEYSERVER_PUBLIC_DOMAIN}/fullchain.pem"
-    KEY_KEY_PATH="/etc/letsencrypt/live/${KEYSERVER_PUBLIC_DOMAIN}/privkey.pem"
-    if [ -f "$KEY_CERT_PATH" ] && [ -f "$KEY_KEY_PATH" ]; then
-      cat > "$KEY_NCONF" <<EOF
+  KEY_NENABLED="/etc/nginx/sites-enabled/cmp-${KEYSERVER_PUBLIC_DOMAIN}.conf"
+  KEY_CERT_PATH="/etc/letsencrypt/live/${KEYSERVER_PUBLIC_DOMAIN}/fullchain.pem"
+  KEY_KEY_PATH="/etc/letsencrypt/live/${KEYSERVER_PUBLIC_DOMAIN}/privkey.pem"
+
+  # Ensure a certificate exists for the key server domain so HTTPS works.
+  if [ ! -f "$KEY_CERT_PATH" ] || [ ! -f "$KEY_KEY_PATH" ]; then
+    if [ "${CMP_SKIP_CERT:-}" = "1" ]; then
+      skip "Key server cert skipped (CMP_SKIP_CERT=1); HTTPS for key domain not configured."
+    else
+      info "No certificate for key server domain ${KEYSERVER_PUBLIC_DOMAIN}; issuing via HTTP-01..."
+      systemctl stop $BACKEND_SERVICE 2>/dev/null || true
+      set +e
+      certbot certonly --standalone -d "$KEYSERVER_PUBLIC_DOMAIN" \
+        -m "${LE_EMAIL:-}" --preferred-challenges http --agree-tos --non-interactive
+      KEY_CERT_EXIT=$?
+      set -e
+      if [ $KEY_CERT_EXIT -ne 0 ]; then
+        warn "Key server cert issuance failed (exit $KEY_CERT_EXIT). HTTPS for key domain unavailable."
+      else
+        ok "Key server certificate issued for ${KEYSERVER_PUBLIC_DOMAIN}"
+      fi
+      systemctl start $BACKEND_SERVICE 2>/dev/null || true
+    fi
+  fi
+
+  # Build the vhost. Default upstream block shared by all server blocks.
+  cat > "$KEY_NCONF" <<EOF
 upstream cmp_keyserver {
     server 127.0.0.1:${KEYSERVER_PORT};
     keepalive 32;
 }
+EOF
 
+  if [ -f "$KEY_CERT_PATH" ] && [ -f "$KEY_KEY_PATH" ]; then
+    # Certificate present: serve HTTPS and redirect HTTP → HTTPS.
+    cat >> "$KEY_NCONF" <<EOF
 server {
     listen 80;
     listen [::]:80;
@@ -1141,11 +1187,10 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl;
+    listen [::]:443 ssl;
     server_name ${KEYSERVER_PUBLIC_DOMAIN};
 
-    # Allow large JSON payloads (key server backup/restore)
     client_max_body_size 200m;
 
     ssl_certificate ${KEY_CERT_PATH};
@@ -1163,20 +1208,17 @@ server {
     }
 }
 EOF
-    else
-      cat > "$KEY_NCONF" <<EOF
-upstream cmp_keyserver {
-    server 127.0.0.1:${KEYSERVER_PORT};
-    keepalive 32;
-}
-
+  else
+    # No certificate available: serve the key server directly over HTTP.
+    cat >> "$KEY_NCONF" <<EOF
 server {
     listen 80;
     listen [::]:80;
     server_name ${KEYSERVER_PUBLIC_DOMAIN};
 
-    # Allow large JSON payloads (key server backup/restore)
-    client_max_body_size 200m;
+    location /.well-known/acme-challenge/ {
+        root /var/www/letsencrypt;
+    }
 
     location / {
         proxy_pass http://cmp_keyserver;
@@ -1188,15 +1230,15 @@ server {
     }
 }
 EOF
-      warn "No certificate for key server domain ${KEYSERVER_PUBLIC_DOMAIN}; serving HTTP only."
-    fi
-    ln -sf "$KEY_NCONF" "/etc/nginx/sites-enabled/cmp-${KEYSERVER_PUBLIC_DOMAIN}.conf"
-    if nginx -t; then
-      systemctl reload nginx 2>/dev/null || systemctl restart nginx || true
-      color "Key server nginx vhost configured for ${KEYSERVER_PUBLIC_DOMAIN} (port ${KEYSERVER_PORT})"
-    else
-      err "nginx configuration test failed for key server vhost; please review $KEY_NCONF"
-    fi
+    warn "Key server certificate unavailable; serving HTTP only for ${KEYSERVER_PUBLIC_DOMAIN}."
+  fi
+
+  ln -sf "$KEY_NCONF" "$KEY_NENABLED"
+  if nginx -t; then
+    systemctl reload nginx 2>/dev/null || systemctl restart nginx || true
+    color "Key server nginx vhost configured for ${KEYSERVER_PUBLIC_DOMAIN} (port ${KEYSERVER_PORT}, HTTPS=$([ -f "$KEY_CERT_PATH" ] && echo yes || echo no))"
+  else
+    err "nginx configuration test failed for key server vhost; please review $KEY_NCONF"
   fi
 fi
 
@@ -1218,6 +1260,8 @@ if [ -f "$RENEW_CONF" ] && ! grep -q "deploy_hook = $RENEW_HOOK" "$RENEW_CONF"; 
 fi
 
 color "Starting services..."
+divider
+section "Starting services..."
 systemctl restart $BACKEND_SERVICE || true
 if systemctl list-unit-files | grep -q "$BOT_SERVICE"; then
   systemctl restart $BOT_SERVICE || true

@@ -503,8 +503,14 @@ const startKeyServer = (config) => {
         const idParam = req.params.id;
         const userKey = req.query.key;
 
+        // Read the current on-disk config each request so updates to the secret
+        // key or config directory take effect without restarting the backend.
+        const liveConfig = loadConfig();
+        const liveSecretKey = liveConfig.secretKey || secretKey;
+        const liveConfigDir = liveConfig.configDir || configDir;
+
         // Security Check
-        if (!secretKey || userKey !== secretKey) {
+        if (!liveSecretKey || userKey !== liveSecretKey) {
           return res.status(403).send('⛔ Access Denied: Invalid Key');
         }
 
@@ -512,7 +518,7 @@ const startKeyServer = (config) => {
         const tokenMap = loadTokenMap();
         const resolvedFilename = tokenMap.byToken[idParam] || idParam;
         const sanitized = path.basename(resolvedFilename);
-        const filePath = path.join(configDir, sanitized);
+        const filePath = path.join(liveConfigDir, sanitized);
 
         if (!fs.existsSync(filePath)) {
           return res.status(404).send('❌ Config Not Found');
@@ -520,7 +526,7 @@ const startKeyServer = (config) => {
 
         // Set subscription-userinfo header from companion .meta.json if present
         try {
-          const metaPath = path.join(configDir, `${sanitized}.meta.json`);
+          const metaPath = path.join(liveConfigDir, `${sanitized}.meta.json`);
           if (fs.existsSync(metaPath)) {
             const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
             const parts = ['upload=0', 'download=0'];
