@@ -1,4 +1,18 @@
-﻿cmp ver 1.9.14
+cmp ver 1.9.15
+
+What's new
+- Update & Swap Mechanism Hardening: fixed live unattended updates failing with `dd: IO error: No space left on device` on low-memory servers where /tmp is a tmpfs RAM disk
+- Proactive Stale Swap Cleanup: update scripts and backend automatically detect, swapoff, and remove stale swap files across /tmp, /var/tmp, and /srv/cmp, self-healing servers with full /tmp
+- Disk-Backed Swap Selection: temporary build swap strictly avoids tmpfs/ramfs, selects persistent disk partitions with sufficient headroom, and sizes swap dynamically (1536MB, 1024MB, 512MB)
+- Existing Swap Detection: skips temporary swap creation if the server already has >= 1GB free swap
+- Robust Cleanup Traps: EXIT/INT/TERM traps ensure temporary swap files are always cleanly deactivated and removed even if a build fails or is interrupted
+- Container & Privilege Fallbacks: gracefully continues with conservative memory settings if swapon is restricted in containers (Docker, LXC)
+
+See release-notes-1.9.15.md for full details.
+
+---
+
+cmp ver 1.9.14
 
 What's new
 - Server uninstaller: added scripts/uninstall.sh that cleanly removes the portal (systemd units/timers, Nginx vhosts, Let's Encrypt certs, Cloudflare creds, /srv/cmp, and optionally the PostgreSQL role+DB) with confirmation, --dry-run, --keep-* and --yes options

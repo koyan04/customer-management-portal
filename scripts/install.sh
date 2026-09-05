@@ -401,44 +401,99 @@ color "Installing frontend dependencies..."
 
 # Check available memory and create swap if needed for frontend build
 SWAP_CREATED=0
-TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
-if [ "$TOTAL_MEM_GB" -lt 2 ]; then
-  warn "Low memory detected (${TOTAL_MEM_GB}GB). Creating temporary swap for build..."
-  # Prefer disk-backed locations over tmpfs (which may be too small)
-  SWAP_FILE=""
-  for candidate in "$APP_DIR/cmp-build-swap" "/var/tmp/cmp-build-swap" "/tmp/cmp-build-swap"; do
-    parent="$(dirname "$candidate")"
-    if [ -d "$parent" ]; then
-      available_kb=$(df "$parent" | awk 'NR==2 {print $4}')
-      if [ "$available_kb" -ge 2097152 ]; then
+SWAP_FILE=""
+if [ -f /proc/meminfo ]; then
+  TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)
+  TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
+  SWAP_FREE_KB=$(grep SwapFree /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)
+
+  if [ "$TOTAL_MEM_MB" -lt 2048 ] && [ "$SWAP_FREE_KB" -lt 1048576 ]; then
+    warn "Low memory detected (${TOTAL_MEM_MB}MB RAM, $((SWAP_FREE_KB / 1024))MB free swap). Preparing build swap..."
+    
+    # Proactively clean any stale swap files
+    for old_swap in /tmp/cmp-build-swap* /var/tmp/cmp-build-swap* "$APP_DIR/cmp-build-swap*" /cmp-build-swap*; do
+      if [ -f "$old_swap" ]; then
+        swapoff "$old_swap" 2>/dev/null || true
+        rm -f "$old_swap" 2>/dev/null || true
+      fi
+    done
+
+    # Prefer disk-backed locations over tmpfs/ramfs
+    SWAP_SIZE_MB=0
+    for candidate in "$APP_DIR/cmp-build-swap" "/var/tmp/cmp-build-swap" "/cmp-build-swap"; do
+      parent="$(dirname "$candidate")"
+      [ -d "$parent" ] || continue
+      [ -w "$parent" ] || continue
+      
+      # Skip if parent is on tmpfs or ramfs
+      if command -v stat >/dev/null 2>&1; then
+        case "$(stat -f -c %T "$parent" 2>/dev/null || echo '')" in
+          tmpfs|ramfs|devtmpfs) continue ;;
+        esac
+      fi
+
+      available_kb=$(df -P -k "$parent" 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+      if [ "$available_kb" -ge 3670016 ]; then
+        SWAP_SIZE_MB=1536
+        SWAP_FILE="$candidate"
+        break
+      elif [ "$available_kb" -ge 2306867 ]; then
+        SWAP_SIZE_MB=1024
+        SWAP_FILE="$candidate"
+        break
+      elif [ "$available_kb" -ge 1572864 ]; then
+        SWAP_SIZE_MB=512
         SWAP_FILE="$candidate"
         break
       fi
+    done
+
+    if [ -n "$SWAP_FILE" ] && [ "$SWAP_SIZE_MB" -gt 0 ]; then
+      color "Allocating temporary ${SWAP_SIZE_MB}MB swap at $SWAP_FILE..."
+      if dd if=/dev/zero of="$SWAP_FILE" bs=1M count="$SWAP_SIZE_MB" status=progress 2>/dev/null || dd if=/dev/zero of="$SWAP_FILE" bs=1M count="$SWAP_SIZE_MB" status=none 2>/dev/null; then
+        chmod 600 "$SWAP_FILE" 2>/dev/null || true
+        if mkswap "$SWAP_FILE" >/dev/null 2>&1; then
+          if swapon "$SWAP_FILE" 2>/dev/null; then
+            SWAP_CREATED=1
+            color "Temporary ${SWAP_SIZE_MB}MB swap activated"
+          else
+            warn "swapon failed or not permitted (e.g. inside container) — proceeding without swap"
+            rm -f "$SWAP_FILE" 2>/dev/null || true
+            SWAP_FILE=""
+          fi
+        else
+          warn "mkswap failed — proceeding without swap"
+          rm -f "$SWAP_FILE" 2>/dev/null || true
+          SWAP_FILE=""
+        fi
+      else
+        warn "Could not allocate swap file — proceeding without swap"
+        rm -f "$SWAP_FILE" 2>/dev/null || true
+        SWAP_FILE=""
+      fi
+    else
+      warn "No location with sufficient disk space for swap found — proceeding without swap"
     fi
-  done
-  if [ -z "$SWAP_FILE" ]; then
-    die "No location with 2GB+ free space found for swap file. Free up space or increase memory to 2GB+."
+  elif [ "$TOTAL_MEM_MB" -lt 2048 ]; then
+    color "System already has $((SWAP_FREE_KB / 1024))MB free swap — no temporary swap needed"
   fi
-  dd if=/dev/zero of="$SWAP_FILE" bs=1M count=2048 status=progress 2>/dev/null || dd if=/dev/zero of="$SWAP_FILE" bs=1M count=2048
-  chmod 600 "$SWAP_FILE"
-  mkswap "$SWAP_FILE"
-  swapon "$SWAP_FILE"
-  SWAP_CREATED=1
-  color "Temporary 2GB swap file created"
 fi
 
 # Build frontend with memory limit for Node.js
 section "Building frontend..."
 color "Building frontend..."
-export NODE_OPTIONS="--max-old-space-size=1536"
+if [ "$SWAP_CREATED" -eq 1 ] || [ "${SWAP_FREE_KB:-0}" -gt 500000 ] || [ "${TOTAL_MEM_MB:-0}" -ge 2048 ]; then
+  export NODE_OPTIONS="--max-old-space-size=1536"
+else
+  export NODE_OPTIONS="--max-old-space-size=768"
+fi
 (cd "$FRONTEND_DIR" && npm run build)
 unset NODE_OPTIONS
 
 # Remove temporary swap if we created it
-if [ "$SWAP_CREATED" -eq 1 ]; then
+if [ "$SWAP_CREATED" -eq 1 ] && [ -n "$SWAP_FILE" ]; then
   swapoff "$SWAP_FILE" 2>/dev/null || true
-  rm -f "$SWAP_FILE"
+  rm -f "$SWAP_FILE" 2>/dev/null || true
   color "Temporary swap removed"
 fi
 

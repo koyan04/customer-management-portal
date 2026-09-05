@@ -3442,6 +3442,21 @@ router.post('/control/update/run', authenticateToken, isAdmin, async (req, res) 
     try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch (_) {}
   };
 
+  // ── Step 0: Proactively clean up any stale build swap files filling /tmp or disk ──
+  try {
+    const staleSwaps = [
+      '/tmp/cmp-build-swap',
+      '/var/tmp/cmp-build-swap',
+      path.join(path.dirname(__dirname), '..', 'cmp-build-swap'),
+      '/srv/cmp/cmp-build-swap'
+    ];
+    for (const s of staleSwaps) {
+      try {
+        require('child_process').execSync(`swapoff "${s}" 2>/dev/null || true; rm -f "${s}" 2>/dev/null || true`);
+      } catch (_) {}
+    }
+  } catch (_) {}
+
   // ── Step 1: Resolve latest tag via Node https (no shell JSON parsing) ─────
   let resolvedTag = '';
   try {

@@ -1,9 +1,72 @@
 #!/bin/bash
+set -euo pipefail
 
 OWNER="koyan04"
 REPO="customer-management-portal"
 APP_DIR="/srv/cmp"
-BACKUP_DIR="/tmp/cmp_backup_$(date +%Y%m%d_%H%M%S)"
+
+# ────────────────────────────────────────────────────────────────────────────
+# Global state & cleanup trap
+# ────────────────────────────────────────────────────────────────────────────
+ACTIVE_SWAP_FILE=""
+TMP_DIR=""
+
+cleanup() {
+  local exit_code=$?
+  if [ -n "$ACTIVE_SWAP_FILE" ] && [ -f "$ACTIVE_SWAP_FILE" ]; then
+    swapoff "$ACTIVE_SWAP_FILE" 2>/dev/null || true
+    rm -f "$ACTIVE_SWAP_FILE" 2>/dev/null || true
+  fi
+  if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+    rm -rf "$TMP_DIR" 2>/dev/null || true
+  fi
+  exit "$exit_code"
+}
+trap cleanup EXIT INT TERM
+
+# Proactively clean up any stale swap files left by previous failed runs
+for old_swap in /tmp/cmp-build-swap* /var/tmp/cmp-build-swap* "${APP_DIR}/cmp-build-swap*" /cmp-build-swap*; do
+  if [ -f "$old_swap" ]; then
+    swapoff "$old_swap" 2>/dev/null || true
+    rm -f "$old_swap" 2>/dev/null || true
+  fi
+done
+
+# Filesystem helper: test if a directory is mounted on tmpfs/ramfs
+is_ram_fs() {
+  local dir="${1:-/tmp}"
+  [ -d "$dir" ] || return 1
+  if command -v stat >/dev/null 2>&1; then
+    local fstype
+    fstype=$(stat -f -c %T "$dir" 2>/dev/null || echo "")
+    case "$fstype" in
+      tmpfs|ramfs|devtmpfs) return 0 ;;
+    esac
+  fi
+  if command -v df >/dev/null 2>&1; then
+    local dftype
+    dftype=$(df -T "$dir" 2>/dev/null | awk 'NR==2 {print $2}' || echo "")
+    case "$dftype" in
+      tmpfs|ramfs|devtmpfs) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
+# Ensure safe base directory for temporary files (prefer disk if /tmp is tmpfs/full)
+UPDATE_TEMP_BASE="/tmp"
+TMP_AVAIL_KB=$(df -P -k /tmp 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+if is_ram_fs "/tmp" || [ "${TMP_AVAIL_KB:-0}" -lt 204800 ]; then
+  if [ -d "/var/tmp" ] && [ -w "/var/tmp" ] && ! is_ram_fs "/var/tmp"; then
+    UPDATE_TEMP_BASE="/var/tmp"
+    export TMPDIR="/var/tmp"
+  elif [ -d "$APP_DIR" ] && [ -w "$APP_DIR" ]; then
+    UPDATE_TEMP_BASE="$APP_DIR"
+    export TMPDIR="$APP_DIR"
+  fi
+fi
+
+BACKUP_DIR="${UPDATE_TEMP_BASE}/cmp_backup_$(date +%Y%m%d_%H%M%S)"
 
 echo "=== Customer Management Portal Update ==="
 echo ""
@@ -51,10 +114,14 @@ if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
     exit 1
 fi
 
-# Backup current installation
+# Backup current installation (exclude node_modules to avoid filling RAM/tmpfs)
 echo "→ Creating backup at $BACKUP_DIR..."
 mkdir -p "$BACKUP_DIR"
-cp -r "$APP_DIR" "$BACKUP_DIR/cmp"
+if command -v rsync >/dev/null 2>&1; then
+    rsync -a --exclude='*/node_modules' "$APP_DIR/" "$BACKUP_DIR/cmp/"
+else
+    cp -r "$APP_DIR" "$BACKUP_DIR/cmp"
+fi
 
 # Also backup avatar files separately (critical user data)
 if [ -d "$APP_DIR/backend/public/uploads" ]; then
@@ -84,7 +151,7 @@ echo ""
 
 # Download and extract tarball
 echo "→ Downloading release $LATEST_TAG..."
-TMP_DIR=$(mktemp -d)
+TMP_DIR=$(mktemp -d "${UPDATE_TEMP_BASE}/cmp_dl_XXXXXX" 2>/dev/null || mktemp -d)
 TARBALL_URL="https://github.com/${OWNER}/${REPO}/archive/refs/tags/${LATEST_TAG}.tar.gz"
 if ! curl -fsSL "$TARBALL_URL" | tar -xz -C "$TMP_DIR" --strip-components=1; then
     echo "ERROR: Failed to download or extract tarball"
@@ -143,27 +210,87 @@ npm install
 
 # Check available memory and create swap if needed
 SWAP_CREATED=0
-TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
-if [ "$TOTAL_MEM_GB" -lt 2 ]; then
-  echo "  ⚠ Low memory detected (${TOTAL_MEM_GB}GB). Creating temporary swap..."
-  SWAP_FILE="/tmp/cmp-build-swap"
-  dd if=/dev/zero of="$SWAP_FILE" bs=1M count=2048 status=none
-  chmod 600 "$SWAP_FILE"
-  mkswap "$SWAP_FILE" >/dev/null 2>&1
-  swapon "$SWAP_FILE"
-  SWAP_CREATED=1
+SWAP_FILE=""
+if [ -f /proc/meminfo ]; then
+  TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)
+  TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
+  SWAP_FREE_KB=$(grep SwapFree /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)
+
+  if [ "$TOTAL_MEM_MB" -lt 2048 ] && [ "$SWAP_FREE_KB" -lt 1048576 ]; then
+    echo "  ⚠ Low memory (${TOTAL_MEM_MB}MB RAM, $((SWAP_FREE_KB / 1024))MB free swap) — preparing build swap..."
+    
+    for candidate in "$APP_DIR/cmp-build-swap" "/var/tmp/cmp-build-swap" "/cmp-build-swap"; do
+      parent="$(dirname "$candidate")"
+      [ -d "$parent" ] || continue
+      [ -w "$parent" ] || continue
+      is_ram_fs "$parent" && continue
+
+      avail_kb=$(df -P -k "$parent" 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+      if [ "$avail_kb" -ge 3670016 ]; then
+        SWAP_SIZE_MB=1536
+        SWAP_FILE="$candidate"
+        break
+      elif [ "$avail_kb" -ge 2306867 ]; then
+        SWAP_SIZE_MB=1024
+        SWAP_FILE="$candidate"
+        break
+      elif [ "$avail_kb" -ge 1572864 ]; then
+        SWAP_SIZE_MB=512
+        SWAP_FILE="$candidate"
+        break
+      fi
+    done
+
+    if [ -n "$SWAP_FILE" ]; then
+      ACTIVE_SWAP_FILE="$SWAP_FILE"
+      echo "  → Allocating temporary ${SWAP_SIZE_MB}MB swap at $SWAP_FILE..."
+      if dd if=/dev/zero of="$SWAP_FILE" bs=1M count="$SWAP_SIZE_MB" status=none 2>/dev/null; then
+        chmod 600 "$SWAP_FILE" 2>/dev/null || true
+        if mkswap "$SWAP_FILE" >/dev/null 2>&1; then
+          if swapon "$SWAP_FILE" 2>/dev/null; then
+            echo "  ✓ Temporary ${SWAP_SIZE_MB}MB swap activated"
+            SWAP_CREATED=1
+          else
+            echo "  ⚠ swapon failed or restricted (e.g. unprivileged container) — proceeding without swap"
+            rm -f "$SWAP_FILE" 2>/dev/null || true
+            ACTIVE_SWAP_FILE=""
+            SWAP_FILE=""
+          fi
+        else
+          echo "  ⚠ mkswap failed — proceeding without swap"
+          rm -f "$SWAP_FILE" 2>/dev/null || true
+          ACTIVE_SWAP_FILE=""
+          SWAP_FILE=""
+        fi
+      else
+        echo "  ⚠ dd failed to allocate swap — proceeding without swap"
+        rm -f "$SWAP_FILE" 2>/dev/null || true
+        ACTIVE_SWAP_FILE=""
+        SWAP_FILE=""
+      fi
+    else
+      echo "  ⚠ No suitable disk-backed location with sufficient free space found — proceeding without swap"
+    fi
+  elif [ "$TOTAL_MEM_MB" -lt 2048 ]; then
+    echo "  ✓ System already has $((SWAP_FREE_KB / 1024))MB free swap — no temporary swap needed"
+  fi
 fi
 
 # Build with memory limit
-export NODE_OPTIONS="--max-old-space-size=1536"
+if [ "$SWAP_CREATED" -eq 1 ] || [ "${SWAP_FREE_KB:-0}" -gt 500000 ] || [ "${TOTAL_MEM_MB:-0}" -ge 2048 ]; then
+  export NODE_OPTIONS="--max-old-space-size=1536"
+else
+  export NODE_OPTIONS="--max-old-space-size=768"
+fi
 npm run build
 unset NODE_OPTIONS
 
 # Remove temporary swap if created
-if [ "$SWAP_CREATED" -eq 1 ]; then
+if [ "$SWAP_CREATED" -eq 1 ] && [ -n "$SWAP_FILE" ]; then
   swapoff "$SWAP_FILE" 2>/dev/null || true
-  rm -f "$SWAP_FILE"
+  rm -f "$SWAP_FILE" 2>/dev/null || true
+  ACTIVE_SWAP_FILE=""
+  echo "  ✓ Temporary swap removed"
 fi
 
 echo "  ✓ Frontend built"

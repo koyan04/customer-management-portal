@@ -10,6 +10,69 @@ REPO="customer-management-portal"
 APP_DIR="/srv/cmp"
 
 # ────────────────────────────────────────────────────────────────────────────
+# Global state & cleanup trap
+# ────────────────────────────────────────────────────────────────────────────
+ACTIVE_SWAP_FILE=""
+TMP_DIR=""
+
+cleanup() {
+  local exit_code=$?
+  if [ -n "$ACTIVE_SWAP_FILE" ] && [ -f "$ACTIVE_SWAP_FILE" ]; then
+    swapoff "$ACTIVE_SWAP_FILE" 2>/dev/null || true
+    rm -f "$ACTIVE_SWAP_FILE" 2>/dev/null || true
+  fi
+  if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+    rm -rf "$TMP_DIR" 2>/dev/null || true
+  fi
+  exit "$exit_code"
+}
+trap cleanup EXIT INT TERM
+
+# Proactively clean up any stale swap files left by previous failed runs
+for old_swap in /tmp/cmp-build-swap* /var/tmp/cmp-build-swap* "${APP_DIR}/cmp-build-swap*" /cmp-build-swap*; do
+  if [ -f "$old_swap" ]; then
+    swapoff "$old_swap" 2>/dev/null || true
+    rm -f "$old_swap" 2>/dev/null || true
+  fi
+done
+
+# ────────────────────────────────────────────────────────────────────────────
+# Filesystem helper: test if a directory is mounted on tmpfs/ramfs
+# ────────────────────────────────────────────────────────────────────────────
+is_ram_fs() {
+  local dir="${1:-/tmp}"
+  [ -d "$dir" ] || return 1
+  if command -v stat >/dev/null 2>&1; then
+    local fstype
+    fstype=$(stat -f -c %T "$dir" 2>/dev/null || echo "")
+    case "$fstype" in
+      tmpfs|ramfs|devtmpfs) return 0 ;;
+    esac
+  fi
+  if command -v df >/dev/null 2>&1; then
+    local dftype
+    dftype=$(df -T "$dir" 2>/dev/null | awk 'NR==2 {print $2}' || echo "")
+    case "$dftype" in
+      tmpfs|ramfs|devtmpfs) return 0 ;;
+    esac
+  fi
+  return 1
+}
+
+# Ensure safe base directory for temporary files (prefer disk if /tmp is tmpfs/full)
+UPDATE_TEMP_BASE="/tmp"
+TMP_AVAIL_KB=$(df -P -k /tmp 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+if is_ram_fs "/tmp" || [ "${TMP_AVAIL_KB:-0}" -lt 204800 ]; then
+  if [ -d "/var/tmp" ] && [ -w "/var/tmp" ] && ! is_ram_fs "/var/tmp"; then
+    UPDATE_TEMP_BASE="/var/tmp"
+    export TMPDIR="/var/tmp"
+  elif [ -d "$APP_DIR" ] && [ -w "$APP_DIR" ]; then
+    UPDATE_TEMP_BASE="$APP_DIR"
+    export TMPDIR="$APP_DIR"
+  fi
+fi
+
+# ────────────────────────────────────────────────────────────────────────────
 # Helper: true when $1 looks like a version tag (v1.2.3 or 1.2.3)
 # ────────────────────────────────────────────────────────────────────────────
 is_valid_tag() { echo "${1:-}" | grep -qE '^v?[0-9]+\.[0-9]'; }
@@ -22,7 +85,7 @@ is_valid_tag() { echo "${1:-}" | grep -qE '^v?[0-9]+\.[0-9]'; }
 # ────────────────────────────────────────────────────────────────────────────
 if [ -z "${CMP_SELF_UPDATED:-}" ] && is_valid_tag "${LATEST_TAG:-}"; then
   SCRIPT_URL="https://raw.githubusercontent.com/${OWNER}/${REPO}/${LATEST_TAG}/backend/scripts/update-unattended.sh"
-  SELF_TMP=$(mktemp /tmp/cmp-updater-XXXXXX.sh)
+  SELF_TMP=$(mktemp "${UPDATE_TEMP_BASE}/cmp-updater-XXXXXX.sh" 2>/dev/null || mktemp /tmp/cmp-updater-XXXXXX.sh)
   if curl -fsSL "$SCRIPT_URL" -o "$SELF_TMP" 2>/dev/null && [ -s "$SELF_TMP" ]; then
     chmod +x "$SELF_TMP"
     echo "→ Self-updating to ${LATEST_TAG} update script..."
@@ -114,7 +177,7 @@ fi
 echo ""
 
 # ── Backup database ────────────────────────────────────────────────────────
-BACKUP_DIR="/tmp/cmp_update_$(date +%Y%m%d_%H%M%S)"
+BACKUP_DIR="${UPDATE_TEMP_BASE}/cmp_update_$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$BACKUP_DIR"
 echo "→ Backing up database..."
 if sudo -u postgres pg_dump cmp > "$BACKUP_DIR/database.sql" 2>/dev/null; then
@@ -126,8 +189,7 @@ echo ""
 
 # ── Download release tarball ───────────────────────────────────────────────
 echo "→ Downloading release $LATEST_TAG..."
-TMP_DIR=$(mktemp -d)
-trap 'rm -rf "$TMP_DIR"' EXIT
+TMP_DIR=$(mktemp -d "${UPDATE_TEMP_BASE}/cmp_dl_XXXXXX" 2>/dev/null || mktemp -d)
 
 TARBALL_URL="https://github.com/${OWNER}/${REPO}/archive/refs/tags/${LATEST_TAG}.tar.gz"
 if ! curl -fsSL "$TARBALL_URL" | tar -xz -C "$TMP_DIR" --strip-components=1; then
@@ -216,21 +278,82 @@ echo ""
 
 echo "→ Building frontend..."
 SWAP_CREATED=0
+SWAP_FILE=""
 if [ -f /proc/meminfo ]; then
-    TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo | awk '{print $2}')
-    TOTAL_MEM_GB=$((TOTAL_MEM_KB / 1024 / 1024))
-    if [ "$TOTAL_MEM_GB" -lt 2 ]; then
-        echo "  ⚠ Low memory (${TOTAL_MEM_GB}GB) — creating temporary swap..."
-        SWAP_FILE="/tmp/cmp-build-swap"
-        dd if=/dev/zero of="$SWAP_FILE" bs=1M count=2048 status=none
-        chmod 600 "$SWAP_FILE"
-        mkswap "$SWAP_FILE" >/dev/null 2>&1
-        swapon "$SWAP_FILE"
-        SWAP_CREATED=1
+    TOTAL_MEM_KB=$(grep MemTotal /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)
+    TOTAL_MEM_MB=$((TOTAL_MEM_KB / 1024))
+    SWAP_FREE_KB=$(grep SwapFree /proc/meminfo 2>/dev/null | awk '{print $2}' || echo 0)
+
+    # Only create temporary swap if physical RAM is under 2GB and free swap is under 1GB
+    if [ "$TOTAL_MEM_MB" -lt 2048 ] && [ "$SWAP_FREE_KB" -lt 1048576 ]; then
+        echo "  ⚠ Low memory (${TOTAL_MEM_MB}MB RAM, $((SWAP_FREE_KB / 1024))MB free swap) — preparing build swap..."
+        
+        # Candidate disk locations (MUST NOT be tmpfs/ramfs)
+        for candidate in "$APP_DIR/cmp-build-swap" "/var/tmp/cmp-build-swap" "/cmp-build-swap"; do
+            parent="$(dirname "$candidate")"
+            [ -d "$parent" ] || continue
+            [ -w "$parent" ] || continue
+            is_ram_fs "$parent" && continue
+
+            avail_kb=$(df -P -k "$parent" 2>/dev/null | awk 'NR==2 {print $4}' || echo 0)
+            # Need at least 1.5GB free to leave headroom
+            if [ "$avail_kb" -ge 3670016 ]; then
+                SWAP_SIZE_MB=1536
+                SWAP_FILE="$candidate"
+                break
+            elif [ "$avail_kb" -ge 2306867 ]; then
+                SWAP_SIZE_MB=1024
+                SWAP_FILE="$candidate"
+                break
+            elif [ "$avail_kb" -ge 1572864 ]; then
+                SWAP_SIZE_MB=512
+                SWAP_FILE="$candidate"
+                break
+            fi
+        done
+
+        if [ -n "$SWAP_FILE" ]; then
+            ACTIVE_SWAP_FILE="$SWAP_FILE"
+            echo "  → Allocating temporary ${SWAP_SIZE_MB}MB swap at $SWAP_FILE..."
+            if dd if=/dev/zero of="$SWAP_FILE" bs=1M count="$SWAP_SIZE_MB" status=none 2>/dev/null; then
+                chmod 600 "$SWAP_FILE" 2>/dev/null || true
+                if mkswap "$SWAP_FILE" >/dev/null 2>&1; then
+                    if swapon "$SWAP_FILE" 2>/dev/null; then
+                        echo "  ✓ Temporary ${SWAP_SIZE_MB}MB swap activated"
+                        SWAP_CREATED=1
+                    else
+                        echo "  ⚠ swapon failed or restricted (e.g. unprivileged container) — proceeding without swap"
+                        rm -f "$SWAP_FILE" 2>/dev/null || true
+                        ACTIVE_SWAP_FILE=""
+                        SWAP_FILE=""
+                    fi
+                else
+                    echo "  ⚠ mkswap failed — proceeding without swap"
+                    rm -f "$SWAP_FILE" 2>/dev/null || true
+                    ACTIVE_SWAP_FILE=""
+                    SWAP_FILE=""
+                fi
+            else
+                echo "  ⚠ dd failed to allocate swap — proceeding without swap"
+                rm -f "$SWAP_FILE" 2>/dev/null || true
+                ACTIVE_SWAP_FILE=""
+                SWAP_FILE=""
+            fi
+        else
+            echo "  ⚠ No suitable disk-backed location with sufficient free space found — proceeding without swap"
+        fi
+    elif [ "$TOTAL_MEM_MB" -lt 2048 ]; then
+        echo "  ✓ System already has $((SWAP_FREE_KB / 1024))MB free swap — no temporary swap needed"
     fi
 fi
 
-export NODE_OPTIONS="--max-old-space-size=1536"
+# Set Node memory limit appropriately
+if [ "$SWAP_CREATED" -eq 1 ] || [ "${SWAP_FREE_KB:-0}" -gt 500000 ] || [ "${TOTAL_MEM_MB:-0}" -ge 2048 ]; then
+    export NODE_OPTIONS="--max-old-space-size=1536"
+else
+    # Conservative limit to avoid triggering OOM killer when swap is unavailable
+    export NODE_OPTIONS="--max-old-space-size=768"
+fi
 
 # ── Build with automatic recovery on failure ───────────────────────────────
 build_frontend() {
@@ -254,9 +377,11 @@ fi
 
 unset NODE_OPTIONS
 
-if [ "$SWAP_CREATED" -eq 1 ]; then
+if [ "$SWAP_CREATED" -eq 1 ] && [ -n "$SWAP_FILE" ]; then
     swapoff "$SWAP_FILE" 2>/dev/null || true
-    rm -f "$SWAP_FILE"
+    rm -f "$SWAP_FILE" 2>/dev/null || true
+    ACTIVE_SWAP_FILE=""
+    echo "  ✓ Temporary swap removed"
 fi
 echo "  ✓ Frontend built"
 echo ""
