@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import axios from 'axios';
 import {
   FaTimes, FaSyncAlt, FaDesktop, FaHdd, FaExchangeAlt,
@@ -293,7 +294,9 @@ export default function ServerMonitorSlideOver({ isOpen, onClose }) {
     ? (history.downloadSpeed.reduce((a, b) => a + b, 0) / history.downloadSpeed.length).toFixed(2)
     : '1.53';
 
-  return (
+  if (!isOpen) return null;
+
+  const content = (
     <div className="sms-backdrop" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <aside className="sms-slideover" role="dialog" aria-modal="true" aria-label="Server Monitor">
         {/* Slide-over Header Bar */}
@@ -641,4 +644,6 @@ export default function ServerMonitorSlideOver({ isOpen, onClose }) {
       </aside>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(content, document.body) : content;
 }

@@ -1,3 +1,13 @@
+cmp ver 1.9.18
+
+What's new
+- Slide-Over Panel Stacking & Portal Layering Fix: portaled `ServerMonitorSlideOver` directly into `document.body` via `createPortal` with `z-index: 99999`, fixing navbar elements rendering across the slide-over panel
+- Modal Stacking Context Polish: removed artificial `z-index` from `.main-content` and elevated `.modal-backdrop` to `z-index: 10000`
+
+See release-notes-1.9.18.md for full details.
+
+---
+
 cmp ver 1.9.17
 
 What's new

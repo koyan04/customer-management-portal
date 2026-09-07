@@ -71,7 +71,7 @@ body.theme-light {
   background: var(--sms-backdrop);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
-  z-index: 9999;
+  z-index: 99999;
   display: flex;
   justify-content: flex-end;
   animation: smsFadeIn 0.25s ease-out forwards;
