@@ -37,3 +37,6 @@ backend/public/uploads/*
 # Ignore custom logos (user-uploaded, persisted outside git)
 backend/public/logos/*
 !backend/public/logos/.gitkeep
+
+# Ignore runtime token map data
+backend/data/token_map.json

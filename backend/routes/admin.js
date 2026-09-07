@@ -3424,6 +3424,54 @@ router.get('/control/update/version', authenticateToken, isAdmin, async (req, re
   return res.json({ ok: true, current, latest, isOutdated, lastAppliedAt, checkedAt: new Date().toISOString() });
 });
 
+// ── Host Server Telemetry & System Monitor ────────────────────────────────
+router.get('/control/system-monitor', authenticateToken, async (req, res) => {
+  try {
+    const { getSystemTelemetry } = require('../lib/systemMonitor');
+    const data = getSystemTelemetry();
+    return res.json({ ok: true, ...data });
+  } catch (err) {
+    console.error('System monitor error:', err);
+    return res.status(500).json({ ok: false, error: err.message || 'Failed to fetch telemetry' });
+  }
+});
+
+// Restart CMP backend service
+router.post('/control/service/restart', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const adminId = req.user && req.user.id;
+    await writeControlAudit(adminId, 'service_restart', {}).catch(() => {});
+    // Schedule restart via systemd or process exit for auto-restart by systemd
+    setTimeout(() => {
+      try {
+        require('child_process').exec('systemctl restart cmp-backend 2>/dev/null || true');
+      } catch (_) {}
+      setTimeout(() => process.exit(0), 1000);
+    }, 500);
+    return res.json({ ok: true, msg: 'Service restart scheduled' });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Fetch recent service logs
+router.get('/control/system-logs', authenticateToken, isAdmin, async (req, res) => {
+  try {
+    let logs = '';
+    if (process.platform === 'linux') {
+      try {
+        logs = require('child_process').execSync('journalctl -u cmp-backend -n 80 --no-pager 2>/dev/null', { encoding: 'utf8' });
+      } catch (_) {}
+    }
+    if (!logs) {
+      logs = `[${new Date().toISOString()}] cmp-backend active (PID ${process.pid})\n[${new Date().toISOString()}] Node.js ${process.version} - Platform ${process.platform}\n[${new Date().toISOString()}] Ready and handling requests.`;
+    }
+    return res.json({ ok: true, logs });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // ── Streaming update via GitHub release tarball (SSE) ─────────────────────
 router.post('/control/update/run', authenticateToken, isAdmin, async (req, res) => {
   const { spawn } = require('child_process');

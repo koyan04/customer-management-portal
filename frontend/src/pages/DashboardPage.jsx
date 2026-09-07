@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { FaServer, FaUsers, FaCheckCircle, FaExclamationTriangle, FaTimesCircle, FaNetworkWired, FaGlobe, FaLeaf, FaCube, FaInfinity, FaChartPie, FaUserShield, FaChartBar, FaChevronDown, FaSyncAlt } from 'react-icons/fa';
+import { FaServer, FaUsers, FaCheckCircle, FaExclamationTriangle, FaTimesCircle, FaNetworkWired, FaGlobe, FaLeaf, FaCube, FaInfinity, FaChartPie, FaUserShield, FaChartBar, FaChevronDown, FaSyncAlt, FaDesktop } from 'react-icons/fa';
 import { Link, useNavigate } from 'react-router-dom';
 import Modal from '../components/Modal.jsx';
+import ServerMonitorSlideOver from '../components/ServerMonitorSlideOver.jsx';
 import formatWithAppTZ from '../lib/timezone';
 import { getBackendOrigin } from '../lib/backendOrigin';
 
@@ -19,6 +20,7 @@ function DashboardPage() {
   const [tierModal, setTierModal] = useState({ open: false, tier: null });
   const [tierModalData, setTierModalData] = useState({ loading: false, users: [], error: '' });
   const [tierModalPage, setTierModalPage] = useState(1);
+  const [isMonitorOpen, setIsMonitorOpen] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(() => {
     // Load from localStorage or default to 0.5 (30 seconds)
     const saved = localStorage.getItem('dashboardRefreshInterval');
@@ -385,6 +387,17 @@ function DashboardPage() {
             >
               <FaSyncAlt className={isRefreshing ? 'spinning' : ''} />
             </button>
+            {role === 'ADMIN' && (
+              <button
+                type="button"
+                onClick={() => setIsMonitorOpen(true)}
+                className="refresh-btn monitor-btn"
+                title="Open Server Monitor"
+                aria-label="Open Server Monitor"
+              >
+                <FaDesktop />
+              </button>
+            )}
           </div>
           {role === 'ADMIN' && (
             <span className={`feature-indicator ${stats.matview ? 'enabled' : 'disabled'}`} title={`User status matview ${stats.matview ? 'enabled' : 'disabled'}`}>
@@ -764,6 +777,13 @@ function DashboardPage() {
           );
         })()}
       </Modal>
+
+      {role === 'ADMIN' && (
+        <ServerMonitorSlideOver
+          isOpen={isMonitorOpen}
+          onClose={() => setIsMonitorOpen(false)}
+        />
+      )}
     </div>
   );
 }

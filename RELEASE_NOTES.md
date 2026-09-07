@@ -1,3 +1,15 @@
+cmp ver 1.9.16
+
+What's new
+- Server Monitor Slide-Over Panel: real-time host telemetry monitor on the Dashboard tracking CPU, RAM, SWAP, Storage, Network I/O, Sockets, Uptime, Process Memory, and Server IP
+- Full Theme Adaptation: slide-over panel, sparklines, and dual-line charts dynamically adapt to dark mode and light mode in real time
+- Interactive Telemetry Controls: pause/resume toggle, custom polling interval (2s, 5s, 10s), manual refresh, CMP backend restart, and live systemctl logs viewer
+- Navbar Menus UI/UX Bug Fixes: fixed avatar menu animation jump glitch, added complete light theme support for avatar dropdown, unified button sizing/alignment, added active indicator for generator routes, eliminated hover gap flickers, and improved mobile responsiveness
+
+See release-notes-1.9.16.md for full details.
+
+---
+
 cmp ver 1.9.15
 
 What's new

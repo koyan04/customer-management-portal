@@ -1,4 +1,4 @@
-import { Outlet, Link, NavLink } from 'react-router-dom';
+import { Outlet, Link, NavLink, useLocation } from 'react-router-dom';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useAuth } from './context/AuthContext';
 import './App.css';
@@ -54,6 +54,14 @@ function App() {
     try { return (JSON.parse(localStorage.getItem('app.build.info') || '{}').buildTimestamp) || ''; } catch (_) { return ''; }
   });
   const [aboutOpen, setAboutOpen] = useState(false);
+  const location = useLocation();
+  const isGeneratorActive = ['/key-manager', '/yaml-generator', '/json-generator'].includes(location.pathname);
+
+  // Close open dropdown menus on route change
+  useEffect(() => {
+    setMenuOpen(false);
+    setKeyMenuOpen(false);
+  }, [location.pathname]);
 
   // helper to apply theme to <body> respecting system preference
   useEffect(() => {
@@ -557,45 +565,29 @@ function App() {
     } catch (e) { isTouchRef.current = false; }
   }, []);
 
-  // Close menu when clicking outside or on Escape. Also cleanup timers.
-  useEffect(() => {
-    const onDocClick = (e) => {
-      if (!avatarRef.current) return;
-      if (!avatarRef.current.contains(e.target)) {
-        setMenuOpen(false);
-      }
-    };
-    const onKey = (e) => {
-      if (e.key === 'Escape') setMenuOpen(false);
-    };
-    document.addEventListener('click', onDocClick);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('click', onDocClick);
-      document.removeEventListener('keydown', onKey);
-      clearTimeout(hoverTimerRef.current);
-      clearTimeout(leaveTimerRef.current);
-    };
-  }, []);
-  
-  // Close key menu when clicking outside or on Escape
-  // Uses pointerdown instead of click so React's stopPropagation on menu items
-  // can intercept the event before it reaches the document listener.
+  // Close menus when clicking outside or on Escape. Also cleanup timers.
   useEffect(() => {
     const onDocPointerDown = (e) => {
-      if (!keyRef.current) return;
-      if (!keyRef.current.contains(e.target)) {
+      if (avatarRef.current && !avatarRef.current.contains(e.target)) {
+        setMenuOpen(false);
+      }
+      if (keyRef.current && !keyRef.current.contains(e.target)) {
         setKeyMenuOpen(false);
       }
     };
     const onKey = (e) => {
-      if (e.key === 'Escape') setKeyMenuOpen(false);
+      if (e.key === 'Escape') {
+        setMenuOpen(false);
+        setKeyMenuOpen(false);
+      }
     };
     document.addEventListener('pointerdown', onDocPointerDown);
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('pointerdown', onDocPointerDown);
       document.removeEventListener('keydown', onKey);
+      clearTimeout(hoverTimerRef.current);
+      clearTimeout(leaveTimerRef.current);
       clearTimeout(keyHoverTimerRef.current);
       clearTimeout(keyLeaveTimerRef.current);
     };
@@ -662,13 +654,13 @@ function App() {
             ref={keyRef}
             onMouseEnter={handleKeyMouseEnter}
             onMouseLeave={handleKeyMouseLeave}
-            className="nav-link nav-link-key"
+            className={`nav-link-key${isGeneratorActive ? ' active' : ''}`}
             aria-label="Generators"
             title="Generators"
           >
             <button
               type="button"
-              className="key-icon-btn"
+              className={`key-icon-btn${isGeneratorActive ? ' active' : ''}`}
               aria-haspopup="true"
               aria-expanded={keyMenuOpen}
               onClick={(e) => {
@@ -685,35 +677,30 @@ function App() {
                 className="key-menu"
                 role="menu"
                 aria-label="Generators menu"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => e.stopPropagation()}
               >
                 {(role === 'ADMIN' || role === 'SERVER_ADMIN') && (
                   <Link
                     to="/key-manager"
-                    className="key-menu-item"
+                    className={`key-menu-item${location.pathname === '/key-manager' ? ' active' : ''}`}
                     role="menuitem"
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => { e.stopPropagation(); setKeyMenuOpen(false); }}
+                    onClick={() => setKeyMenuOpen(false)}
                   >
                     Key Manager
                   </Link>
                 )}
                 <Link
                   to="/yaml-generator"
-                  className="key-menu-item"
+                  className={`key-menu-item${location.pathname === '/yaml-generator' ? ' active' : ''}`}
                   role="menuitem"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => { e.stopPropagation(); setKeyMenuOpen(false); }}
+                  onClick={() => setKeyMenuOpen(false)}
                 >
                   YAML Generator
                 </Link>
                 <Link
                   to="/json-generator"
-                  className="key-menu-item"
+                  className={`key-menu-item${location.pathname === '/json-generator' ? ' active' : ''}`}
                   role="menuitem"
-                  onPointerDown={(e) => e.stopPropagation()}
-                  onClick={(e) => { e.stopPropagation(); setKeyMenuOpen(false); }}
+                  onClick={() => setKeyMenuOpen(false)}
                 >
                   JSON Generator
                 </Link>
@@ -725,35 +712,51 @@ function App() {
         </nav>
         {/* Logout moved into avatar menu */}
         {/* Avatar on the right side of the banner */}
-          <div ref={avatarRef} onMouseEnter={handleMouseEnter} onMouseLeave={handleMouseLeave} className="header-avatar" title={(effectiveProfile && (effectiveProfile.name || effectiveProfile.display_name || effectiveProfile.email)) || 'Profile'}>
+          <div
+            ref={avatarRef}
+            onMouseEnter={handleMouseEnter}
+            onMouseLeave={handleMouseLeave}
+            className="header-avatar"
+            title={(effectiveProfile && (effectiveProfile.name || effectiveProfile.display_name || effectiveProfile.email)) || 'Profile'}
+            onClick={() => setMenuOpen(prev => !prev)}
+            role="button"
+            tabIndex={0}
+            aria-label="User profile menu"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setMenuOpen(prev => !prev);
+              }
+            }}
+          >
             <img
               src={avatarSrc}
               alt="User avatar"
               className="header-avatar-img"
               onError={(e) => { e.target.onerror = null; e.target.src = FALLBACK_AVATAR; }}
             />
-            <button
-              type="button"
+            <div
               className="header-avatar-overlay"
-              aria-label="Open menu"
-              aria-haspopup="true"
-              aria-expanded={menuOpen}
-              onClick={(e) => { e.preventDefault(); e.stopPropagation();
-                // on touch devices, toggle; on desktop clicks also toggle but hover takes precedence
-                setMenuOpen(prev => !prev);
-              }}
+              aria-hidden="true"
             >
-              {/* menu icon (hamburger) per reference */}
+              {/* menu icon (hamburger) */}
               <svg className="header-overlay-icon" width="13" height="10" viewBox="0 0 18 10" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden>
-                <path d="M1 1.5h16" stroke="#062226" strokeWidth="1.2" strokeLinecap="round" />
-                <path d="M1 6h16" stroke="#062226" strokeWidth="1.2" strokeLinecap="round" />
-                <path d="M1 10.5h16" stroke="#062226" strokeWidth="1.2" strokeLinecap="round" />
+                <path d="M1 1.5h16" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                <path d="M1 6h16" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+                <path d="M1 10.5h16" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
               </svg>
-            </button>
+            </div>
 
             {/* Small contextual menu anchored to the avatar overlay */}
             {menuOpen && (
-              <div className="avatar-menu" role="menu" aria-label="Profile menu">
+              <div
+                className="avatar-menu"
+                role="menu"
+                aria-label="Profile menu"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <button type="button" className="avatar-menu-item" role="menuitem" onClick={() => { setShowProfileEditor(true); setMenuOpen(false); }}>
                   <FaUser className="menu-icon" aria-hidden />
                   <span>Profile</span>
