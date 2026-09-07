@@ -555,7 +555,12 @@ body.theme-light .modal-content {
   flex-direction: column;
   min-height: 100vh; /* allow sticky footer */
 }
-.main-content { flex: 1 1 auto; display: block; }
+.main-content {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  display: block;
+}
 
 /* Financial page stat banners (light green glass-style) */
 .stat-banners {
@@ -2585,6 +2590,7 @@ body.theme-light .avatar-menu-item[role="menuitemradio"][aria-checked="true"] {
 /* --- Key icon dropdown menu (for generators) --- */
 .nav-link-key {
   position: relative;
+  z-index: 1040;
   display: inline-flex;
   align-items: center;
   padding: 0;
@@ -2753,6 +2759,7 @@ body.theme-light .key-menu-item.active {
 /* --- Header avatar (banner) --- */
 .header-avatar {
   position: relative;
+  z-index: 1050;
   width: 50px; /* desktop size */
   height: 50px;
   border-radius: 50%;
@@ -6297,6 +6304,8 @@ body.theme-light .login-theme-toggle .theme-dot.effective:not(.active) { outline
 
 /* --- Main App Header and Logout Button --- */
 .main-header {
+  position: relative;
+  z-index: 1000;
   display: flex;
   justify-content: flex-start;
   align-items: center;

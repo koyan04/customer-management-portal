@@ -1,3 +1,13 @@
+cmp ver 1.9.17
+
+What's new
+- Update Script DB Backup Hardening: fixed update scripts (`update-vps.sh` and `update-unattended.sh`) freezing on "Backing up database..."; added `-w` (no password prompt), `PGCONNECT_TIMEOUT=5`, `--lock-wait-timeout=10000`, process timeout wrapper, and automated credential resolution from `backend/.env` with multi-tier fallback
+- Navbar Dropdown Z-Index Stacking Context Fix: added proper stacking contexts (`z-index: 1000` on `.main-header`, `z-index: 1` on `.main-content`) preventing avatar and key dropdown popovers from being clipped behind action buttons
+
+See release-notes-1.9.17.md for full details.
+
+---
+
 cmp ver 1.9.16
 
 What's new

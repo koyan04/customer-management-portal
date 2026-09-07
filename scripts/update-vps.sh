@@ -32,6 +32,17 @@ for old_swap in /tmp/cmp-build-swap* /var/tmp/cmp-build-swap* "${APP_DIR}/cmp-bu
   fi
 done
 
+# Timeout helper: runs command with timeout if available
+run_with_timeout() {
+  local max_sec="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "$max_sec" "$@"
+  else
+    "$@"
+  fi
+}
+
 # Filesystem helper: test if a directory is mounted on tmpfs/ramfs
 is_ram_fs() {
   local dir="${1:-/tmp}"
@@ -134,12 +145,65 @@ fi
 echo "  ✓ Backup created"
 echo ""
 
-# Backup database
-echo "→ Backing up database..."
-if sudo -u postgres pg_dump cmp > "$BACKUP_DIR/database.sql" 2>/dev/null; then
-    echo "  ✓ Database backed up to $BACKUP_DIR/database.sql"
+# Backup database (safe non-blocking backup using app credentials or local peer auth)
+DB_NAME=""
+DB_USER=""
+DB_PASS=""
+DB_HOST=""
+DB_PORT=""
+if [ -f "$APP_DIR/backend/.env" ]; then
+  DB_NAME=$(grep -E '^[[:space:]]*DB_DATABASE=' "$APP_DIR/backend/.env" 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d '"\r\n' | tr -d "'")
+  DB_USER=$(grep -E '^[[:space:]]*DB_USER=' "$APP_DIR/backend/.env" 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d '"\r\n' | tr -d "'")
+  DB_PASS=$(grep -E '^[[:space:]]*DB_PASSWORD=' "$APP_DIR/backend/.env" 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d '"\r\n' | tr -d "'")
+  DB_HOST=$(grep -E '^[[:space:]]*DB_HOST=' "$APP_DIR/backend/.env" 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d '"\r\n' | tr -d "'")
+  DB_PORT=$(grep -E '^[[:space:]]*DB_PORT=' "$APP_DIR/backend/.env" 2>/dev/null | head -n 1 | cut -d= -f2- | tr -d '"\r\n' | tr -d "'")
+fi
+
+DB_NAME="${DB_NAME:-cmp}"
+DB_HOST="${DB_HOST:-localhost}"
+DB_PORT="${DB_PORT:-5432}"
+
+echo "→ Backing up database (${DB_NAME})..."
+DB_BACKUP_SUCCESS=0
+
+if command -v pg_dump >/dev/null 2>&1; then
+  # 1. Try using credentials from .env with password
+  if [ -n "$DB_USER" ] && [ -n "$DB_PASS" ]; then
+    if run_with_timeout 30 env PGPASSWORD="$DB_PASS" PGCONNECT_TIMEOUT=5 \
+        pg_dump -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -w --lock-wait-timeout=10000 \
+        "$DB_NAME" > "$BACKUP_DIR/database.sql" 2>/dev/null; then
+      if [ -s "$BACKUP_DIR/database.sql" ]; then
+        DB_BACKUP_SUCCESS=1
+      fi
+    fi
+  fi
+
+  # 2. Try peer auth via sudo as postgres (non-interactive, never prompt for password)
+  if [ $DB_BACKUP_SUCCESS -eq 0 ] && command -v sudo >/dev/null 2>&1; then
+    if run_with_timeout 20 sudo -n -u postgres env PGCONNECT_TIMEOUT=5 \
+        pg_dump -w --lock-wait-timeout=10000 "$DB_NAME" > "$BACKUP_DIR/database.sql" 2>/dev/null; then
+      if [ -s "$BACKUP_DIR/database.sql" ]; then
+        DB_BACKUP_SUCCESS=1
+      fi
+    fi
+  fi
+
+  # 3. Try peer auth via su if running as root
+  if [ $DB_BACKUP_SUCCESS -eq 0 ] && [ "$(id -u 2>/dev/null || echo 1)" -eq 0 ] && command -v su >/dev/null 2>&1; then
+    if run_with_timeout 20 su -s /bin/bash postgres -c \
+        "PGCONNECT_TIMEOUT=5 pg_dump -w --lock-wait-timeout=10000 '$DB_NAME'" > "$BACKUP_DIR/database.sql" 2>/dev/null; then
+      if [ -s "$BACKUP_DIR/database.sql" ]; then
+        DB_BACKUP_SUCCESS=1
+      fi
+    fi
+  fi
+fi
+
+if [ $DB_BACKUP_SUCCESS -eq 1 ]; then
+  echo "  ✓ Database backed up to $BACKUP_DIR/database.sql"
 else
-    echo "  ⚠ Database backup failed (continuing anyway)"
+  rm -f "$BACKUP_DIR/database.sql" 2>/dev/null || true
+  echo "  ⚠ Database backup skipped (pg_dump unavailable or authentication not provided; continuing update)"
 fi
 echo ""
 
@@ -354,6 +418,9 @@ echo "To rollback (if needed):"
 echo "  systemctl stop cmp-backend cmp-telegram-bot"
 echo "  rm -rf $APP_DIR"
 echo "  cp -r $BACKUP_DIR/cmp $APP_DIR"
-echo "  sudo -u postgres psql cmp < $BACKUP_DIR/database.sql"
+if [ -f "$BACKUP_DIR/database.sql" ]; then
+  echo "  # Database restore:"
+  echo "  psql -h $DB_HOST -p $DB_PORT -U ${DB_USER:-cmp} $DB_NAME < $BACKUP_DIR/database.sql"
+fi
 echo "  systemctl start cmp-backend cmp-telegram-bot"
 echo ""
