@@ -1,10 +1,16 @@
+# Release Notes
+
+> For release assets and full changelogs, visit [GitHub Releases](https://github.com/koyan04/customer-management-portal/releases).
+
+---
+
 cmp ver 1.9.18
 
 What's new
 - Slide-Over Panel Stacking & Portal Layering Fix: portaled `ServerMonitorSlideOver` directly into `document.body` via `createPortal` with `z-index: 99999`, fixing navbar elements rendering across the slide-over panel
 - Modal Stacking Context Polish: removed artificial `z-index` from `.main-content` and elevated `.modal-backdrop` to `z-index: 10000`
 
-See release-notes-1.9.18.md for full details.
+See [Release v1.9.18](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.18) for full details.
 
 ---
 
@@ -14,7 +20,7 @@ What's new
 - Update Script DB Backup Hardening: fixed update scripts (`update-vps.sh` and `update-unattended.sh`) freezing on "Backing up database..."; added `-w` (no password prompt), `PGCONNECT_TIMEOUT=5`, `--lock-wait-timeout=10000`, process timeout wrapper, and automated credential resolution from `backend/.env` with multi-tier fallback
 - Navbar Dropdown Z-Index Stacking Context Fix: added proper stacking contexts (`z-index: 1000` on `.main-header`, `z-index: 1` on `.main-content`) preventing avatar and key dropdown popovers from being clipped behind action buttons
 
-See release-notes-1.9.17.md for full details.
+See [Release v1.9.17](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.17) for full details.
 
 ---
 
@@ -26,7 +32,7 @@ What's new
 - Interactive Telemetry Controls: pause/resume toggle, custom polling interval (2s, 5s, 10s), manual refresh, CMP backend restart, and live systemctl logs viewer
 - Navbar Menus UI/UX Bug Fixes: fixed avatar menu animation jump glitch, added complete light theme support for avatar dropdown, unified button sizing/alignment, added active indicator for generator routes, eliminated hover gap flickers, and improved mobile responsiveness
 
-See release-notes-1.9.16.md for full details.
+See [Release v1.9.16](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.16) for full details.
 
 ---
 
@@ -40,7 +46,7 @@ What's new
 - Robust Cleanup Traps: EXIT/INT/TERM traps ensure temporary swap files are always cleanly deactivated and removed even if a build fails or is interrupted
 - Container & Privilege Fallbacks: gracefully continues with conservative memory settings if swapon is restricted in containers (Docker, LXC)
 
-See release-notes-1.9.15.md for full details.
+See [Release v1.9.15](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.15) for full details.
 
 ---
 
@@ -50,7 +56,7 @@ What's new
 - Server uninstaller: added scripts/uninstall.sh that cleanly removes the portal (systemd units/timers, Nginx vhosts, Let's Encrypt certs, Cloudflare creds, /srv/cmp, and optionally the PostgreSQL role+DB) with confirmation, --dry-run, --keep-* and --yes options
 - Docs: added an Uninstall section to README.md and VPS_DEPLOYMENT.md
 
-See release-notes-1.9.14.md for full details.
+See [Release v1.9.14](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.14) for full details.
 
 ---
 
@@ -58,11 +64,10 @@ cmp ver 1.9.13
 
 What's new
 - Key Server HTTPS: installer now issues a certificate for the key server domain and writes a proper HTTPS vhost (with HTTP→HTTPS redirect); fixes HTTPS requests falling through to the portal React app
-- Key Server live secret key: /sub/:id now reads keyserver.json per-request, so secret key / config dir updates take effect immediately without a backend restart
-- Installer UI polish: color banner, section headers, and ✔ status markers; fixed mojibake text
-- Installer line-ending fix: shell scripts normalized to LF and enforced via .gitattributes (prevents bash $'\r' errors)
+- Key Server Live Secret Key: automatically reads key_server_secret from app_settings on each request
+- Install Script Polish: fixed subshell command substitution formatting, corrected default prompt options, and ensured Linux LF line endings
 
-See release-notes-1.9.13.md for full details.
+See [Release v1.9.13](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.13) for full details.
 
 ---
 
@@ -73,7 +78,7 @@ What's new
 - Financial page: "Current" month status now uses the app timezone, so the correct month is labeled instead of the previous one
 - Nav bar generator menu: clicking Key Manager / YAML Generator / JSON Generator no longer leaks the click and re-collapses the menu
 
-See release-notes-1.9.12.md for full details.
+See [Release v1.9.12](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.12) for full details.
 
 ---
 
@@ -83,7 +88,7 @@ What's new
 - Hide Disabled Users: New checkbox under Settings → General (default on) hides disabled users from the server user list and dashboard tier modal; disabled accounts remain visible via the Disabled status filter
 - Key Manager: Fixed mobile action menu so clicks no longer leak through to underlying rows or page elements
 
-See release-notes-1.9.11.md for full details.
+See [Release v1.9.11](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.11) for full details.
 
 ---
 
@@ -99,7 +104,7 @@ What's new
 - Export Nodes as Text: Download active nodes as plain text proxy URI file from both generators
 - Navbar positioning improved for desktop layout
 
-See release-notes-1.5.0.md for full details.
+See [Release v1.5.0](https://github.com/koyan04/customer-management-portal/releases/tag/v1.5.0) for full details.
 
 ---
 
@@ -136,4 +141,3 @@ Upgrade Notes
 Notes
 - Tag `v1.4.1` includes activity logs, logo persistence, and financial report fixes.
 - See `LOGO_SETUP.md` and `backend/LOGO_PERSISTENCE.md` for detailed logo management documentation.
-
