@@ -1223,7 +1223,7 @@ Systemd unit files are in `backend/systemd/`. Deployment scripts in `scripts/`:
 
 ### Nginx Reverse Proxy
 
-Example `key.vchannel.dpdns.org.conf` (in project root):
+Example Nginx reverse proxy configuration:
 ```nginx
 server {
   listen 80;

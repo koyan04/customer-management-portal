@@ -10,6 +10,10 @@ node_modules/
 # Test artifacts / results - omit large or local-only test outputs
 /test-results/
 /frontend/test-results/
+screenshots/
+**/screenshots/
+/frontend/playwright-report/
+/frontend/blob-report/
 
 # Playwright / e2e local files
 /frontend/e2e/mock-server.cjs
@@ -18,9 +22,14 @@ node_modules/
 # Local build artifacts
 /frontend/dist/
 
-# Optional: local editor / OS files
+# Local editor / OS / IDE files
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
 # Ignore local logs
 *.log
@@ -28,6 +37,22 @@ Thumbs.db
 # Ignore temporary files
 tmp/
 temp/
+*.tmp
+temp_token.txt
+
+# Temporary build & swap artifacts (VPS updater & swap files)
+cmp-build-swap*
+**/cmp-build-swap*
+cmp_backup_*
+cmp_update_*
+cmp-updater-*.sh
+cmp-backup-*.json
+
+# Backups & dead code
+*.bak
+*.bak.*
+**/backup/
+* - Copy.*
 
 # Ignore uploaded files (user avatars, etc.)
 backend/public/uploads/*
