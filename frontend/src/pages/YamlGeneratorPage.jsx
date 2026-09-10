@@ -855,109 +855,119 @@ const YamlGeneratorPage = () => {
     yaml += `\n`;
     
     // Proxies
-    yaml += `proxies:\n`;
-    activeNodes.forEach(node => {
-      let nodeObj = { ...node };
-      if (nodeObj.type === 'vless' && (nodeObj['reality-opts'] || nodeObj.security === 'reality' || nodeObj.publicKey || nodeObj.shortId || nodeObj.spiderX)) {
-        const realityOpts = { ...(nodeObj['reality-opts'] || {}) };
-        if (nodeObj.publicKey && !realityOpts['public-key']) realityOpts['public-key'] = nodeObj.publicKey;
-        if (nodeObj.shortId !== undefined && realityOpts['short-id'] === undefined) realityOpts['short-id'] = nodeObj.shortId;
-        if (nodeObj.spiderX && !realityOpts.spiderX) realityOpts.spiderX = nodeObj.spiderX;
-        nodeObj['reality-opts'] = realityOpts;
-        delete nodeObj.security;
-        delete nodeObj.publicKey;
-        delete nodeObj.shortId;
-        delete nodeObj.spiderX;
-        nodeObj.tls = true;
-      }
-      if (nodeObj.type === 'vless' && nodeObj.network === 'xhttp' && !nodeObj['xhttp-opts']) {
-        nodeObj['xhttp-opts'] = {
-          host: nodeObj.server,
-          mode: 'auto',
-          path: '/'
-        };
-      }
-      if (nodeObj.type === 'trojan') {
-        nodeObj = normalizeTrojanNode(nodeObj);
-        if (nodeObj.network === 'ws' && Number(nodeObj.port) === 443) nodeObj.port = 80;
-      }
-      // Add anti-DPI per-proxy settings
-      if (antiDPI) {
-        nodeObj['client-fingerprint'] = clientFingerprint;
-      }
-      // Strip internal _prefix field (stream prefix for Outline/SS — not supported by Clash/Mihomo)
-      // The prefix won't take effect in Clash; it is preserved in the exported ss:// URI for other clients.
-      if (nodeObj._prefix !== undefined) {
-        const prefixHex = [...nodeObj._prefix].map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
-        delete nodeObj._prefix;
-        yaml += `  # ⚠ SS stream prefix (${prefixHex}) detected — not supported by Clash/Mihomo, effective only in V2Box/Outline\n`;
-      }
-      yaml += `${nodeToYaml(nodeObj)}\n`;
-    });
-    yaml += `\n`;
+    if (activeNodes.length > 0) {
+      yaml += `proxies:\n`;
+      activeNodes.forEach(node => {
+        let nodeObj = { ...node };
+        if (nodeObj.type === 'vless' && (nodeObj['reality-opts'] || nodeObj.security === 'reality' || nodeObj.publicKey || nodeObj.shortId || nodeObj.spiderX)) {
+          const realityOpts = { ...(nodeObj['reality-opts'] || {}) };
+          if (nodeObj.publicKey && !realityOpts['public-key']) realityOpts['public-key'] = nodeObj.publicKey;
+          if (nodeObj.shortId !== undefined && realityOpts['short-id'] === undefined) realityOpts['short-id'] = nodeObj.shortId;
+          if (nodeObj.spiderX && !realityOpts.spiderX) realityOpts.spiderX = nodeObj.spiderX;
+          nodeObj['reality-opts'] = realityOpts;
+          delete nodeObj.security;
+          delete nodeObj.publicKey;
+          delete nodeObj.shortId;
+          delete nodeObj.spiderX;
+          nodeObj.tls = true;
+        }
+        if (nodeObj.type === 'vless' && nodeObj.network === 'xhttp' && !nodeObj['xhttp-opts']) {
+          nodeObj['xhttp-opts'] = {
+            host: nodeObj.server,
+            mode: 'auto',
+            path: '/'
+          };
+        }
+        if (nodeObj.type === 'trojan') {
+          nodeObj = normalizeTrojanNode(nodeObj);
+          if (nodeObj.network === 'ws' && Number(nodeObj.port) === 443) nodeObj.port = 80;
+        }
+        // Add anti-DPI per-proxy settings
+        if (antiDPI) {
+          nodeObj['client-fingerprint'] = clientFingerprint;
+        }
+        // Strip internal _prefix field (stream prefix for Outline/SS — not supported by Clash/Mihomo)
+        // The prefix won't take effect in Clash; it is preserved in the exported ss:// URI for other clients.
+        if (nodeObj._prefix !== undefined) {
+          const prefixHex = [...nodeObj._prefix].map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('');
+          delete nodeObj._prefix;
+          yaml += `  # ⚠ SS stream prefix (${prefixHex}) detected — not supported by Clash/Mihomo, effective only in V2Box/Outline\n`;
+        }
+        yaml += `${nodeToYaml(nodeObj)}\n`;
+      });
+      yaml += `\n`;
+    } else {
+      yaml += `proxies: []\n\n`;
+    }
     
     // Proxy Groups
     yaml += `proxy-groups:\n`;
     
-    const nodeNames = activeNodes.map(n => n.name);
+    const nodeNames = activeNodes.map(n => n.name).filter(Boolean);
     
     // Main Selector
     yaml += `  - name: "${mainGroupName}"\n`;
     yaml += `    type: select\n`;
     yaml += `    proxies:\n`;
-    yaml += `      - ${autoSwitchGroupName}\n`;
-    yaml += `      - ${fastestGroupName}\n`;
-    yaml += `      - ${failoverGroupName}\n`;
-    if (loadBalance) {
-      yaml += `      - ${staticBalance ? '⚖️ Static Balance' : '⚖️ Load Balance'}\n`;
+    if (nodeNames.length > 0) {
+      yaml += `      - ${autoSwitchGroupName}\n`;
+      yaml += `      - ${fastestGroupName}\n`;
+      yaml += `      - ${failoverGroupName}\n`;
+      if (loadBalance) {
+        yaml += `      - ${staticBalance ? '⚖️ Static Balance' : '⚖️ Load Balance'}\n`;
+      }
+      yaml += `      - DIRECT\n`;
+      nodeNames.forEach(name => yaml += `      - ${name}\n`);
+    } else {
+      yaml += `      - DIRECT\n`;
     }
-    yaml += `      - DIRECT\n`;
-    nodeNames.forEach(name => yaml += `      - ${name}\n`);
     yaml += `\n`;
     
-    // Auto Switch
-    yaml += `  - name: "${autoSwitchGroupName}"\n`;
-    yaml += `    type: url-test\n`;
-    yaml += `    url: ${testUrl}\n`;
-    yaml += `    interval: ${autoSwitchInterval}\n`;
-    yaml += `    tolerance: 4\n`;
-    yaml += `    lazy: false\n`;
-    yaml += `    proxies:\n`;
-    nodeNames.forEach(name => yaml += `      - ${name}\n`);
-    yaml += `\n`;
-    
-    // Fastest
-    yaml += `  - name: "${fastestGroupName}"\n`;
-    yaml += `    type: url-test\n`;
-    yaml += `    url: ${testUrl}\n`;
-    yaml += `    interval: ${checkInterval}\n`;
-    yaml += `    tolerance: 50\n`;
-    yaml += `    lazy: false\n`;
-    yaml += `    proxies:\n`;
-    nodeNames.forEach(name => yaml += `      - ${name}\n`);
-    yaml += `\n`;
-    
-    // Failover
-    yaml += `  - name: "${failoverGroupName}"\n`;
-    yaml += `    type: fallback\n`;
-    yaml += `    url: ${testUrl}\n`;
-    yaml += `    interval: ${checkInterval}\n`;
-    yaml += `    lazy: false\n`;
-    yaml += `    proxies:\n`;
-    nodeNames.forEach(name => yaml += `      - ${name}\n`);
-    yaml += `\n`;
-    
-    // Load Balance (optional)
-    if (loadBalance) {
-      yaml += `  - name: "${staticBalance ? '⚖️ Static Balance' : '⚖️ Load Balance'}"\n`;
-      yaml += `    type: load-balance\n`;
+    if (nodeNames.length > 0) {
+      // Auto Switch
+      yaml += `  - name: "${autoSwitchGroupName}"\n`;
+      yaml += `    type: url-test\n`;
       yaml += `    url: ${testUrl}\n`;
-      yaml += `    interval: ${checkInterval}\n`;
+      yaml += `    interval: ${autoSwitchInterval}\n`;
+      yaml += `    tolerance: 4\n`;
       yaml += `    lazy: false\n`;
-      yaml += `    strategy: ${staticBalance ? 'consistent-hashing' : 'round-robin'}\n`;
       yaml += `    proxies:\n`;
       nodeNames.forEach(name => yaml += `      - ${name}\n`);
       yaml += `\n`;
+      
+      // Fastest
+      yaml += `  - name: "${fastestGroupName}"\n`;
+      yaml += `    type: url-test\n`;
+      yaml += `    url: ${testUrl}\n`;
+      yaml += `    interval: ${checkInterval}\n`;
+      yaml += `    tolerance: 50\n`;
+      yaml += `    lazy: false\n`;
+      yaml += `    proxies:\n`;
+      nodeNames.forEach(name => yaml += `      - ${name}\n`);
+      yaml += `\n`;
+      
+      // Failover
+      yaml += `  - name: "${failoverGroupName}"\n`;
+      yaml += `    type: fallback\n`;
+      yaml += `    url: ${testUrl}\n`;
+      yaml += `    interval: ${checkInterval}\n`;
+      yaml += `    lazy: false\n`;
+      yaml += `    proxies:\n`;
+      nodeNames.forEach(name => yaml += `      - ${name}\n`);
+      yaml += `\n`;
+      
+      // Load Balance (optional)
+      if (loadBalance) {
+        yaml += `  - name: "${staticBalance ? '⚖️ Static Balance' : '⚖️ Load Balance'}"\n`;
+        yaml += `    type: load-balance\n`;
+        yaml += `    url: ${testUrl}\n`;
+        yaml += `    interval: ${checkInterval}\n`;
+        yaml += `    lazy: false\n`;
+        yaml += `    strategy: ${staticBalance ? 'consistent-hashing' : 'round-robin'}\n`;
+        yaml += `    proxies:\n`;
+        nodeNames.forEach(name => yaml += `      - ${name}\n`);
+        yaml += `\n`;
+      }
     }
     
     // Rules
@@ -1074,6 +1084,11 @@ const YamlGeneratorPage = () => {
   };
 
   const saveToFile = () => {
+    if (activeNodes.length === 0) {
+      if (!window.confirm('Notice: There are no active proxy nodes added. The configuration will only have DIRECT routing. Do you still want to download?')) {
+        return;
+      }
+    }
     const blob = new Blob([generatedYaml], { type: 'text/yaml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1090,6 +1105,12 @@ const YamlGeneratorPage = () => {
 
   const saveToServer = async () => {
     if (!generatedYaml.trim()) return;
+    if (activeNodes.length === 0) {
+      setServerSaveStatus('error');
+      setServerSaveMsg('Cannot save: No proxy nodes added. Please import keys in Step 1 or Step 2.');
+      setTimeout(() => { setServerSaveStatus(''); setServerSaveMsg(''); }, 4000);
+      return;
+    }
     setServerSaveStatus('saving');
     setServerSaveMsg('');
     try {
@@ -1563,6 +1584,11 @@ const YamlGeneratorPage = () => {
         {/* Step 5: Final Config */}
         <div className="step-section final-config">
           <h2>Step 5: Final Configuration</h2>
+          {activeNodes.length === 0 && (
+            <div className="yaml-no-nodes-alert">
+              ⚠️ <strong>No proxy nodes added yet.</strong> Import nodes via Step 1 (Bulk Import) or Step 2 (Single Node) before saving to server.
+            </div>
+          )}
           <div className="filename-row">
             <div className="filename-field">
               <label>Filename Prefix</label>

@@ -796,12 +796,17 @@ const JsonGeneratorPage = () => {
     const nodeTags = nodeOutbounds.map(n => n.tag);
     const interval = `${autoSwitchInterval}s`;
 
-    config.outbounds = [
+    config.outbounds = nodeTags.length > 0 ? [
       { type: 'selector', tag: 'proxy', outbounds: [autoSwitchTag, fastestTag, failoverTag, ...nodeTags, 'direct'], default: 'proxy' },
       { type: 'urltest', tag: autoSwitchTag, outbounds: nodeTags, url: testUrl, interval, tolerance: 4 },
       { type: 'urltest', tag: fastestTag, outbounds: nodeTags, url: testUrl, interval: '120s', tolerance: 50 },
       { type: 'urltest', tag: failoverTag, outbounds: nodeTags, url: testUrl, interval: '120s', tolerance: 300 },
       ...nodeOutbounds,
+      { type: 'direct', tag: 'direct' },
+      { type: 'dns', tag: 'dns-out' },
+      { type: 'block', tag: 'block' }
+    ] : [
+      { type: 'selector', tag: 'proxy', outbounds: ['direct'], default: 'direct' },
       { type: 'direct', tag: 'direct' },
       { type: 'dns', tag: 'dns-out' },
       { type: 'block', tag: 'block' }
@@ -887,6 +892,11 @@ const JsonGeneratorPage = () => {
   };
 
   const saveToFile = () => {
+    if (activeNodes.length === 0) {
+      if (!window.confirm('Notice: There are no active proxy nodes added. The configuration will only have direct routing. Do you still want to download?')) {
+        return;
+      }
+    }
     const blob = new Blob([generatedJson], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -904,6 +914,12 @@ const JsonGeneratorPage = () => {
 
   const saveToServer = async () => {
     if (!generatedJson.trim()) return;
+    if (activeNodes.length === 0) {
+      setServerSaveStatus('error');
+      setServerSaveMsg('Cannot save: No proxy nodes added. Please import keys in Step 1 or Step 2.');
+      setTimeout(() => { setServerSaveStatus(''); setServerSaveMsg(''); }, 4000);
+      return;
+    }
     setServerSaveStatus('saving');
     setServerSaveMsg('');
     try {
@@ -1496,6 +1512,11 @@ const JsonGeneratorPage = () => {
         {/* Step 5: Final Config */}
         <div className="step-section final-config">
           <h2>Step 5: Final Configuration</h2>
+          {activeNodes.length === 0 && (
+            <div className="yaml-no-nodes-alert">
+              ⚠️ <strong>No proxy nodes added yet.</strong> Import nodes via Step 1 (Bulk Import) or Step 2 (Single Node) before saving to server.
+            </div>
+          )}
           <div className="filename-section">
             <div className="filename-row">
               <div className="filename-field">

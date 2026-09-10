@@ -4,6 +4,18 @@
 
 ---
 
+cmp ver 1.9.19
+
+What's new
+- Clash YAML Configuration & Mihomo Validation Fix: fixed `proxy group[0]: 🛡️ Failover: 'use' or 'proxies' missing` error in Clash Verge Rev when generating or serving subscription keys
+- Proxy Group Guardrails: ensured empty/null proxy groups (Auto Switch, Fastest, Failover, Load Balance) are omitted when 0 active nodes are configured, maintaining valid Clash specification syntax (`proxies: []` and `DIRECT` selector)
+- Generator Validation & UX Alerts: added validation in YAML and JSON Generators preventing accidental saving of empty proxy configs to Key Server, along with prominent warning cards in the UI
+- Key Server YAML Auto-Sanitizer: added backend sanitization on upload and on `/sub/:id` serving to self-heal existing configs for seamless Clash Verge Rev compatibility
+
+See [Release v1.9.19](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.19) for full details.
+
+---
+
 cmp ver 1.9.18
 
 What's new

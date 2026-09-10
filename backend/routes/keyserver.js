@@ -132,6 +132,9 @@ const syncNginxConfig = (config) => {
   });
 };
 
+const { sanitizeClashYaml } = require('../utils/clashYamlSanitizer');
+
+
 // In-memory key server instance
 let keyServerApp = null;
 let keyServerInstance = null;
@@ -605,6 +608,17 @@ const startKeyServer = (config) => {
           res.setHeader('Content-Disposition', `attachment; filename="${sanitized}"`);
         }
         res.setHeader('Content-Type', contentType);
+
+        if (sanitized.endsWith('.yaml') || sanitized.endsWith('.yml')) {
+          try {
+            const rawYaml = fs.readFileSync(filePath, 'utf-8');
+            const sanitizedYaml = sanitizeClashYaml(rawYaml);
+            res.send(sanitizedYaml);
+            console.log(`[KeyServer] [${new Date().toISOString()}] Served (sanitized YAML): ${sanitized} to ${req.ip}`);
+            return;
+          } catch (_) {}
+        }
+
         res.sendFile(filePath);
         console.log(`[KeyServer] [${new Date().toISOString()}] Served: ${sanitized} to ${req.ip}`);
       });
@@ -796,7 +810,11 @@ router.post('/keys', authenticateToken, isAdmin, (req, res) => {
       ? sanitized : `${sanitized}.yaml`;
 
     const filePath = path.join(configDir, finalName);
-    fs.writeFileSync(filePath, content, 'utf-8');
+    let finalContent = content;
+    if (finalName.endsWith('.yaml') || finalName.endsWith('.yml')) {
+      finalContent = sanitizeClashYaml(content);
+    }
+    fs.writeFileSync(filePath, finalContent, 'utf-8');
 
     // Save subscription metadata alongside the config (for subscription-userinfo header)
     if (metadata && typeof metadata === 'object') {
@@ -1066,4 +1084,6 @@ if (config.autoStart && config.secretKey) {
   }, 2000);
 }
 
+router.sanitizeClashYaml = sanitizeClashYaml;
 module.exports = router;
+
