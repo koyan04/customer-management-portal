@@ -1031,9 +1031,9 @@ const YamlGeneratorPage = () => {
         // IP-CIDR rules have 'no-resolve' at the end - insert target before it
         if (domain.includes(',no-resolve')) {
           const base = domain.replace(',no-resolve', '');
-          yaml += `  - ${base},${qn(target)},no-resolve\n`;
+          yaml += `  - ${base},${target},no-resolve\n`;
         } else {
-          yaml += `  - ${domain},${qn(target)}\n`;
+          yaml += `  - ${domain},${target}\n`;
         }
       });
     });
@@ -1041,9 +1041,9 @@ const YamlGeneratorPage = () => {
     // Custom proxy rules
     proxyRules.forEach(rule => {
       if (rule.match(/^\d+\.\d+\.\d+\.\d+/)) {
-        yaml += `  - IP-CIDR,${rule}/32,${qn(mainGroupName)}\n`;
+        yaml += `  - IP-CIDR,${rule}/32,${mainGroupName}\n`;
       } else {
-        yaml += `  - DOMAIN-SUFFIX,${rule},${qn(mainGroupName)}\n`;
+        yaml += `  - DOMAIN-SUFFIX,${rule},${mainGroupName}\n`;
       }
     });
 
@@ -1058,7 +1058,7 @@ const YamlGeneratorPage = () => {
 
     // Default rule
     const defaultTarget = globalDefault === 'Proxy' ? mainGroupName : 'DIRECT';
-    yaml += `  - MATCH,${defaultTarget === 'DIRECT' ? 'DIRECT' : qn(defaultTarget)}\n`;
+    yaml += `  - MATCH,${defaultTarget}\n`;
     
     setGeneratedYaml(yaml);
     return yaml;

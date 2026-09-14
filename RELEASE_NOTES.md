@@ -4,6 +4,17 @@
 
 ---
 
+cmp ver 1.9.22
+
+What's new
+- Clash Rules Proxy Target Unquoting Fix: resolved `error: proxy ["🚀 VChannel-Premium"] not found` in Clash Mi and Mihomo caused by quotes being added to proxy targets in `rules:` comma-separated entries
+- Clean Rules Generation: updated YAML Generator to keep target group names unquoted in the `rules:` section (e.g., `- DOMAIN-SUFFIX,netflix.com,🚀 VChannel-Premium`), aligning strictly with the Clash/Mihomo rule specification
+- Backend Auto-Sanitizer for Rules: updated Key Server's `sanitizeClashYaml` to automatically strip any enclosing double or single quotes from rule targets on the fly when served or saved
+
+See [Release v1.9.22](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.22) for full details.
+
+---
+
 cmp ver 1.9.21
 
 What's new

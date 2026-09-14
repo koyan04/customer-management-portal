@@ -135,5 +135,34 @@ proxy-groups:
     expect(parsed.proxies.length).toBe(1);
     expect(parsed.proxies[0].name).toBe('SG01');
   });
+
+  it('strips enclosing quotes from rule targets so Clash/Mihomo can match proxy groups', () => {
+    const yamlWithQuotedRules = `# VChannel-Premium
+proxies:
+  - name: "SG01"
+    type: vless
+    server: 1.1.1.1
+    port: 443
+
+proxy-groups:
+  - name: "🚀 VChannel-Premium"
+    type: select
+    proxies:
+      - SG01
+
+rules:
+  - DOMAIN-SUFFIX,netflix.com,"🚀 VChannel-Premium"
+  - IP-CIDR,31.13.24.0/21,"🚀 VChannel-Premium",no-resolve
+  - MATCH,"🚀 VChannel-Premium"
+`;
+    const sanitized = sanitizeClashYaml(yamlWithQuotedRules);
+    expect(sanitized).toContain('- DOMAIN-SUFFIX,netflix.com,🚀 VChannel-Premium');
+    expect(sanitized).toContain('- IP-CIDR,31.13.24.0/21,🚀 VChannel-Premium,no-resolve');
+    expect(sanitized).toContain('- MATCH,🚀 VChannel-Premium');
+    const rulesPart = sanitized.split('rules:')[1];
+    expect(rulesPart).not.toContain('"🚀 VChannel-Premium"');
+    // Still in proxy-groups with quotes:
+    expect(sanitized).toContain('name: "🚀 VChannel-Premium"');
+  });
 });
 

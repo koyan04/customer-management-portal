@@ -156,6 +156,28 @@ function sanitizeClashYaml(content) {
   // Ensure select group has at least DIRECT if all proxies were removed
   content = content.replace(/((\s*)-\s*name:\s*[^\n]+\n\s+type:\s*select\n\s+proxies:)(\s*(?:null|\[\])?\s*\n\s*(?:-\s*name:|rules:|$))/g, '$1\n$2  - DIRECT\n');
 
+  // 3. Clean up rules section: Clash/Mihomo rules are comma-delimited strings where target group names
+  // must NOT have enclosing quotes (e.g. "- DOMAIN-SUFFIX,netflix.com,🚀 VChannel-Premium", not "...\"🚀 VChannel-Premium\"")
+  const ruleLines = content.split('\n');
+  let inRules = false;
+  for (let i = 0; i < ruleLines.length; i++) {
+    const line = ruleLines[i];
+    if (/^rules:\s*$/.test(line)) {
+      inRules = true;
+      continue;
+    }
+    if (inRules) {
+      if (/^[a-zA-Z0-9_-]+:/.test(line) && !/^\s*-/.test(line)) {
+        inRules = false;
+        continue;
+      }
+      if (/^\s*-\s+/.test(line)) {
+        ruleLines[i] = line.replace(/,"([^"]+)"/g, ',$1').replace(/,'([^']+)'/g, ',$1');
+      }
+    }
+  }
+  content = ruleLines.join('\n');
+
   return content;
 }
 
