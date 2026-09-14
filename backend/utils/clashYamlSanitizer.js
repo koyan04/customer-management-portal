@@ -178,7 +178,125 @@ function sanitizeClashYaml(content) {
   }
   content = ruleLines.join('\n');
 
+  // 4. Heal Trojan and VLESS proxy nodes:
+  // - Trojan: decode double/triple percent-encoded passwords, force alpn to [http/1.1] for WS, add skip-cert-verify: true
+  // - VLESS REALITY: ensure sni is present if servername is present, quote public-key & short-id
+  const pLines = content.split('\n');
+  let inProxies = false;
+  let currentProxyType = '';
+  let currentProxyNetwork = '';
+  let currentProxyHasSni = false;
+  let currentProxyHasServername = false;
+  let currentProxyServernameVal = '';
+  let currentProxyHasSkipCert = false;
+  let currentProxyStartIndex = -1;
+  let currentProxyPort = 0;
+
+  function flushCurrentProxy(endIdx) {
+    let added = 0;
+    if (currentProxyType === 'trojan') {
+      if (!currentProxyHasSkipCert && (currentProxyPort === 80 || currentProxyNetwork === 'ws')) {
+        pLines.splice(endIdx, 0, '    skip-cert-verify: true');
+        added++;
+      }
+    } else if (currentProxyType === 'vless') {
+      if (currentProxyHasServername && !currentProxyHasSni && currentProxyServernameVal) {
+        pLines.splice(endIdx, 0, `    sni: ${currentProxyServernameVal}`);
+        added++;
+      }
+    }
+    return added;
+  }
+
+  for (let i = 0; i < pLines.length; i++) {
+    const line = pLines[i];
+    if (/^proxies:\s*$/.test(line)) {
+      inProxies = true;
+      continue;
+    }
+    if (inProxies) {
+      if (/^[a-zA-Z0-9_-]+:/.test(line) && !/^\s*-/.test(line)) {
+        flushCurrentProxy(i);
+        inProxies = false;
+        continue;
+      }
+
+      if (/^\s*-\s+/.test(line)) {
+        if (currentProxyStartIndex !== -1) {
+          const inserted = flushCurrentProxy(i);
+          i += inserted;
+        }
+        currentProxyStartIndex = i;
+        currentProxyType = '';
+        currentProxyNetwork = '';
+        currentProxyHasSni = false;
+        currentProxyHasServername = false;
+        currentProxyServernameVal = '';
+        currentProxyHasSkipCert = false;
+        currentProxyPort = 0;
+      }
+
+      const typeMatch = line.match(/^\s+type:\s*([a-zA-Z0-9-]+)/);
+      if (typeMatch) currentProxyType = typeMatch[1].trim();
+
+      const netMatch = line.match(/^\s+network:\s*([a-zA-Z0-9-]+)/);
+      if (netMatch) currentProxyNetwork = netMatch[1].trim();
+
+      const portMatch = line.match(/^\s+port:\s*(\d+)/);
+      if (portMatch) currentProxyPort = Number(portMatch[1]);
+
+      if (/^\s+sni:\s*/.test(line)) currentProxyHasSni = true;
+
+      const snMatch = line.match(/^\s+servername:\s*["']?([^"'\r\n]+)["']?/);
+      if (snMatch) {
+        currentProxyHasServername = true;
+        currentProxyServernameVal = snMatch[1].trim();
+      }
+
+      if (/^\s+skip-cert-verify:\s*/.test(line)) currentProxyHasSkipCert = true;
+
+      // Fix percent-encoded Trojan password
+      const passMatch = line.match(/^(\s*password:\s*["']?)([^"'\r\n]+)(["']?)/);
+      if (passMatch && /%[0-9a-fA-F]{2}/.test(passMatch[2])) {
+        const clean = safeDecode(passMatch[2]);
+        pLines[i] = `${passMatch[1]}${clean}${passMatch[3]}`;
+      }
+
+      // Fix Trojan WS ALPN: h2 -> http/1.1
+      if (currentProxyType === 'trojan' && /^\s*alpn:\s*\[.*h2.*\]/.test(line)) {
+        pLines[i] = '    alpn: [http/1.1]';
+      }
+
+      // Fix reality-opts: ensure public-key and short-id are quoted
+      const pkMatch = line.match(/^(\s*public-key:\s*)([^"'\r\n]+)$/);
+      if (pkMatch && !/^["'].*["']$/.test(pkMatch[2].trim())) {
+        pLines[i] = `${pkMatch[1]}"${pkMatch[2].trim()}"`;
+      }
+      const sidMatch = line.match(/^(\s*short-id:\s*)([^"'\r\n]+)$/);
+      if (sidMatch && !/^["'].*["']$/.test(sidMatch[2].trim())) {
+        pLines[i] = `${sidMatch[1]}"${sidMatch[2].trim()}"`;
+      }
+    }
+  }
+
+  content = pLines.join('\n');
+
   return content;
 }
 
-module.exports = { sanitizeClashYaml };
+function safeDecode(str) {
+  if (!str) return str;
+  let decoded = String(str);
+  while (/%[0-9a-fA-F]{2}/.test(decoded)) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch (_) {
+      break;
+    }
+  }
+  return decoded;
+}
+
+module.exports = { sanitizeClashYaml, safeDecode };

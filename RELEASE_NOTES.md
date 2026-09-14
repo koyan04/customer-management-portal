@@ -4,6 +4,18 @@
 
 ---
 
+cmp ver 1.9.23
+
+What's new
+- Trojan WS/TLS `ws closed 1000` Fix: resolved handshake disconnects in Clash Mi by automatically decoding double/triple percent-encoded passwords to ensure correct SHA224 hashing, locking WS ALPN to `[http/1.1]` (preventing unsupported h2 negotiation on port 80/CDN), and ensuring `skip-cert-verify: true` is emitted in YAML
+- VLESS REALITY Authentication Fix: resolved `REALITY authentication failed` in Clash Mi / Mihomo by explicitly syncing both `sni` and `servername` to the reality target domain (e.g., `www.goo.gl`), and ensuring `public-key` and `short-id` are serialized as quoted string scalars in `reality-opts`
+- VLESS XHTTP Parameters: added `Host` header and `x-padding-bytes: "100-1000"` to `xhttp-opts` matching working sing-box/xray configurations
+- Key Server Auto-Healing Engine: updated `sanitizeClashYaml` to repair Trojan passwords, ALPN, skip-cert-verify, and REALITY SNI on the fly for all configs served from `/sub/:id` or saved to the server
+
+See [Release v1.9.23](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.23) for full details.
+
+---
+
 cmp ver 1.9.22
 
 What's new

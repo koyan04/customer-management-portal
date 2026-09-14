@@ -28,12 +28,21 @@ describe('normalizeTrojanNode', () => {
       'client-fingerprint': 'chrome',
       servername: 'x1.vchannel.dpdns.org',
       sni: 'x1.vchannel.dpdns.org',
-      alpn: ['h2', 'http/1.1']
+      alpn: ['http/1.1'],
+      'skip-cert-verify': true
     });
 
     expect(node['ws-opts']).toMatchObject({
       path: '/wsx1a1/',
       headers: { Host: 'x1.vchannel.dpdns.org' }
     });
+  });
+
+  it('correctly decodes percent-encoded passwords', () => {
+    const node = normalizeTrojanNode({
+      type: 'trojan',
+      password: 'DC2vJc4y1bHWbciVbQ9zJRCJjye5xHlidFoj6GaGn%25252BE%25253D'
+    });
+    expect(node.password).toBe('DC2vJc4y1bHWbciVbQ9zJRCJjye5xHlidFoj6GaGn+E=');
   });
 });

@@ -5,16 +5,49 @@ import axios from 'axios';
 import { getBackendOrigin } from '../lib/backendOrigin';
 import './YamlGeneratorPage.css';
 
+export function safeDecodePassword(str) {
+  if (!str) return str;
+  let decoded = String(str);
+  while (/%[0-9a-fA-F]{2}/.test(decoded)) {
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) break;
+      decoded = next;
+    } catch (_) {
+      break;
+    }
+  }
+  return decoded;
+}
+
 export function normalizeTrojanNode(nodeObj = {}) {
   const normalized = { ...nodeObj };
   normalized.type = 'trojan';
   normalized.tls = true;
   normalized.udp = normalized.udp !== undefined ? normalized.udp : true;
 
+  if (normalized.password) {
+    normalized.password = safeDecodePassword(normalized.password);
+  }
+
   if (!normalized.servername && normalized.sni) normalized.servername = normalized.sni;
   if (!normalized.sni && normalized.servername) normalized.sni = normalized.servername;
   if (!normalized['client-fingerprint']) normalized['client-fingerprint'] = 'chrome';
-  if (!normalized.alpn && normalized.network === 'ws') normalized.alpn = ['h2', 'http/1.1'];
+
+  // For WS transport (especially port 80 or Cloudflare CDN), HTTP/1.1 MUST be used instead of h2
+  // Negotiating h2 over WebSocket causes the server to terminate the connection with 'ws closed 1000'
+  if (normalized.network === 'ws') {
+    normalized.alpn = ['http/1.1'];
+  } else if (!normalized.alpn) {
+    normalized.alpn = ['h2', 'http/1.1'];
+  }
+
+  // Ensure skip-cert-verify for port 80 / TLS
+  if (normalized['skip-cert-verify'] === undefined) {
+    if (Number(normalized.port) === 80 || normalized.tls) {
+      normalized['skip-cert-verify'] = true;
+    }
+  }
 
   if (normalized.network === 'ws') {
     const hostValue = normalized['ws-opts']?.headers?.Host || normalized.servername || normalized.sni || normalized.server;
@@ -415,7 +448,7 @@ const YamlGeneratorPage = () => {
       type: 'trojan',
       server: url.hostname,
       port: parseInt(url.port),
-      password: url.username,
+      password: safeDecodePassword(url.username),
       udp: true,
       tls: true,
       'skip-cert-verify': true
@@ -700,7 +733,7 @@ const YamlGeneratorPage = () => {
     for (const [key, value] of Object.entries(obj)) {
       if (value === null || value === undefined) continue;
       if (key.startsWith('_')) continue; // skip internal fields (e.g. _prefix)
-      if (key === 'security' || key === 'publicKey' || key === 'shortId' || key === 'spiderX' || key === 'skip-cert-verify') continue;
+      if (key === 'security' || key === 'publicKey' || key === 'shortId' || key === 'spiderX') continue;
       const prefix = first ? '  - ' : '    ';
       first = false;
       if (typeof value === 'object' && !Array.isArray(value)) {
@@ -716,7 +749,10 @@ const YamlGeneratorPage = () => {
           } else if (Array.isArray(v2)) {
             lines.push(`      ${k2}: [${v2.map(yamlVal).join(', ')}]`);
           } else {
-            lines.push(`      ${k2}: ${yamlVal(v2)}`);
+            const formattedVal = (k2 === 'short-id' || k2 === 'public-key' || k2 === 'x-padding-bytes') 
+              ? `"${String(v2).replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"` 
+              : yamlVal(v2);
+            lines.push(`      ${k2}: ${formattedVal}`);
           }
         }
       } else if (Array.isArray(value)) {
@@ -864,19 +900,37 @@ const YamlGeneratorPage = () => {
           if (nodeObj.publicKey && !realityOpts['public-key']) realityOpts['public-key'] = nodeObj.publicKey;
           if (nodeObj.shortId !== undefined && realityOpts['short-id'] === undefined) realityOpts['short-id'] = nodeObj.shortId;
           if (nodeObj.spiderX && !realityOpts.spiderX) realityOpts.spiderX = nodeObj.spiderX;
+
+          if (realityOpts['public-key']) realityOpts['public-key'] = String(realityOpts['public-key']);
+          if (realityOpts['short-id'] !== undefined && realityOpts['short-id'] !== null) realityOpts['short-id'] = String(realityOpts['short-id']);
+
           nodeObj['reality-opts'] = realityOpts;
           delete nodeObj.security;
           delete nodeObj.publicKey;
           delete nodeObj.shortId;
           delete nodeObj.spiderX;
           nodeObj.tls = true;
+
+          // Crucial for REALITY in Mihomo / Clash Meta:
+          // BOTH servername and sni MUST be explicitly set to the reality target domain (e.g. www.goo.gl).
+          // If sni is missing, Mihomo sends server (e.g. x1.vchannel.dpdns.org) in the TLS ClientHello,
+          // which causes the REALITY server to reject the handshake with "REALITY authentication failed"!
+          const realitySni = nodeObj.servername || nodeObj.sni || 'www.goo.gl';
+          nodeObj.servername = realitySni;
+          nodeObj.sni = realitySni;
+
+          if (!nodeObj['client-fingerprint']) {
+            nodeObj['client-fingerprint'] = 'chrome';
+          }
         }
-        if (nodeObj.type === 'vless' && nodeObj.network === 'xhttp' && !nodeObj['xhttp-opts']) {
-          nodeObj['xhttp-opts'] = {
-            host: nodeObj.server,
-            mode: 'auto',
-            path: '/'
-          };
+        if (nodeObj.type === 'vless' && nodeObj.network === 'xhttp') {
+          const xOpts = { ...(nodeObj['xhttp-opts'] || {}) };
+          xOpts.host = xOpts.host || nodeObj.server;
+          xOpts.mode = xOpts.mode || 'auto';
+          xOpts.path = xOpts.path || '/';
+          xOpts['x-padding-bytes'] = xOpts['x-padding-bytes'] || '100-1000';
+          xOpts.headers = { ...(xOpts.headers || {}), Host: xOpts.host };
+          nodeObj['xhttp-opts'] = xOpts;
         }
         if (nodeObj.type === 'trojan') {
           nodeObj = normalizeTrojanNode(nodeObj);

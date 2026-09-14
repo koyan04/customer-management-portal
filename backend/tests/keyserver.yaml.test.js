@@ -161,8 +161,57 @@ rules:
     expect(sanitized).toContain('- MATCH,🚀 VChannel-Premium');
     const rulesPart = sanitized.split('rules:')[1];
     expect(rulesPart).not.toContain('"🚀 VChannel-Premium"');
-    // Still in proxy-groups with quotes:
     expect(sanitized).toContain('name: "🚀 VChannel-Premium"');
+  });
+
+  it('heals Trojan node parameters (password decode, WS ALPN, skip-cert-verify)', () => {
+    const yamlTrojan = `# VChannel-Premium
+proxies:
+  - name: "Trojan SG"
+    type: trojan
+    server: x1.vchannel.dpdns.org
+    port: 80
+    password: "DC2vJc4y1bHWbciVbQ9zJRCJjye5xHlidFoj6GaGn%25252BE%25253D"
+    network: ws
+    alpn: [h2, http/1.1]
+
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - "Trojan SG"
+`;
+    const sanitized = sanitizeClashYaml(yamlTrojan);
+    expect(sanitized).toContain('password: "DC2vJc4y1bHWbciVbQ9zJRCJjye5xHlidFoj6GaGn+E="');
+    expect(sanitized).toContain('alpn: [http/1.1]');
+    expect(sanitized).not.toContain('alpn: [h2, http/1.1]');
+    expect(sanitized).toContain('skip-cert-verify: true');
+  });
+
+  it('heals VLESS REALITY node parameters (adds sni, quotes public-key & short-id)', () => {
+    const yamlReality = `# VChannel-Premium
+proxies:
+  - name: "Reality SG"
+    type: vless
+    server: x1.vchannel.dpdns.org
+    port: 8443
+    uuid: 5ecbf80d-ebad-4426-8209-444456bb3e6a
+    servername: www.goo.gl
+    network: xhttp
+    reality-opts:
+      public-key: vkCXZH_bAtASkMY1ZlLYliPdNOdiIt7j6JPbk0yIDSM
+      short-id: ee1731e8eda4dec8
+
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - "Reality SG"
+`;
+    const sanitized = sanitizeClashYaml(yamlReality);
+    expect(sanitized).toContain('sni: www.goo.gl');
+    expect(sanitized).toContain('public-key: "vkCXZH_bAtASkMY1ZlLYliPdNOdiIt7j6JPbk0yIDSM"');
+    expect(sanitized).toContain('short-id: "ee1731e8eda4dec8"');
   });
 });
 
