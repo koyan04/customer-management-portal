@@ -4,6 +4,17 @@
 
 ---
 
+cmp ver 1.9.21
+
+What's new
+- Key Server Clash YAML Sanitizer Fix: resolved `yaml: line 4: did not find expected key` and bad indentation errors in Clash Mi and Mihomo caused by the sanitizer replacing `proxies:` with `proxies: []` even when proxy nodes were present
+- Auto-Healing YAML Engine: updated `sanitizeClashYaml` to intelligently check for proxy items before applying `proxies: []`, while automatically repairing previously corrupted `proxies: []` blocks back to clean `proxies:` on the fly when served or saved
+- Comprehensive YAML Spec Tests: added unit tests with `js-yaml` validating syntax compliance and automatic healing of corrupted subscription configurations
+
+See [Release v1.9.21](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.21) for full details.
+
+---
+
 cmp ver 1.9.20
 
 What's new

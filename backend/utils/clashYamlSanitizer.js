@@ -7,12 +7,50 @@
 function sanitizeClashYaml(content) {
   if (!content || typeof content !== 'string') return content;
 
-  // 1. Ensure top-level proxies: is at least [] if empty or null
-  content = content.replace(/^proxies:\s*(?:null)?$/m, 'proxies: []');
-  content = content.replace(/proxies:\s*\n\s*(?=\n|proxy-groups:)/g, 'proxies: []\n\n');
+  // 1. Ensure top-level proxies: is formatted correctly:
+  // - If it contains proxy items (e.g. "  - name: ..."), it MUST be plain "proxies:" (never "proxies: []")
+  // - If it is empty, null, or has no proxy items, it MUST be "proxies: []" to prevent parser errors
+  const lines = content.split('\n');
+  let proxiesLineIdx = -1;
+  let hasProxyItems = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^proxies:\s*(?:null|\[\])?\s*$/.test(line)) {
+      proxiesLineIdx = i;
+      // Scan subsequent lines until next top-level key or EOF to check for list items
+      for (let j = i + 1; j < lines.length; j++) {
+        const nextLine = lines[j];
+        if (/^[a-zA-Z0-9_-]+:/.test(nextLine)) {
+          // Reached next top-level key (e.g. proxy-groups:)
+          break;
+        }
+        if (/^\s*-\s+/.test(nextLine)) {
+          hasProxyItems = true;
+          break;
+        }
+      }
+      break;
+    }
+  }
+
+  if (proxiesLineIdx !== -1) {
+    if (hasProxyItems) {
+      lines[proxiesLineIdx] = 'proxies:';
+    } else {
+      lines[proxiesLineIdx] = 'proxies: []';
+    }
+  } else {
+    // If top-level proxies: is missing completely, insert "proxies: []" before proxy-groups:
+    const pgIdx = lines.findIndex(l => /^proxy-groups:\s*$/.test(l));
+    if (pgIdx !== -1) {
+      lines.splice(pgIdx, 0, 'proxies: []', '');
+    }
+  }
+
+  content = lines.join('\n');
 
   // 2. Identify proxy-groups with empty proxies (e.g. url-test, fallback, load-balance)
-  const lines = content.split('\n');
   const groupStartIndices = [];
   let inProxyGroups = false;
 

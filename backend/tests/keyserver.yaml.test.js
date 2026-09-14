@@ -1,4 +1,5 @@
 const { sanitizeClashYaml } = require('../utils/clashYamlSanitizer');
+const yaml = require('js-yaml');
 
 describe('Clash YAML Sanitization and Validation', () => {
   const brokenYaml = `# VChannel-Premium
@@ -98,5 +99,41 @@ rules:
 
     expect(sanitized).toContain('name: "SG01"');
     expect(sanitized).toContain('♻️ Auto Switch (VChannel-Premium)');
+    expect(sanitized).not.toContain('proxies: []');
+    expect(sanitized).toMatch(/^proxies:\s*$/m);
+
+    // Verify sanitized YAML is 100% syntactically valid
+    expect(() => yaml.load(sanitized)).not.toThrow();
+    const parsed = yaml.load(sanitized);
+    expect(Array.isArray(parsed.proxies)).toBe(true);
+    expect(parsed.proxies.length).toBe(1);
+  });
+
+  it('heals corrupted proxies: [] if proxy nodes exist underneath', () => {
+    const corruptedYaml = `# VChannel-Premium
+proxies: []
+  # comment
+  - name: "SG01"
+    type: vless
+    server: 1.1.1.1
+    port: 443
+
+proxy-groups:
+  - name: "🚀 VChannel-Premium"
+    type: select
+    proxies:
+      - SG01
+`;
+    // Before sanitization, corrupted YAML throws syntax error in YAML parsers
+    expect(() => yaml.load(corruptedYaml)).toThrow();
+
+    const healed = sanitizeClashYaml(corruptedYaml);
+    expect(healed).not.toContain('proxies: []');
+    expect(healed).toMatch(/^proxies:\s*$/m);
+    expect(() => yaml.load(healed)).not.toThrow();
+    const parsed = yaml.load(healed);
+    expect(parsed.proxies.length).toBe(1);
+    expect(parsed.proxies[0].name).toBe('SG01');
   });
 });
+
