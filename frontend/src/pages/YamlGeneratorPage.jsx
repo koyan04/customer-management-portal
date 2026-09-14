@@ -905,67 +905,71 @@ const YamlGeneratorPage = () => {
     
     const nodeNames = activeNodes.map(n => n.name).filter(Boolean);
     
+    // Helper: quote a name for use as a YAML scalar (proxies list / rules)
+    const qn = (name) => `"${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
     // Main Selector
-    yaml += `  - name: "${mainGroupName}"\n`;
+    yaml += `  - name: ${qn(mainGroupName)}\n`;
     yaml += `    type: select\n`;
     yaml += `    proxies:\n`;
     if (nodeNames.length > 0) {
-      yaml += `      - ${autoSwitchGroupName}\n`;
-      yaml += `      - ${fastestGroupName}\n`;
-      yaml += `      - ${failoverGroupName}\n`;
+      yaml += `      - ${qn(autoSwitchGroupName)}\n`;
+      yaml += `      - ${qn(fastestGroupName)}\n`;
+      yaml += `      - ${qn(failoverGroupName)}\n`;
       if (loadBalance) {
-        yaml += `      - ${staticBalance ? '⚖️ Static Balance' : '⚖️ Load Balance'}\n`;
+        yaml += `      - ${qn(staticBalance ? '⚖️ Static Balance' : '⚖️ Load Balance')}\n`;
       }
       yaml += `      - DIRECT\n`;
-      nodeNames.forEach(name => yaml += `      - ${name}\n`);
+      nodeNames.forEach(name => yaml += `      - ${qn(name)}\n`);
     } else {
       yaml += `      - DIRECT\n`;
     }
     yaml += `\n`;
-    
+
     if (nodeNames.length > 0) {
       // Auto Switch
-      yaml += `  - name: "${autoSwitchGroupName}"\n`;
+      yaml += `  - name: ${qn(autoSwitchGroupName)}\n`;
       yaml += `    type: url-test\n`;
       yaml += `    url: ${testUrl}\n`;
       yaml += `    interval: ${autoSwitchInterval}\n`;
       yaml += `    tolerance: 4\n`;
       yaml += `    lazy: false\n`;
       yaml += `    proxies:\n`;
-      nodeNames.forEach(name => yaml += `      - ${name}\n`);
+      nodeNames.forEach(name => yaml += `      - ${qn(name)}\n`);
       yaml += `\n`;
-      
+
       // Fastest
-      yaml += `  - name: "${fastestGroupName}"\n`;
+      yaml += `  - name: ${qn(fastestGroupName)}\n`;
       yaml += `    type: url-test\n`;
       yaml += `    url: ${testUrl}\n`;
       yaml += `    interval: ${checkInterval}\n`;
       yaml += `    tolerance: 50\n`;
       yaml += `    lazy: false\n`;
       yaml += `    proxies:\n`;
-      nodeNames.forEach(name => yaml += `      - ${name}\n`);
+      nodeNames.forEach(name => yaml += `      - ${qn(name)}\n`);
       yaml += `\n`;
-      
+
       // Failover
-      yaml += `  - name: "${failoverGroupName}"\n`;
+      yaml += `  - name: ${qn(failoverGroupName)}\n`;
       yaml += `    type: fallback\n`;
       yaml += `    url: ${testUrl}\n`;
       yaml += `    interval: ${checkInterval}\n`;
       yaml += `    lazy: false\n`;
       yaml += `    proxies:\n`;
-      nodeNames.forEach(name => yaml += `      - ${name}\n`);
+      nodeNames.forEach(name => yaml += `      - ${qn(name)}\n`);
       yaml += `\n`;
-      
+
       // Load Balance (optional)
       if (loadBalance) {
-        yaml += `  - name: "${staticBalance ? '⚖️ Static Balance' : '⚖️ Load Balance'}"\n`;
+        const lbName = staticBalance ? '⚖️ Static Balance' : '⚖️ Load Balance';
+        yaml += `  - name: ${qn(lbName)}\n`;
         yaml += `    type: load-balance\n`;
         yaml += `    url: ${testUrl}\n`;
         yaml += `    interval: ${checkInterval}\n`;
         yaml += `    lazy: false\n`;
         yaml += `    strategy: ${staticBalance ? 'consistent-hashing' : 'round-robin'}\n`;
         yaml += `    proxies:\n`;
-        nodeNames.forEach(name => yaml += `      - ${name}\n`);
+        nodeNames.forEach(name => yaml += `      - ${qn(name)}\n`);
         yaml += `\n`;
       }
     }
@@ -1027,22 +1031,22 @@ const YamlGeneratorPage = () => {
         // IP-CIDR rules have 'no-resolve' at the end - insert target before it
         if (domain.includes(',no-resolve')) {
           const base = domain.replace(',no-resolve', '');
-          yaml += `  - ${base},${target},no-resolve\n`;
+          yaml += `  - ${base},${qn(target)},no-resolve\n`;
         } else {
-          yaml += `  - ${domain},${target}\n`;
+          yaml += `  - ${domain},${qn(target)}\n`;
         }
       });
     });
-    
+
     // Custom proxy rules
     proxyRules.forEach(rule => {
       if (rule.match(/^\d+\.\d+\.\d+\.\d+/)) {
-        yaml += `  - IP-CIDR,${rule}/32,${mainGroupName}\n`;
+        yaml += `  - IP-CIDR,${rule}/32,${qn(mainGroupName)}\n`;
       } else {
-        yaml += `  - DOMAIN-SUFFIX,${rule},${mainGroupName}\n`;
+        yaml += `  - DOMAIN-SUFFIX,${rule},${qn(mainGroupName)}\n`;
       }
     });
-    
+
     // Custom direct rules
     directRules.forEach(rule => {
       if (rule.match(/^\d+\.\d+\.\d+\.\d+/)) {
@@ -1051,10 +1055,10 @@ const YamlGeneratorPage = () => {
         yaml += `  - DOMAIN-SUFFIX,${rule},DIRECT\n`;
       }
     });
-    
+
     // Default rule
     const defaultTarget = globalDefault === 'Proxy' ? mainGroupName : 'DIRECT';
-    yaml += `  - MATCH,${defaultTarget}\n`;
+    yaml += `  - MATCH,${defaultTarget === 'DIRECT' ? 'DIRECT' : qn(defaultTarget)}\n`;
     
     setGeneratedYaml(yaml);
     return yaml;

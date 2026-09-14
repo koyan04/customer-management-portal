@@ -4,6 +4,16 @@
 
 ---
 
+cmp ver 1.9.20
+
+What's new
+- YAML Proxy Name Quoting Fix: fixed `yaml: line 4: did not find expected key` error in Clash Mi (and other strict YAML parsers) caused by unquoted proxy names and group names containing special characters (parentheses, emoji, colons) in `proxy-groups` proxies lists and `rules` section
+- Added `qn()` quoting helper in YAML Generator that wraps all proxy/group name scalars in double-quoted strings with proper escape handling, ensuring full YAML spec compliance for all generated configs
+
+See [Release v1.9.20](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.20) for full details.
+
+---
+
 cmp ver 1.9.19
 
 What's new
