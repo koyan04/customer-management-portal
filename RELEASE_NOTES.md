@@ -4,6 +4,18 @@
 
 ---
 
+cmp ver 1.9.24
+
+What's new
+- VLESS XHTTP Stream Timeout Fix: resolved `stream reading error: wsarecv` timeouts in Clash Mi / Mihomo by updating `xhttp-opts` mode from `auto` to `packet-up`, eliminating half-closed stream upload hangs against Xray servers
+- Explicit HTTP/2 ALPN for XHTTP: automatically injected `alpn: [h2]` for all `vless + xhttp` nodes ensuring clean HTTP/2 TLS negotiation under REALITY
+- Modern Xray WebSocket Compatibility: added independent `host` alongside `headers.Host` in `streamSettings.wsSettings` for generated V2Ray JSON configs, eliminating Xray-core host deprecation warnings
+- Auto-Healing YAML Engine Upgrade: enhanced `sanitizeClashYaml` to automatically repair `xhttp-opts` to `mode: packet-up` and inject `alpn: [h2]` on the fly for all subscription configs served from `/sub/:id` or saved to disk
+
+See [Release v1.9.24](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.24) for full details.
+
+---
+
 cmp ver 1.9.23
 
 What's new

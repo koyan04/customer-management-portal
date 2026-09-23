@@ -188,6 +188,7 @@ function sanitizeClashYaml(content) {
   let currentProxyHasSni = false;
   let currentProxyHasServername = false;
   let currentProxyServernameVal = '';
+  let currentProxyHasAlpn = false;
   let currentProxyHasSkipCert = false;
   let currentProxyStartIndex = -1;
   let currentProxyPort = 0;
@@ -202,6 +203,10 @@ function sanitizeClashYaml(content) {
     } else if (currentProxyType === 'vless') {
       if (currentProxyHasServername && !currentProxyHasSni && currentProxyServernameVal) {
         pLines.splice(endIdx, 0, `    sni: ${currentProxyServernameVal}`);
+        added++;
+      }
+      if (currentProxyNetwork === 'xhttp' && !currentProxyHasAlpn) {
+        pLines.splice(endIdx, 0, '    alpn: [h2]');
         added++;
       }
     }
@@ -232,6 +237,7 @@ function sanitizeClashYaml(content) {
         currentProxyHasSni = false;
         currentProxyHasServername = false;
         currentProxyServernameVal = '';
+        currentProxyHasAlpn = false;
         currentProxyHasSkipCert = false;
         currentProxyPort = 0;
       }
@@ -246,6 +252,7 @@ function sanitizeClashYaml(content) {
       if (portMatch) currentProxyPort = Number(portMatch[1]);
 
       if (/^\s+sni:\s*/.test(line)) currentProxyHasSni = true;
+      if (/^\s+alpn:\s*/.test(line)) currentProxyHasAlpn = true;
 
       const snMatch = line.match(/^\s+servername:\s*["']?([^"'\r\n]+)["']?/);
       if (snMatch) {
@@ -265,6 +272,11 @@ function sanitizeClashYaml(content) {
       // Fix Trojan WS ALPN: h2 -> http/1.1
       if (currentProxyType === 'trojan' && /^\s*alpn:\s*\[.*h2.*\]/.test(line)) {
         pLines[i] = '    alpn: [http/1.1]';
+      }
+
+      // Convert xhttp mode: auto -> packet-up for Mihomo compatibility
+      if (currentProxyNetwork === 'xhttp' && /^\s*mode:\s*auto\s*$/.test(line)) {
+        pLines[i] = line.replace(/mode:\s*auto/, 'mode: packet-up');
       }
 
       // Fix reality-opts: ensure public-key and short-id are quoted

@@ -315,11 +315,15 @@ const startKeyServer = (config) => {
             streamSettings.network = ob.transport.type || 'tcp';
             
             if (ob.transport.type === 'ws') {
+              const hostVal = (ob.transport.headers && ob.transport.headers.Host) || ob.tls?.server_name || '';
               streamSettings.wsSettings = {
                 path: ob.transport.path || '/',
                 headers: ob.transport.headers || {}
               };
-              if (ob.tls?.server_name) streamSettings.wsSettings.headers.Host = ob.tls.server_name;
+              if (hostVal) {
+                streamSettings.wsSettings.host = hostVal;
+                streamSettings.wsSettings.headers.Host = hostVal;
+              }
             } else if (ob.transport.type === 'grpc') {
               streamSettings.grpcSettings = {
                 serviceName: ob.transport.service_name || ''

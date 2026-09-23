@@ -212,6 +212,31 @@ proxy-groups:
     expect(sanitized).toContain('sni: www.goo.gl');
     expect(sanitized).toContain('public-key: "vkCXZH_bAtASkMY1ZlLYliPdNOdiIt7j6JPbk0yIDSM"');
     expect(sanitized).toContain('short-id: "ee1731e8eda4dec8"');
+    expect(sanitized).toContain('alpn: [h2]');
+  });
+
+  it('converts xhttp mode: auto to mode: packet-up for Mihomo compatibility', () => {
+    const yamlXhttp = `# VChannel-Premium
+proxies:
+  - name: "XHTTP Node"
+    type: vless
+    server: x1.vchannel.dpdns.org
+    port: 8443
+    network: xhttp
+    xhttp-opts:
+      host: x1.vchannel.dpdns.org
+      mode: auto
+      path: /xtp01/
+
+proxy-groups:
+  - name: "proxy"
+    type: select
+    proxies:
+      - "XHTTP Node"
+`;
+    const sanitized = sanitizeClashYaml(yamlXhttp);
+    expect(sanitized).toContain('mode: packet-up');
+    expect(sanitized).toContain('alpn: [h2]');
   });
 });
 

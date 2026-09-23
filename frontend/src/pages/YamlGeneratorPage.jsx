@@ -926,11 +926,12 @@ const YamlGeneratorPage = () => {
         if (nodeObj.type === 'vless' && nodeObj.network === 'xhttp') {
           const xOpts = { ...(nodeObj['xhttp-opts'] || {}) };
           xOpts.host = xOpts.host || nodeObj.server;
-          xOpts.mode = xOpts.mode || 'auto';
+          xOpts.mode = 'packet-up';
           xOpts.path = xOpts.path || '/';
-          xOpts['x-padding-bytes'] = xOpts['x-padding-bytes'] || '100-1000';
-          xOpts.headers = { ...(xOpts.headers || {}), Host: xOpts.host };
           nodeObj['xhttp-opts'] = xOpts;
+          if (!nodeObj.alpn || !nodeObj.alpn.length) {
+            nodeObj.alpn = ['h2'];
+          }
         }
         if (nodeObj.type === 'trojan') {
           nodeObj = normalizeTrojanNode(nodeObj);
