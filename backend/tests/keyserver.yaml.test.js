@@ -188,7 +188,7 @@ proxy-groups:
     expect(sanitized).toContain('skip-cert-verify: true');
   });
 
-  it('heals VLESS REALITY node parameters (adds sni, quotes public-key & short-id)', () => {
+  it('heals VLESS REALITY node parameters (adds sni, quotes public-key & short-id, strips skip-cert-verify, removes xhttp headers)', () => {
     const yamlReality = `# VChannel-Premium
 proxies:
   - name: "Reality SG"
@@ -198,9 +198,17 @@ proxies:
     uuid: 5ecbf80d-ebad-4426-8209-444456bb3e6a
     servername: www.goo.gl
     network: xhttp
+    skip-cert-verify: true
     reality-opts:
       public-key: vkCXZH_bAtASkMY1ZlLYliPdNOdiIt7j6JPbk0yIDSM
       short-id: ee1731e8eda4dec8
+    xhttp-opts:
+      host: x1.vchannel.dpdns.org
+      mode: auto
+      path: /xtp01/
+      x-padding-bytes: "100-1000"
+      headers:
+        Host: x1.vchannel.dpdns.org
 
 proxy-groups:
   - name: "proxy"
@@ -213,6 +221,10 @@ proxy-groups:
     expect(sanitized).toContain('public-key: "vkCXZH_bAtASkMY1ZlLYliPdNOdiIt7j6JPbk0yIDSM"');
     expect(sanitized).toContain('short-id: "ee1731e8eda4dec8"');
     expect(sanitized).toContain('alpn: [h2]');
+    expect(sanitized).toContain('mode: packet-up');
+    expect(sanitized).not.toContain('skip-cert-verify');
+    expect(sanitized).not.toContain('headers:');
+    expect(sanitized).not.toContain('Host:');
   });
 
   it('converts xhttp mode: auto to mode: packet-up for Mihomo compatibility', () => {

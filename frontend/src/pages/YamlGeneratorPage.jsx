@@ -380,6 +380,7 @@ const YamlGeneratorPage = () => {
     const params = new URLSearchParams(url.search);
     const name = decodeURIComponent(url.hash.substring(1)) || url.hostname;
     
+    const isReality = params.get('security') === 'reality';
     const node = {
       name: addFlag(name),
       type: 'vless',
@@ -387,9 +388,11 @@ const YamlGeneratorPage = () => {
       port: parseInt(url.port),
       uuid: url.username,
       udp: true,
-      'skip-cert-verify': true,
       'client-fingerprint': params.get('fp') || 'chrome'
     };
+    if (!isReality) {
+      node['skip-cert-verify'] = true;
+    }
     
     const network = params.get('type') || params.get('network');
     if (network) node.network = network;
@@ -398,7 +401,7 @@ const YamlGeneratorPage = () => {
 
     if (params.get('security') === 'tls') {
       node.tls = true;
-    } else if (params.get('security') === 'reality') {
+    } else if (isReality) {
       node.tls = true;
       node['reality-opts'] = {};
       if (serverName) node.servername = serverName;
@@ -922,12 +925,16 @@ const YamlGeneratorPage = () => {
           if (!nodeObj['client-fingerprint']) {
             nodeObj['client-fingerprint'] = 'chrome';
           }
+
+          // In Clash Meta / Mihomo, skip-cert-verify: true interferes with the REALITY TLS fingerprint and handshake verification!
+          delete nodeObj['skip-cert-verify'];
         }
         if (nodeObj.type === 'vless' && nodeObj.network === 'xhttp') {
           const xOpts = { ...(nodeObj['xhttp-opts'] || {}) };
           xOpts.host = xOpts.host || nodeObj.server;
           xOpts.mode = 'packet-up';
           xOpts.path = xOpts.path || '/';
+          delete xOpts.headers; // headers is not valid in xhttp-opts for Clash/Mihomo
           nodeObj['xhttp-opts'] = xOpts;
           if (!nodeObj.alpn || !nodeObj.alpn.length) {
             nodeObj.alpn = ['h2'];

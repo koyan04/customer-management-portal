@@ -180,118 +180,152 @@ function sanitizeClashYaml(content) {
 
   // 4. Heal Trojan and VLESS proxy nodes:
   // - Trojan: decode double/triple percent-encoded passwords, force alpn to [http/1.1] for WS, add skip-cert-verify: true
-  // - VLESS REALITY: ensure sni is present if servername is present, quote public-key & short-id
-  const pLines = content.split('\n');
-  let inProxies = false;
-  let currentProxyType = '';
-  let currentProxyNetwork = '';
-  let currentProxyHasSni = false;
-  let currentProxyHasServername = false;
-  let currentProxyServernameVal = '';
-  let currentProxyHasAlpn = false;
-  let currentProxyHasSkipCert = false;
-  let currentProxyStartIndex = -1;
-  let currentProxyPort = 0;
+  // - VLESS REALITY: ensure sni is present if servername is present, quote public-key & short-id,
+  //   STRIP skip-cert-verify (breaks REALITY validation in Clash Mi / Mihomo)
+  // - VLESS XHTTP: force mode: packet-up, force alpn: [h2], remove invalid headers block in xhttp-opts
+  const allLines = content.split('\n');
+  const pIdx = allLines.findIndex(l => /^proxies:\s*$/.test(l));
+  if (pIdx === -1) return content;
 
-  function flushCurrentProxy(endIdx) {
-    let added = 0;
-    if (currentProxyType === 'trojan') {
-      if (!currentProxyHasSkipCert && (currentProxyPort === 80 || currentProxyNetwork === 'ws')) {
-        pLines.splice(endIdx, 0, '    skip-cert-verify: true');
-        added++;
-      }
-    } else if (currentProxyType === 'vless') {
-      if (currentProxyHasServername && !currentProxyHasSni && currentProxyServernameVal) {
-        pLines.splice(endIdx, 0, `    sni: ${currentProxyServernameVal}`);
-        added++;
-      }
-      if (currentProxyNetwork === 'xhttp' && !currentProxyHasAlpn) {
-        pLines.splice(endIdx, 0, '    alpn: [h2]');
-        added++;
-      }
+  let endIdx = allLines.findIndex((l, idx) => idx > pIdx && /^[a-zA-Z0-9_-]+:/.test(l));
+  if (endIdx === -1) endIdx = allLines.length;
+
+  const preLines = allLines.slice(0, pIdx + 1);
+  const proxyLines = allLines.slice(pIdx + 1, endIdx);
+  const postLines = allLines.slice(endIdx);
+
+  const blocks = [];
+  let currentBlock = [];
+
+  for (const line of proxyLines) {
+    if (/^\s*-\s+/.test(line)) {
+      if (currentBlock.length > 0) blocks.push(currentBlock);
+      currentBlock = [line];
+    } else {
+      currentBlock.push(line);
     }
-    return added;
   }
+  if (currentBlock.length > 0) blocks.push(currentBlock);
 
-  for (let i = 0; i < pLines.length; i++) {
-    const line = pLines[i];
-    if (/^proxies:\s*$/.test(line)) {
-      inProxies = true;
-      continue;
+  const processedBlocks = blocks.map(block => {
+    while (block.length > 0 && /^\s*$/.test(block[block.length - 1])) block.pop();
+
+    let type = '';
+    let network = '';
+    let port = 0;
+    let hasReality = false;
+    let hasSni = false;
+    let servernameVal = '';
+    let hasAlpn = false;
+    let hasSkipCert = false;
+
+    for (const l of block) {
+      const tm = l.match(/^\s+type:\s*([a-zA-Z0-9-]+)/);
+      if (tm) type = tm[1].trim();
+      const nm = l.match(/^\s+network:\s*([a-zA-Z0-9-]+)/);
+      if (nm) network = nm[1].trim();
+      const pm = l.match(/^\s+port:\s*(\d+)/);
+      if (pm) port = Number(pm[1]);
+      if (/^\s+reality-opts:/.test(l)) hasReality = true;
+      if (/^\s+sni:\s*/.test(l)) hasSni = true;
+      const snm = l.match(/^\s+servername:\s*["']?([^"'\r\n]+)["']?/);
+      if (snm) servernameVal = snm[1].trim();
+      if (/^\s+alpn:\s*/.test(l)) hasAlpn = true;
+      if (/^\s+skip-cert-verify:\s*/.test(l)) hasSkipCert = true;
     }
-    if (inProxies) {
-      if (/^[a-zA-Z0-9_-]+:/.test(line) && !/^\s*-/.test(line)) {
-        flushCurrentProxy(i);
-        inProxies = false;
+
+    const newLines = [];
+    let inXhttpOpts = false;
+    let inXhttpHeaders = false;
+
+    for (let i = 0; i < block.length; i++) {
+      let l = block[i];
+      if (/^\s*$/.test(l)) continue; // avoid blank lines inside proxy blocks
+
+      // CRITICAL: Strip skip-cert-verify if node uses REALITY.
+      // In Clash Meta / Mihomo, skip-cert-verify: true interferes with the REALITY TLS fingerprint and handshake verification!
+      if (hasReality && /^\s+skip-cert-verify:\s*/.test(l)) {
         continue;
       }
 
-      if (/^\s*-\s+/.test(line)) {
-        if (currentProxyStartIndex !== -1) {
-          const inserted = flushCurrentProxy(i);
-          i += inserted;
+      // Track xhttp-opts
+      if (/^\s+xhttp-opts:/.test(l)) {
+        inXhttpOpts = true;
+        inXhttpHeaders = false;
+        newLines.push(l);
+        continue;
+      }
+
+      if (inXhttpOpts) {
+        if (/^\s{4}[a-zA-Z0-9_-]+:/.test(l)) {
+          // Reached another top-level proxy field (4 spaces indentation)
+          inXhttpOpts = false;
+          inXhttpHeaders = false;
+        } else if (/^\s{6}headers:\s*$/.test(l)) {
+          inXhttpHeaders = true;
+          continue; // Strip headers: line from xhttp-opts
+        } else if (inXhttpHeaders) {
+          if (/^\s{8,}/.test(l)) {
+            continue; // Strip headers properties (e.g. Host: ...)
+          } else {
+            inXhttpHeaders = false;
+          }
         }
-        currentProxyStartIndex = i;
-        currentProxyType = '';
-        currentProxyNetwork = '';
-        currentProxyHasSni = false;
-        currentProxyHasServername = false;
-        currentProxyServernameVal = '';
-        currentProxyHasAlpn = false;
-        currentProxyHasSkipCert = false;
-        currentProxyPort = 0;
       }
 
-      const typeMatch = line.match(/^\s+type:\s*([a-zA-Z0-9-]+)/);
-      if (typeMatch) currentProxyType = typeMatch[1].trim();
-
-      const netMatch = line.match(/^\s+network:\s*([a-zA-Z0-9-]+)/);
-      if (netMatch) currentProxyNetwork = netMatch[1].trim();
-
-      const portMatch = line.match(/^\s+port:\s*(\d+)/);
-      if (portMatch) currentProxyPort = Number(portMatch[1]);
-
-      if (/^\s+sni:\s*/.test(line)) currentProxyHasSni = true;
-      if (/^\s+alpn:\s*/.test(line)) currentProxyHasAlpn = true;
-
-      const snMatch = line.match(/^\s+servername:\s*["']?([^"'\r\n]+)["']?/);
-      if (snMatch) {
-        currentProxyHasServername = true;
-        currentProxyServernameVal = snMatch[1].trim();
-      }
-
-      if (/^\s+skip-cert-verify:\s*/.test(line)) currentProxyHasSkipCert = true;
-
-      // Fix percent-encoded Trojan password
-      const passMatch = line.match(/^(\s*password:\s*["']?)([^"'\r\n]+)(["']?)/);
+      // Decode Trojan percent-encoded password
+      const passMatch = l.match(/^(\s*password:\s*["']?)([^"'\r\n]+)(["']?)/);
       if (passMatch && /%[0-9a-fA-F]{2}/.test(passMatch[2])) {
         const clean = safeDecode(passMatch[2]);
-        pLines[i] = `${passMatch[1]}${clean}${passMatch[3]}`;
+        l = `${passMatch[1]}${clean}${passMatch[3]}`;
       }
 
       // Fix Trojan WS ALPN: h2 -> http/1.1
-      if (currentProxyType === 'trojan' && /^\s*alpn:\s*\[.*h2.*\]/.test(line)) {
-        pLines[i] = '    alpn: [http/1.1]';
+      if (type === 'trojan' && /^\s*alpn:\s*\[.*h2.*\]/.test(l)) {
+        l = '    alpn: [http/1.1]';
       }
 
       // Convert xhttp mode: auto -> packet-up for Mihomo compatibility
-      if (currentProxyNetwork === 'xhttp' && /^\s*mode:\s*auto\s*$/.test(line)) {
-        pLines[i] = line.replace(/mode:\s*auto/, 'mode: packet-up');
+      if (network === 'xhttp' && /^\s*mode:\s*auto\s*$/.test(l)) {
+        l = l.replace(/mode:\s*auto/, 'mode: packet-up');
       }
 
       // Fix reality-opts: ensure public-key and short-id are quoted
-      const pkMatch = line.match(/^(\s*public-key:\s*)([^"'\r\n]+)$/);
+      const pkMatch = l.match(/^(\s*public-key:\s*)([^"'\r\n]+)$/);
       if (pkMatch && !/^["'].*["']$/.test(pkMatch[2].trim())) {
-        pLines[i] = `${pkMatch[1]}"${pkMatch[2].trim()}"`;
+        l = `${pkMatch[1]}"${pkMatch[2].trim()}"`;
       }
-      const sidMatch = line.match(/^(\s*short-id:\s*)([^"'\r\n]+)$/);
+      const sidMatch = l.match(/^(\s*short-id:\s*)([^"'\r\n]+)$/);
       if (sidMatch && !/^["'].*["']$/.test(sidMatch[2].trim())) {
-        pLines[i] = `${sidMatch[1]}"${sidMatch[2].trim()}"`;
+        l = `${sidMatch[1]}"${sidMatch[2].trim()}"`;
+      }
+
+      newLines.push(l);
+    }
+
+    // Add missing required fields before the end of the block
+    if (type === 'trojan') {
+      if (!hasSkipCert && (port === 80 || network === 'ws')) {
+        newLines.push('    skip-cert-verify: true');
+      }
+    } else if (type === 'vless') {
+      if (servernameVal && !hasSni) {
+        newLines.push(`    sni: ${servernameVal}`);
+      }
+      if (network === 'xhttp' && !hasAlpn) {
+        newLines.push('    alpn: [h2]');
       }
     }
+
+    return newLines;
+  });
+
+  const flatProxies = [];
+  for (const b of processedBlocks) {
+    for (const l of b) flatProxies.push(l);
   }
 
-  content = pLines.join('\n');
+  content = [...preLines, ...flatProxies, ...postLines].join('\n');
 
   return content;
 }
