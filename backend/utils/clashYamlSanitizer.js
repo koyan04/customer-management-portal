@@ -218,6 +218,7 @@ function sanitizeClashYaml(content) {
     let servernameVal = '';
     let hasAlpn = false;
     let hasSkipCert = false;
+    let hasMlkem = false;
 
     for (const l of block) {
       const tm = l.match(/^\s+type:\s*([a-zA-Z0-9-]+)/);
@@ -227,11 +228,18 @@ function sanitizeClashYaml(content) {
       const pm = l.match(/^\s+port:\s*(\d+)/);
       if (pm) port = Number(pm[1]);
       if (/^\s+reality-opts:/.test(l)) hasReality = true;
+      if (/^\s+support-x25519mlkem768:\s*/.test(l)) hasMlkem = true;
       if (/^\s+sni:\s*/.test(l)) hasSni = true;
       const snm = l.match(/^\s+servername:\s*["']?([^"'\r\n]+)["']?/);
       if (snm) servernameVal = snm[1].trim();
       if (/^\s+alpn:\s*/.test(l)) hasAlpn = true;
       if (/^\s+skip-cert-verify:\s*/.test(l)) hasSkipCert = true;
+    }
+
+    // Normalize redirect-causing SNIs for REALITY (e.g. yt.be, android.com return 301/302 redirects on Google servers,
+    // which causes Mihomo's xhttp client to fail REALITY authentication)
+    if (hasReality && ['yt.be', 'android.com', 'ai.android'].includes(servernameVal.toLowerCase())) {
+      servernameVal = 'www.goo.gl';
     }
 
     const newLines = [];
@@ -245,6 +253,16 @@ function sanitizeClashYaml(content) {
       // CRITICAL: Strip skip-cert-verify if node uses REALITY.
       // In Clash Meta / Mihomo, skip-cert-verify: true interferes with the REALITY TLS fingerprint and handshake verification!
       if (hasReality && /^\s+skip-cert-verify:\s*/.test(l)) {
+        continue;
+      }
+
+      // Track reality-opts and inject support-x25519mlkem768: true if missing
+      if (/^\s+reality-opts:/.test(l)) {
+        newLines.push(l);
+        if (!hasMlkem) {
+          newLines.push('      support-x25519mlkem768: true');
+          hasMlkem = true;
+        }
         continue;
       }
 
@@ -285,9 +303,24 @@ function sanitizeClashYaml(content) {
         l = '    alpn: [http/1.1]';
       }
 
-      // Convert xhttp mode: auto -> packet-up for Mihomo compatibility
-      if (network === 'xhttp' && /^\s*mode:\s*auto\s*$/.test(l)) {
-        l = l.replace(/mode:\s*auto/, 'mode: packet-up');
+      // Ensure xhttp mode is auto for streaming compatibility with Xray (packet-up causes packet fragmentation failures)
+      if (network === 'xhttp' && /^\s*mode:\s*packet-up\s*$/.test(l)) {
+        l = l.replace(/mode:\s*packet-up/, 'mode: auto');
+      }
+
+      // Strip x-padding-bytes from xhttp-opts (only used in packet-up)
+      if (network === 'xhttp' && /^\s*x-padding-bytes:\s*/.test(l)) {
+        continue;
+      }
+
+      // Rewrite servername / sni if it points to redirecting domains on REALITY
+      if (hasReality) {
+        if (/^\s+servername:\s*["']?(?:yt\.be|android\.com|ai\.android)["']?/.test(l)) {
+          l = '    servername: www.goo.gl';
+        }
+        if (/^\s+sni:\s*["']?(?:yt\.be|android\.com|ai\.android)["']?/.test(l)) {
+          l = '    sni: www.goo.gl';
+        }
       }
 
       // Fix reality-opts: ensure public-key and short-id are quoted

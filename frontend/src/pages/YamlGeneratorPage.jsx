@@ -907,6 +907,7 @@ const YamlGeneratorPage = () => {
           if (realityOpts['public-key']) realityOpts['public-key'] = String(realityOpts['public-key']);
           if (realityOpts['short-id'] !== undefined && realityOpts['short-id'] !== null) realityOpts['short-id'] = String(realityOpts['short-id']);
 
+          realityOpts['support-x25519mlkem768'] = true;
           nodeObj['reality-opts'] = realityOpts;
           delete nodeObj.security;
           delete nodeObj.publicKey;
@@ -918,7 +919,10 @@ const YamlGeneratorPage = () => {
           // BOTH servername and sni MUST be explicitly set to the reality target domain (e.g. www.goo.gl).
           // If sni is missing, Mihomo sends server (e.g. x1.vchannel.dpdns.org) in the TLS ClientHello,
           // which causes the REALITY server to reject the handshake with "REALITY authentication failed"!
-          const realitySni = nodeObj.servername || nodeObj.sni || 'www.goo.gl';
+          let realitySni = nodeObj.servername || nodeObj.sni || 'www.goo.gl';
+          if (['yt.be', 'android.com', 'ai.android'].includes(realitySni.toLowerCase())) {
+            realitySni = 'www.goo.gl';
+          }
           nodeObj.servername = realitySni;
           nodeObj.sni = realitySni;
 
@@ -932,9 +936,10 @@ const YamlGeneratorPage = () => {
         if (nodeObj.type === 'vless' && nodeObj.network === 'xhttp') {
           const xOpts = { ...(nodeObj['xhttp-opts'] || {}) };
           xOpts.host = xOpts.host || nodeObj.server;
-          xOpts.mode = 'packet-up';
+          xOpts.mode = (xOpts.mode && xOpts.mode !== 'packet-up') ? xOpts.mode : 'auto';
           xOpts.path = xOpts.path || '/';
           delete xOpts.headers; // headers is not valid in xhttp-opts for Clash/Mihomo
+          delete xOpts['x-padding-bytes'];
           nodeObj['xhttp-opts'] = xOpts;
           if (!nodeObj.alpn || !nodeObj.alpn.length) {
             nodeObj.alpn = ['h2'];

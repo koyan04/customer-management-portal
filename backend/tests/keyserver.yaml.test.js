@@ -220,14 +220,16 @@ proxy-groups:
     expect(sanitized).toContain('sni: www.goo.gl');
     expect(sanitized).toContain('public-key: "vkCXZH_bAtASkMY1ZlLYliPdNOdiIt7j6JPbk0yIDSM"');
     expect(sanitized).toContain('short-id: "ee1731e8eda4dec8"');
+    expect(sanitized).toContain('support-x25519mlkem768: true');
     expect(sanitized).toContain('alpn: [h2]');
-    expect(sanitized).toContain('mode: packet-up');
+    expect(sanitized).toContain('mode: auto');
+    expect(sanitized).not.toContain('x-padding-bytes');
     expect(sanitized).not.toContain('skip-cert-verify');
     expect(sanitized).not.toContain('headers:');
     expect(sanitized).not.toContain('Host:');
   });
 
-  it('converts xhttp mode: auto to mode: packet-up for Mihomo compatibility', () => {
+  it('normalizes redirecting SNIs like yt.be and ensures mode: auto for xhttp', () => {
     const yamlXhttp = `# VChannel-Premium
 proxies:
   - name: "XHTTP Node"
@@ -235,10 +237,16 @@ proxies:
     server: x1.vchannel.dpdns.org
     port: 8443
     network: xhttp
+    servername: yt.be
+    sni: yt.be
+    reality-opts:
+      public-key: vkCXZH_bAtASkMY1ZlLYliPdNOdiIt7j6JPbk0yIDSM
+      short-id: b27891c8fb1a52
     xhttp-opts:
       host: x1.vchannel.dpdns.org
-      mode: auto
+      mode: packet-up
       path: /xtp01/
+      x-padding-bytes: "100-1000"
 
 proxy-groups:
   - name: "proxy"
@@ -247,7 +255,11 @@ proxy-groups:
       - "XHTTP Node"
 `;
     const sanitized = sanitizeClashYaml(yamlXhttp);
-    expect(sanitized).toContain('mode: packet-up');
+    expect(sanitized).toContain('servername: www.goo.gl');
+    expect(sanitized).toContain('sni: www.goo.gl');
+    expect(sanitized).toContain('support-x25519mlkem768: true');
+    expect(sanitized).toContain('mode: auto');
+    expect(sanitized).not.toContain('x-padding-bytes');
     expect(sanitized).toContain('alpn: [h2]');
   });
 });

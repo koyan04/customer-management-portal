@@ -4,6 +4,28 @@
 
 ---
 
+cmp ver 1.9.26
+
+What's new
+- VLESS REALITY Authentication in Clash Mi Fix: enabled `support-x25519mlkem768: true` inside `reality-opts` to resolve post-quantum ML-KEM-768 negotiation rejections with modern Xray-core (v26.7.11+)
+- Automatic REALITY SNI Redirect Normalization: sanitized redirect-causing SNIs (`yt.be`, `android.com`) to `www.goo.gl` because Mihomo's xhttp client fails when receiving HTTP 301/302 redirects from Google endpoints
+- XHTTP Streaming Mode Alignment: restored `mode: auto` (instead of packet-up) and stripped padding bytes for clean streaming compatibility matching sing-box and Xray standards
+- Stripped `skip-cert-verify` on all REALITY nodes to protect TLS certificate signature verification
+
+See [Release v1.9.26](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.26) for full details.
+
+---
+
+cmp ver 1.9.25
+
+What's new
+- Block-Based Sanitizer: robust proxy block parsing in `clashYamlSanitizer.js` to strip `skip-cert-verify` on REALITY and remove illegal `headers` block from `xhttp-opts`
+- Real-time Sub Healing: dynamic on-the-fly sanitization for all `/sub/:token` subscription requests
+
+See [Release v1.9.25](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.25) for full details.
+
+---
+
 cmp ver 1.9.24
 
 What's new
