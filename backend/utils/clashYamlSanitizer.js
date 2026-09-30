@@ -601,6 +601,112 @@ function dedupeProxyNames(content) {
   return lines.join('\n');
 }
 
+/**
+ * Structural self-check for a sanitized Clash YAML document.
+ *
+ * The backend has no YAML parser dependency, so this performs the checks that
+ * matter most and can be done reliably on the text: duplicate proxy names,
+ * list items stranded at proxy depth, and non-string / quoted rule targets.
+ * A full parse check happens at serve time via the optional parser below when
+ * one is resolvable.
+ *
+ * Returns { ok: boolean, errors: string[], warnings: string[] }.
+ */
+function validateClashYaml(content) {
+  const errors = [];
+  const warnings = [];
+  if (!content || typeof content !== 'string') {
+    return { ok: false, errors: ['content is empty or not a string'], warnings };
+  }
+
+  const lines = content.split('\n');
+
+  // Locate the proxies: block. The "list item at proxy depth" check is only
+  // meaningful INSIDE it -- elsewhere (fake-ip-filter, ipcidr, dns nameserver,
+  // proxy-group members) 4-space and 6-space sequences are perfectly legal.
+  const proxiesStart = lines.findIndex(l => /^proxies:\s*$/.test(l));
+  let proxiesEnd = -1;
+  if (proxiesStart !== -1) {
+    for (let i = proxiesStart + 1; i < lines.length; i++) {
+      if (/^[a-zA-Z0-9_-]+:/.test(lines[i])) { proxiesEnd = i; break; }
+    }
+    if (proxiesEnd === -1) proxiesEnd = lines.length;
+  }
+
+  // A dash-item at proxy depth can only come from a malformed sequence.
+  if (proxiesStart !== -1) {
+    for (let i = proxiesStart + 1; i < proxiesEnd; i++) {
+      if (/^ {4}-\s+/.test(lines[i])) {
+        errors.push(`line ${i + 1}: list item at proxy depth (malformed sequence): ${JSON.stringify(lines[i].trim())}`);
+      }
+    }
+  }
+
+  // Duplicate proxy names break group references (Clash resolves members by name).
+  const names = [];
+  let currentName = null;
+  let inProxies = false;
+  for (const l of lines) {
+    if (/^proxies:\s*$/.test(l)) { inProxies = true; continue; }
+    if (inProxies && /^[a-zA-Z0-9_-]+:/.test(l)) break;
+    if (!inProxies) continue;
+    if (/^ {2}-\s+/.test(l)) {
+      if (currentName) names.push(currentName);
+      currentName = null;
+      const m = l.match(/^ {2}-\s+name:\s*(.+?)\s*$/);
+      if (m) currentName = m[1].trim().replace(/^["']|["']$/g, '');
+    } else {
+      const m = l.match(/^ {4}name:\s*(.+?)\s*$/);
+      if (m && !currentName) currentName = m[1].trim().replace(/^["']|["']$/g, '');
+    }
+  }
+  if (currentName) names.push(currentName);
+  const seenNames = new Set();
+  for (const n of names) {
+    if (seenNames.has(n)) errors.push(`duplicate proxy name: "${n}"`);
+    else seenNames.add(n);
+  }
+
+  // Rule targets must not be quoted (Clash cannot resolve a quoted group name).
+  let inRules = false;
+  lines.forEach((l, i) => {
+    if (/^rules:\s*$/.test(l)) { inRules = true; return; }
+    if (inRules && /^[a-zA-Z0-9_-]+:/.test(l) && !/^\s*-/.test(l)) { inRules = false; return; }
+    if (inRules && /^\s*-\s+/.test(l) && /,"[^"]+"\s*$/.test(l)) {
+      errors.push(`line ${i + 1}: quoted rule target: ${l.trim().slice(0, 80)}`);
+    }
+  });
+
+  // A proxy group of a type that requires members must not be empty.
+  inRules = false;
+  let inGroups = false;
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^proxy-groups:\s*$/.test(l)) { inGroups = true; continue; }
+    if (/^rules:\s*$/.test(l)) { inGroups = false; continue; }
+    if (!inGroups) continue;
+    const tm = l.match(/^\s*type:\s*(url-test|fallback|load-balance)\s*$/);
+    if (tm) {
+      // look ahead for a members list
+      let hasMembers = false;
+      for (let j = i + 1; j < lines.length && j < i + 12; j++) {
+        if (/^\s{4}proxies:\s*$/.test(lines[j])) {
+          for (let k = j + 1; k < lines.length; k++) {
+            if (/^\s{6}-\s+/.test(lines[k])) { hasMembers = true; break; }
+            if (!/^\s/.test(lines[k])) break;
+          }
+          break;
+        }
+        if (/^\s{4}use:\s*\S/.test(lines[j])) { hasMembers = true; break; }
+        if (/^\s{2}-/.test(lines[j])) break;
+      }
+      if (!hasMembers) warnings.push(`line ${i + 1}: ${tm[1]} group has no members`);
+    }
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
 function safeDecode(str) {
   if (!str) return str;
   let decoded = String(str);
@@ -616,4 +722,4 @@ function safeDecode(str) {
   return decoded;
 }
 
-module.exports = { sanitizeClashYaml, safeDecode, dedupeProxyNames };
+module.exports = { sanitizeClashYaml, safeDecode, dedupeProxyNames, validateClashYaml };

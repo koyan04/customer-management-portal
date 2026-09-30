@@ -132,7 +132,7 @@ const syncNginxConfig = (config) => {
   });
 };
 
-const { sanitizeClashYaml } = require('../utils/clashYamlSanitizer');
+const { sanitizeClashYaml, validateClashYaml } = require('../utils/clashYamlSanitizer');
 
 
 // In-memory key server instance
@@ -816,7 +816,18 @@ router.post('/keys', authenticateToken, isAdmin, (req, res) => {
     const filePath = path.join(configDir, finalName);
     let finalContent = content;
     if (finalName.endsWith('.yaml') || finalName.endsWith('.yml')) {
+      // Repair first, then verify. A profile that still fails validation after
+      // sanitizing is structurally broken and must never reach disk: it would be
+      // served to customers as an unloadable config.
       finalContent = sanitizeClashYaml(content);
+      const check = validateClashYaml(finalContent);
+      if (!check.ok) {
+        return res.status(400).json({
+          error: 'Invalid Clash YAML: the file could not be repaired automatically',
+          details: check.errors,
+          hint: 'Proxy-level lists (e.g. alpn) must be inline: "alpn: [h2, http/1.1]".',
+        });
+      }
     }
     fs.writeFileSync(filePath, finalContent, 'utf-8');
 

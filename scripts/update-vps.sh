@@ -208,8 +208,13 @@ fi
 echo ""
 
 # Stop services
+# NOTE: only cmp-backend is managed here. The Telegram bot runs INSIDE cmp-backend
+# (backend/index.js starts it under a Postgres advisory lock). A separate
+# cmp-telegram-bot unit would start a second poller; because the advisory lock is
+# per-session, both would acquire it and then kill each other's getUpdates
+# long-poll with HTTP 409. Legacy bot units are masked below.
 echo "→ Stopping services..."
-systemctl stop cmp-backend cmp-telegram-bot || true
+systemctl stop cmp-backend cmp-telegram-bot 2>/dev/null || systemctl stop cmp-backend || true
 echo "  ✓ Services stopped"
 echo ""
 
@@ -219,7 +224,7 @@ TMP_DIR=$(mktemp -d "${UPDATE_TEMP_BASE}/cmp_dl_XXXXXX" 2>/dev/null || mktemp -d
 TARBALL_URL="https://github.com/${OWNER}/${REPO}/archive/refs/tags/${LATEST_TAG}.tar.gz"
 if ! curl -fsSL "$TARBALL_URL" | tar -xz -C "$TMP_DIR" --strip-components=1; then
     echo "ERROR: Failed to download or extract tarball"
-    systemctl start cmp-backend cmp-telegram-bot || true
+    systemctl start cmp-backend || true
     exit 1
 fi
 echo "  ✓ Downloaded and extracted"
@@ -261,7 +266,7 @@ if ! node run_migrations.js; then
     echo "  ✗ Migrations failed"
     echo ""
     echo "ERROR: Database migration failed. Rolling back..."
-    systemctl start cmp-backend cmp-telegram-bot || true
+    systemctl start cmp-backend || true
     exit 1
 fi
 echo "  ✓ Migrations completed"
@@ -372,12 +377,22 @@ if [ -x "$APP_DIR/scripts/quick-fix-keyserver-tls.sh" ]; then
 fi
 
 # Start services
+# Only cmp-backend is started. The Telegram bot is started by it automatically.
 echo "→ Starting services..."
 systemctl start cmp-backend
-sleep 2
-systemctl start cmp-telegram-bot
-echo "  ✓ Services started"
+echo "  ✓ cmp-backend started (Telegram bot starts with it)"
 echo ""
+
+# Permanently neutralise any legacy standalone bot unit so an update can never
+# resurrect a second poller. Masking (not just disabling) makes it impossible to
+# start accidentally, including via a stray systemctl start.
+if [ -f /etc/systemd/system/cmp-telegram-bot.service ]; then
+    echo "→ Masking legacy cmp-telegram-bot.service (bot runs inside cmp-backend)..."
+    systemctl disable cmp-telegram-bot 2>/dev/null || true
+    systemctl mask cmp-telegram-bot 2>/dev/null || true
+    echo "  ✓ Legacy bot unit masked"
+    echo ""
+fi
 
 # Verify update
 echo "→ Verifying update..."
@@ -403,7 +418,7 @@ echo ""
 echo "→ Service status:"
 systemctl status cmp-backend --no-pager -l | head -5
 echo ""
-systemctl status cmp-telegram-bot --no-pager -l | head -5
+echo "  (The Telegram bot runs inside cmp-backend; its logs appear in the same unit.)"
 echo ""
 
 echo "=== Update Complete ==="
@@ -412,15 +427,14 @@ echo "Backup location: $BACKUP_DIR"
 echo ""
 echo "To view logs:"
 echo "  journalctl -u cmp-backend -f"
-echo "  journalctl -u cmp-telegram-bot -f"
 echo ""
 echo "To rollback (if needed):"
-echo "  systemctl stop cmp-backend cmp-telegram-bot"
+echo "  systemctl stop cmp-backend"
 echo "  rm -rf $APP_DIR"
 echo "  cp -r $BACKUP_DIR/cmp $APP_DIR"
 if [ -f "$BACKUP_DIR/database.sql" ]; then
   echo "  # Database restore:"
   echo "  psql -h $DB_HOST -p $DB_PORT -U ${DB_USER:-cmp} $DB_NAME < $BACKUP_DIR/database.sql"
 fi
-echo "  systemctl start cmp-backend cmp-telegram-bot"
+echo "  systemctl start cmp-backend"
 echo ""

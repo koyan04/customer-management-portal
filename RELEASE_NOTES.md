@@ -6,6 +6,29 @@
 
 ---
 
+cmp ver 1.9.29
+
+Root-cause fixes so the problems cannot recur after an update or a fresh install.
+
+What's new
+- Upload Validation Gate: `POST /api/keyserver/keys` now sanitizes **and then verifies** the result. A profile that still fails structural validation is rejected with HTTP 400 and a detailed reason instead of being written to disk and served to customers as an unloadable config
+- Structural Validator: new `validateClashYaml()` detects malformed sequence depth, duplicate proxy names, and quoted rule targets. The proxy-depth check is scoped to the `proxies:` block so legal sequences elsewhere (`fake-ip-filter`, `ipcidr`, dns `nameserver`) are not flagged
+- Generator Spec Corrected: `YAML_GENERATOR_BOT_INSTRUCTIONS.md` now states the YAML indentation rule explicitly (proxy-level lists must be inline, never a bare key followed by dash-items), forbids alphabetical key sorting, requires unique proxy names, and spells out the per-protocol requirements for Trojan/WS, VLESS/xhttp and REALITY
+- Mandatory Pre-Upload Validation Step: a new validation step was added to the generator workflow (parse, indentation, name uniqueness, group resolution, protocol rules, unquoted rule targets) that must pass before anything is uploaded
+- Telegram Bot Duplication Made Impossible: the installer no longer creates a standalone `cmp-telegram-bot` service. Because `pg_try_advisory_lock` is per-session rather than a global mutex, a second poller would acquire "the lock" too and then kill each other's `getUpdates` long-poll with HTTP 409
+- Legacy Bot Unit Neutralised: installs and updates now `disable` **and `mask`** any pre-existing bot unit, so it cannot be re-enabled by a later boot or a stray `systemctl start`
+- Shipped Unit Made Inert: `backend/systemd/cmp-telegram-bot.service` no longer launches `telegram_bot.js`; it prints an explanatory message and exits, so enabling it can never cause a silent conflict
+- Service Scripts Corrected: `install.sh`, `update-vps.sh`, `service-control.sh`, `service-control.ps1`, `install-windows.ps1` and `verify-vps.ps1` no longer start, stop or report the bot as a separate service. `verify-vps.ps1` now reports duplicate-poller status and HTTP 409 conflict counts instead of a misleading `inactive`
+
+Verification
+- 18 automated assertions covering the validator and the sanitize/validate round trip
+- Re-audited all 188 live profiles / 923 proxies: 0 invalid, 0 gate failures
+- Deployed and re-verified on the VPS: 0 HTTP 409 conflicts, bot polling normally, all scripts syntax-checked
+
+See [Release v1.9.29](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.29) for full details.
+
+---
+
 cmp ver 1.9.28
 
 What's new

@@ -56,15 +56,24 @@ else
   fi
 fi
 
-# Bot service control (telegram bot)
-if run_systemctl "$ACTION" "$BOT_SERVICE"; then
-  echo "systemd: $BOT_SERVICE $ACTION completed"
-else
-  SHORT_BOT="${BOT_SERVICE%.service}"
-  if run_pm2 "$ACTION" "$SHORT_BOT"; then
-    echo "pm2: $SHORT_BOT $ACTION completed"
-  else
-    echo "Note: bot service ($BOT_SERVICE) not found in systemd or pm2; this may be optional"
+# Telegram bot: runs INSIDE cmp-backend (backend/index.js starts it and it holds
+# a Postgres advisory lock). It is deliberately NOT controlled separately --
+# starting it here would create a second poller, and because the advisory lock is
+# per-session both would acquire it, then kill each other's getUpdates long-poll
+# with HTTP 409 "terminated by other getUpdates request".
+echo "Bot: managed by $BACKEND_SERVICE (no separate action needed)"
+
+# If a legacy standalone bot unit exists, make sure it stays neutralised.
+if [ -f "/etc/systemd/system/${BOT_SERVICE}" ]; then
+  if command -v systemctl >/dev/null 2>&1; then
+    if [ "$EUID" -eq 0 ]; then
+      systemctl disable --now "$BOT_SERVICE" >/dev/null 2>&1 || true
+      systemctl mask "$BOT_SERVICE" >/dev/null 2>&1 || true
+    else
+      sudo systemctl disable --now "$BOT_SERVICE" >/dev/null 2>&1 || true
+      sudo systemctl mask "$BOT_SERVICE" >/dev/null 2>&1 || true
+    fi
+    echo "Legacy $BOT_SERVICE masked (prevents duplicate Telegram pollers)"
   fi
 fi
 

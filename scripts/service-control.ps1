@@ -14,6 +14,9 @@ if pm2 is installed (pm2 on Windows often managed via pm2-windows-service).
 )]
 
 $backendServiceName = 'cmp-backend'
+# NOTE: the Telegram bot runs inside cmp-backend (Postgres advisory lock) and
+# is deliberately not controlled separately - a second poller causes HTTP 409
+# getUpdates conflicts. Kept only so legacy installs can be cleaned up.
 $botServiceName = 'cmp-telegram-bot'
 
 function Control-ServiceByName($name, $action) {
@@ -53,11 +56,14 @@ if (Control-ServiceByName $backendServiceName $Action) {
   if (Control-PM2 $backendServiceName $Action) { Write-Output "pm2: $backendServiceName $Action succeeded" } else { Write-Warning "Backend service ($backendServiceName) not found as Windows service or pm2 process" }
 }
 
-# Bot
-if (Control-ServiceByName $botServiceName $Action) {
-  Write-Output "Windows service: $botServiceName $Action succeeded"
-} else {
-  if (Control-PM2 $botServiceName $Action) { Write-Output "pm2: $botServiceName $Action succeeded" } else { Write-Warning "Bot service ($botServiceName) not found as Windows service or pm2 process" }
+# Bot: runs inside cmp-backend, so no separate action is taken here.
+# Starting a second poller causes HTTP 409 "terminated by other getUpdates
+# request" conflicts. If a legacy bot service exists, ensure it is stopped and
+# removed so it cannot be started again.
+if ($Action -eq 'stop' -or $Action -eq 'restart' -or $Action -eq 'status') {
+  if (Control-ServiceByName $botServiceName 'stop') {
+    Write-Output "Legacy $botServiceName stopped (bot runs inside $backendServiceName)"
+  }
 }
 
 exit 0

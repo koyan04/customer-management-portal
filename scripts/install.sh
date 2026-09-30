@@ -1026,32 +1026,21 @@ EOF
   systemctl enable $BACKEND_SERVICE
 fi
 
-if [ -f "$BACKEND_DIR/pm2.config.js" ] && [ ! -f "$SYSTEMD_DIR/$BOT_SERVICE" ]; then
-cat > "$SYSTEMD_DIR/$BOT_SERVICE" <<EOF
-[Unit]
-Description=CMP Telegram Bot
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=$BACKEND_DIR
-Environment=NODE_ENV=production
-EnvironmentFile=$ENV_FILE
-ExecStart=/usr/bin/env node telegram_bot.js
-Restart=on-failure
-RestartSec=5s
-User=root
-NoNewPrivileges=true
-ProtectSystem=full
-ProtectHome=true
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-EOF
-  systemctl daemon-reload
-  systemctl enable $BOT_SERVICE
+# The Telegram bot runs INSIDE cmp-backend (backend/index.js starts it and it
+# holds a Postgres advisory lock). A separate cmp-telegram-bot unit would start a
+# SECOND poller: pg_try_advisory_lock is per-session, not a global mutex, so both
+# processes acquire it and then kill each other's getUpdates long-poll with
+# HTTP 409 "terminated by other getUpdates request".
+#
+# So we deliberately do NOT install a bot unit. If an older install left one
+# behind, disable it so it cannot be re-enabled by a later boot.
+if [ -f "$SYSTEMD_DIR/$BOT_SERVICE" ]; then
+  warn "Found legacy $BOT_SERVICE; disabling it (the bot runs inside $BACKEND_SERVICE)."
+  systemctl disable --now "$BOT_SERVICE" >/dev/null 2>&1 || true
+  systemctl mask "$BOT_SERVICE" >/dev/null 2>&1 || true
+  ok "Legacy bot unit masked - prevents duplicate Telegram pollers"
 fi
+systemctl daemon-reload
 
 # Optional: Install and configure Nginx as reverse proxy for HTTPS
 if [ "$CMP_ENABLE_NGINX" = "1" ]; then
@@ -1318,9 +1307,9 @@ color "Starting services..."
 divider
 section "Starting services..."
 systemctl restart $BACKEND_SERVICE || true
-if systemctl list-unit-files | grep -q "$BOT_SERVICE"; then
-  systemctl restart $BOT_SERVICE || true
-fi
+# NOTE: the bot is intentionally NOT restarted here. It is started by
+# cmp-backend (see the unit-masking block above); starting it separately would
+# create a second poller and cause HTTP 409 getUpdates conflicts.
 
 # Health probe
 PROBE_RETRIES=${CMP_HEALTH_PROBE_RETRIES:-6}

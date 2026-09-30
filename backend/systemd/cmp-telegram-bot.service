@@ -1,21 +1,26 @@
 [Unit]
-Description=CMP Telegram Bot
-After=network.target
-Wants=network-online.target
+Description=CMP Telegram Bot (DISABLED BY DESIGN - runs inside cmp-backend)
+Documentation=https://github.com/koyan04/customer-management-portal
+# The Telegram bot is started by cmp-backend (backend/index.js) and coordinates
+# with any other instance through a Postgres advisory lock.
+#
+# This unit is retained only so that `systemctl mask cmp-telegram-bot` has a
+# target on older installs that already copied it into /etc/systemd/system.
+#
+# DO NOT ENABLE IT. A second poller is actively harmful: pg_try_advisory_lock is
+# per-session rather than a global mutex, so BOTH processes acquire "the lock"
+# and then repeatedly kill each other's getUpdates long-poll with
+#   HTTP 409 Conflict: terminated by other getUpdates request
+# which starves the bot of updates.
+#
+# ExecStart is intentionally NOT `node telegram_bot.js`: that file only exports
+# startTelegramBot() and never calls it on load, so this unit would exit at once
+# and look like a silent, successful no-op. It now refuses to start.
 
 [Service]
-Type=simple
-WorkingDirectory=/srv/cmp/backend
-Environment=NODE_ENV=production
-EnvironmentFile=/srv/cmp/backend/.env
-ExecStart=/usr/bin/node telegram_bot.js
-Restart=on-failure
-RestartSec=5s
-User=root
-NoNewPrivileges=true
-ProtectSystem=full
-ProtectHome=true
-PrivateTmp=true
+Type=oneshot
+ExecStart=/bin/echo "cmp-telegram-bot is disabled by design: the Telegram bot runs inside cmp-backend. Enable cmp-backend instead."
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target

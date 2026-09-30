@@ -1796,3 +1796,29 @@ module.exports.applySettingsNow = applySettingsNow;
 // Exported for tests/scripts: build a zip of all key files + key server configuration.
 module.exports.createKeysZipBackup = createKeysZipBackup;
 module.exports.performPeriodicReportAndBackup = performPeriodicReportAndBackup;
+
+// ─── Standalone entrypoint ───────────────────────────────────────────────
+// This file only *exports* startTelegramBot; requiring it starts nothing. When
+// run directly (`node telegram_bot.js`, as cmp-telegram-bot.service does) it
+// therefore used to load config and exit immediately, leaving the unit in
+// "active (running)" for a few seconds and then "inactive (dead)" with
+// Result=success -- an enabled service that silently did nothing.
+// Boot the poller only when this file IS the entrypoint, so the dedicated unit
+// becomes a genuine standalone runner. The backend path is unaffected: it
+// requires this module (require.main !== module) and calls startTelegramBot()
+// itself, keeping a single poller under the Postgres advisory lock.
+if (require.main === module) {
+  startTelegramBot().catch((err) => {
+    console.error('[BOT] standalone start failed:', err && err.message ? err.message : err);
+    process.exitCode = 1;
+  });
+
+  const shutdown = async (signal) => {
+    console.log(`[BOT] standalone runner received ${signal}; shutting down`);
+    try { await stopTelegramBot(); } catch (_) {}
+    try { await pool.end(); } catch (_) {}
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => { shutdown('SIGTERM'); });
+  process.on('SIGINT', () => { shutdown('SIGINT'); });
+}

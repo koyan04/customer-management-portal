@@ -295,6 +295,66 @@ Per-node rules:
       skip-cert-verify: true
   - Never output keys that start with underscore (_), including _prefix.
 
+CRITICAL YAML INDENTATION RULE (violating this produces an unparseable file):
+  A proxy object is a MAPPING. Only "  - key: value" may start a new node.
+  Any nested list (alpn, and any other sequence) MUST be written INLINE on the
+  same line as its key, using square brackets:
+
+      alpn: [h2, http/1.1]        # CORRECT
+      skip-cert-verify: true      # CORRECT
+      ws-opts:
+        path: /wsx1a1/
+        headers:
+          Host: example.com
+
+  NEVER emit a bare key followed by dash-items, at ANY depth:
+
+      alpn:                      # WRONG - breaks the entire file
+      - h2
+      - http/1.1
+
+  The items above become siblings of the proxy instead of children of alpn.
+  That is a hard YAML parse error ("bad indentation of a sequence entry") and
+  Clash/Mihomo reject the whole profile. Inline is the only correct form for
+  proxy-level lists; do not indent them under the key either, because the proxy
+  body sits at a uniform 4-space depth.
+
+  Keys are written in a fixed, human-friendly order. Do NOT sort them
+  alphabetically. Recommended order: name, type, server, port, uuid/password,
+  network, tls, udp, alpn, client-fingerprint, servername, sni,
+  skip-cert-verify, then nested blocks (ws-opts, reality-opts, xhttp-opts).
+
+  Every proxy name MUST be unique within the file. Clash resolves group members
+  BY NAME, so two proxies sharing a name make the first unreachable. If two
+  nodes collide (e.g. a Shadowsocks and a VLESS node both labelled "SG01"),
+  append a distinguishing suffix: "SG01", "SG01 (2)".
+
+Per-protocol requirements (all mandatory):
+  Trojan over WebSocket:
+    - alpn MUST be [http/1.1] only. h2 over WebSocket makes the server drop the
+      connection with "ws closed 1000".
+    - skip-cert-verify: true
+  VLESS over xhttp:
+    - xhttp-opts MUST be present and MUST contain host, mode and path:
+        xhttp-opts:
+          host: {host}
+          mode: auto
+          path: /
+    - mode MUST be auto (never packet-up - it fragments streams).
+    - Do NOT include a headers: block inside xhttp-opts (invalid for
+      Clash/Mihomo) and do NOT include x-padding-bytes.
+    - alpn MUST include h2.
+  VLESS with REALITY:
+    - BOTH servername and sni MUST equal the REALITY target domain
+      (e.g. www.goo.gl). If they differ or are missing, Mihomo sends the proxy
+      server in the ClientHello and REALITY authentication fails.
+    - Do NOT set skip-cert-verify on a REALITY node; it breaks the TLS
+      fingerprint.
+    - reality-opts MUST contain public-key, short-id, and
+      support-x25519mlkem768: true.
+  Any node with network: ws:
+    - alpn MUST be [http/1.1]
+
 â”€â”€â”€ STEP 9: PROXY GROUPS SECTION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 Main group name:
@@ -360,7 +420,41 @@ Always end with:
   MATCH,{proxy target}    when globalDefault=Proxy
   MATCH,DIRECT            when globalDefault=Direct
 
-â”€â”€â”€ STEP 11: UPLOAD TO KEY SERVER â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+STEP 11: VALIDATE BEFORE UPLOAD (MANDATORY - NEVER SKIP)
+
+The key server also runs a sanitizer that repairs known defects, but it is a
+safety net, not a licence to ship broken YAML. You MUST self-validate before
+uploading. If any check fails, FIX the YAML and re-validate. Do not upload a
+file that fails.
+
+Check 1 - it must parse. Round-trip the content through a real YAML parser
+  (js-yaml / PyYAML). A parse error means the profile is dead on arrival.
+
+Check 2 - no bare key followed by dash-items anywhere inside proxies:.
+  Search the generated text for a line matching /^\s*[a-z-]+:\s*$/ that is
+  immediately followed by a line matching /^\s*-\s/. Rewrite as an inline list.
+
+Check 3 - every proxy name is unique within the file.
+
+Check 4 - every proxy-group member resolves to a proxy name, a group name, or
+  one of DIRECT / REJECT / PASS / COMPATIBLE. (Note: "no-resolve" and "src" are
+  rule PARAMETERS, never group targets - do not treat them as dangling.)
+
+Check 5 - protocol rules from STEP 8 hold:
+  - trojan + network ws     -> alpn is exactly [http/1.1], skip-cert-verify true
+  - vless + network xhttp  -> xhttp-opts has host / mode: auto / path, no
+                              headers block, alpn includes h2
+  - vless + reality-opts   -> servername == sni, no skip-cert-verify,
+                              reality-opts has support-x25519mlkem768: true
+
+Check 6 - rule targets are NOT quoted, e.g.
+  - DOMAIN-SUFFIX,netflix.com,PROXY     (correct)
+  - DOMAIN-SUFFIX,netflix.com,"PROXY"   (wrong - Clash cannot resolve it)
+
+Only after all six checks pass may you continue to the upload step.
+
+STEP 12: UPLOAD TO KEY SERVER
 
 POST /api/keyserver/keys
 Body:
@@ -375,7 +469,7 @@ Note:
 Response example:
   { "filename": "...", "token": "..." }
 
-â”€â”€â”€ STEP 12: BUILD SUBSCRIPTION URL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+â”€â”€â”€ STEP 13: BUILD SUBSCRIPTION URL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 GET /api/keyserver/config
 Response: { "port": 8088, "secretKey": "...", "publicDomain": "..." }
