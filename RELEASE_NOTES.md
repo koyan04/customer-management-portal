@@ -4,6 +4,25 @@
 
 ---
 
+---
+
+cmp ver 1.9.27
+
+What's new
+- Telegram Keys + Key Server Config Backup: every periodic backup now also ships a zip containing all generated key files, the key server config (`keyserver.json`), the token map (`token_map.json`), and the database snapshot, so one archive restores everything
+- Telegram Bot UI/UX Overhaul: navigation no longer floods the chat — menus and user lists are edited in place, while user detail cards are posted as additional messages
+- Reliable Empty States: "server not found" / "no users" screens now render a working Back button instead of dead-ending with no way back
+- Cleaner User Lists: the list is conveyed by the buttons themselves rather than duplicating every account name in the message body
+- At-a-Glance Status: user buttons carry 🟢/🟡/🔴 expiry indicators and server buttons show live user counts
+- Consistent Card Rendering: `server_user` and `refresh_user` now share a single card renderer, eliminating the duplicated (and divergent) markup
+- Quiet Navigation: button taps no longer toast "Fetching…"; toasts are reserved for meaningful success/failure outcomes
+- New Bot Commands: `/servers`, `/active`, `/soon`, and `/expired` for keyboard-free navigation, with the poll loop and webhook sharing one command handler
+- Deduplicated Exports: removed the now-unused `formatUserStatus` helper
+
+See [Release v1.9.27](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.27) for full details.
+
+---
+
 cmp ver 1.9.26
 
 What's new

@@ -82,11 +82,27 @@ function buildTwoColumnRows(items) {
   return rows;
 }
 
+// Telegram truncates very long button labels unpredictably across clients, so we
+// trim them ourselves and keep a single trailing ellipsis.
+const BUTTON_LABEL_MAX = 18;
+function _truncateButton(label, max = BUTTON_LABEL_MAX) {
+  const s = String(label == null ? '' : label).trim() || 'user';
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
 async function registerBotCommands() {
   if (!API_BASE) return;
   try {
-    await axios.post(`${API_BASE}/setMyCommands`, { commands: [ { command: 'start', description: 'Open dashboard' } ] });
-    console.log('[BOT] registered /start command');
+    // Surfacing the status views as commands gives a fast, keyboard-free path
+    // to the same screens the inline buttons reach.
+    await axios.post(`${API_BASE}/setMyCommands`, { commands: [
+      { command: 'start', description: 'Open dashboard' },
+      { command: 'servers', description: 'Browse servers and their users' },
+      { command: 'active', description: 'List active users' },
+      { command: 'soon', description: 'Users expiring within 24h' },
+      { command: 'expired', description: 'List expired users' }
+    ] });
+    console.log('[BOT] registered bot commands');
   } catch (e) {
     console.warn('[BOT] failed to register commands:', e && e.response ? e.response.data : e && e.message ? e.message : e);
   }
@@ -396,9 +412,32 @@ function getUserStatusObj(expire_date) {
   return { emoji: '🟢', label: 'Active' };
 }
 
-function formatUserStatus(expire_date) {
-  const s = getUserStatusObj(expire_date);
-  return `${s.emoji} ${s.label}`;
+// Single source of truth for the user detail card. `server_user` and
+// `refresh_user` both render through this so they can never drift apart.
+function renderUserCard(user, sid) {
+  const st = getUserStatusObj(user.expire_date);
+  const lines = [];
+  lines.push(`${st.emoji} <b>${escapeHtml(user.account_name)}</b>  <i>${st.label}</i>`);
+  lines.push('');
+  lines.push(`🏷️ Server: ${escapeHtml(user.server_name || 'N/A')}`);
+  lines.push(`🧩 Service: ${escapeHtml(user.service_type || 'N/A')}`);
+  lines.push(`📅 Expires: <b>${formatDateOnly(user.expire_date)}</b>`);
+  if (user.contact) lines.push(`📞 Contact: ${escapeHtml(user.contact)}`);
+  if (user.total_devices) lines.push(`📱 Devices: ${escapeHtml(String(user.total_devices))}`);
+  if (user.data_limit_gb) lines.push(`📶 Data: ${escapeHtml(String(user.data_limit_gb))} GB`);
+  if (user.remark) lines.push(`📝 Note: ${escapeHtml(user.remark)}`);
+  return lines.join('\n');
+}
+
+function buildUserCardKeyboard(sid, uid) {
+  return {
+    inline_keyboard: [
+      [ { text: '🗓️ Change Expire Date', callback_data: `change_expire:${uid}` } ],
+      [ { text: '🔄 Refresh', callback_data: `refresh_user:${sid}:${uid}` } ],
+      [ { text: '🔙 Back to Server', callback_data: `server:${sid}` } ],
+      [ { text: '✖️ Close', callback_data: `close_view:${uid}` } ]
+    ]
+  };
 }
 
 // Per-chat notification preference helpers
@@ -433,13 +472,112 @@ async function sendMessage(chatId, text, extra = {}) {
     const target = chatId || DEFAULT_CHAT_ID;
     if (!target) throw new Error('No chat id supplied and no default_chat_id configured');
     const payload = { chat_id: target, text, parse_mode: 'HTML', ...extra };
-    await axios.post(`${API_BASE}/sendMessage`, payload);
+    const res = await axios.post(`${API_BASE}/sendMessage`, payload);
     try { metrics.messages_sent_total.inc(); } catch (_) {}
+    return (res && res.data && res.data.result) || null;
   } catch (e) {
     try { metrics.bot_errors_total.inc(); } catch (_) {}
     console.error('sendMessage failed:', e && e.response ? e.response.data : e && e.message ? e.message : e);
+    return null;
   }
 }
+
+// ─── View rendering primitives ───────────────────────────────────────────
+// Every navigation view is rendered through these helpers so behaviour stays
+// consistent: list/menu views are edited in place (no chat spam), drill-down
+// details are posted as additional messages, and "close" removes them.
+
+// Cache the last text rendered for a message so we can skip no-op edits.
+// Telegram rejects an edit whose text is identical with a 400 "message is not
+// modified", which would otherwise surface as a spurious error every tap.
+const VIEW_CACHE_MAX = 500;
+const _viewCache = new Map(); // `${chatId}:${messageId}` -> text
+
+function _viewCacheSet(chatId, messageId, text) {
+  if (!chatId || !messageId) return;
+  const key = `${chatId}:${messageId}`;
+  try {
+    if (_viewCache.size >= VIEW_CACHE_MAX) {
+      const oldest = _viewCache.keys().next().value;
+      _viewCache.delete(oldest);
+    }
+    _viewCache.set(key, text);
+  } catch (_) {}
+}
+
+function _viewCacheGet(chatId, messageId) {
+  if (!chatId || !messageId) return undefined;
+  try { return _viewCache.get(`${chatId}:${messageId}`); } catch (_) { return undefined; }
+}
+
+// Recognise Telegram's "message content is not modified" error.
+function _isNotModifiedError(e) {
+  const d = e && e.response && e.response.data;
+  const msg = String((d && (d.description || d.error)) || (e && e.message) || '').toLowerCase();
+  return msg.includes('not modified');
+}
+
+// Edit an existing message in place. Returns true when the edit was applied or
+// was a no-op because the content already matched.
+async function editMessageText(chatId, messageId, text, replyMarkup) {
+  if (!API_BASE || !chatId || !messageId) return false;
+  const payload = { chat_id: chatId, message_id: messageId, text, parse_mode: 'HTML' };
+  if (replyMarkup && replyMarkup.inline_keyboard) payload.reply_markup = replyMarkup;
+  else payload.reply_markup = { inline_keyboard: [] };
+  try {
+    await axios.post(`${API_BASE}/editMessageText`, payload);
+    try { metrics.messages_sent_total.inc(); } catch (_) {}
+    _viewCacheSet(chatId, messageId, text);
+    return true;
+  } catch (e) {
+    if (_isNotModifiedError(e)) { _viewCacheSet(chatId, messageId, text); return true; }
+    // Fall back to sending a fresh message so the user is never left without output.
+    console.warn('[BOT] editMessageText failed, sending new message instead:', e && e.response ? e.response.data : e && e.message ? e.message : e);
+    const sent = await sendMessage(chatId, text, payload.reply_markup && payload.reply_markup.inline_keyboard.length ? { reply_markup: payload.reply_markup } : {});
+    if (sent) _viewCacheSet(chatId, sent.message_id, text);
+    return true;
+  }
+}
+
+// Core navigation renderer.
+//   mode 'edit'  -> update `messageId` in place (list paging, refresh)
+//   mode 'send'  -> post a new "additional" message (drill-down from the menu)
+// Content identical to what is already on screen is skipped silently.
+async function renderView(chatId, messageId, text, keyboard, mode = 'auto') {
+  const useEdit = mode === 'edit' || (mode === 'auto' && messageId);
+  if (useEdit && messageId) {
+    if (_viewCacheGet(chatId, messageId) === text) return { edited: true, skipped: true };
+    return { edited: await editMessageText(chatId, messageId, text, keyboard) };
+  }
+  const sent = await sendMessage(chatId, text, keyboard ? { reply_markup: keyboard } : {});
+  if (sent) _viewCacheSet(chatId, sent.message_id, text);
+  return { edited: false, messageId: sent && sent.message_id };
+}
+
+// Remove a drill-down message, returning the user to the view above it.
+// Telegram refuses to delete messages older than 48h, so fall back to
+// collapsing the message into a short closed stub.
+async function closeView(chatId, messageId, label) {
+  if (!API_BASE || !chatId || !messageId) return false;
+  try {
+    await axios.post(`${API_BASE}/deleteMessage`, { chat_id: chatId, message_id: messageId });
+    _viewCache.delete(`${chatId}:${messageId}`);
+    return true;
+  } catch (e) {
+    const stub = `<i>${escapeHtml(label || 'View')} — closed</i>`;
+    return editMessageText(chatId, messageId, stub, null);
+  }
+}
+
+// Build a pager row plus a consistent back/close row.
+function buildPagerRow(page, totalPages, makeData) {
+  const row = [];
+  if (page > 1) row.push({ text: '⬅️ Prev', callback_data: makeData(page - 1) });
+  row.push({ text: `📄 ${page}/${totalPages}`, callback_data: makeData(page) });
+  if (page < totalPages) row.push({ text: 'Next ➡️', callback_data: makeData(page + 1) });
+  return row;
+}
+
 
 // Send a file/document to a chat using multipart/form-data
 async function sendDocument(chatId, filePath, caption) {
@@ -460,49 +598,46 @@ async function sendDocument(chatId, filePath, caption) {
   }
 }
 
-async function answerCallback(queryId, text = '') {
+async function answerCallback(queryId, text = '', showAlert = false) {
   try {
     if (!API_BASE) throw new Error('API_BASE not configured (no token)');
-    await axios.post(`${API_BASE}/answerCallbackQuery`, { callback_query_id: queryId, text, show_alert: false });
+    // A bare ack (no text) clears the button spinner silently; text/toast is opt-in.
+    const payload = { callback_query_id: queryId, show_alert: !!showAlert };
+    if (text) payload.text = text;
+    await axios.post(`${API_BASE}/answerCallbackQuery`, payload);
   } catch (e) {
     console.warn('answerCallback failed:', e && e.message ? e.message : e);
   }
 }
 
-async function handleStart(chatId, from) {
+async function handleStart(chatId, from, messageId = null) {
   // Respect allowed chat ids if configured
   if (ALLOWED_CHAT_IDS && !ALLOWED_CHAT_IDS.includes(Number(chatId))) {
     console.log('[BOT] Ignoring /start from chat', chatId, 'not in allowed list');
     return;
   }
   const title = await fetchTitle() || 'Customer Management Portal';
-  // Add a small icon before the title for visual clarity
-  const header = `<b>🌏 ${escapeHtml(title)} — Customer Management Portal</b>`;
+  const header = `<b>🌏 ${escapeHtml(title)}</b>`;
   const dash = await fetchDashboard();
-  const statsText = dash ? `\n\n<b>📊 Stats</b>\n📡 Servers: ${dash.totalServers} | 👥 Users: ${dash.totalUsers}\n🏷️ Tiers: Mini ${dash.tiers.Mini}, Basic ${dash.tiers.Basic}, Unlimited ${dash.tiers.Unlimited}\n⚙️ Status: Active ${dash.status.active}, Soon ${dash.status.soon}, Expired ${dash.status.expired}` : '\n\n(Stats unavailable)';
-  const notifText = LOGIN_NOTIFICATION ? `\n\n🔔 <b>Login notifications are ENABLED</b> — login alerts will be sent.` : '';
-  const keyboard = {
-    reply_markup: {
-      inline_keyboard: [
-        [ { text: '📡 Server List', callback_data: 'servers_page:1' }, { text: '⏳ Expire Soon', callback_data: 'users_page:soon:1' } ],
-        [ { text: '⚠️ Expired Users', callback_data: 'users_page:expired:1' } ]
-      ]
-    }
-  };
-  // If the chat is allowed to control notification preferences, show toggle button
-  try {
-    const allowToggle = !ALLOWED_CHAT_IDS || ALLOWED_CHAT_IDS.includes(Number(chatId));
-    if (allowToggle) {
-      const chatPref = await getChatNotificationEnabled(chatId);
-      const effective = (chatPref === null ? LOGIN_NOTIFICATION : chatPref);
-      const toggleBtn = { text: effective ? '🔔 Notifications: ON' : '🔕 Notifications: OFF', callback_data: 'toggle_notifications' };
-      keyboard.reply_markup.inline_keyboard.push([ toggleBtn ]);
-    }
-  } catch (e) {
-    // ignore UI failures
-  }
+  const statsText = dash
+    ? `\n\n<b>📊 Stats</b>\n📡 Servers: <b>${dash.totalServers}</b>   👥 Users: <b>${dash.totalUsers}</b>\n🏷️ Mini ${dash.tiers.Mini} · Basic ${dash.tiers.Basic} · Unlimited ${dash.tiers.Unlimited}\n🟢 Active ${dash.status.active} · 🟡 Soon ${dash.status.soon} · 🔴 Expired ${dash.status.expired}`
+    : '\n\n<i>Stats unavailable</i>';
+  const notifText = LOGIN_NOTIFICATION ? `\n\n🔔 Login notifications are <b>enabled</b>` : '';
 
-  await sendMessage(chatId, `${header}${statsText}${notifText}`, keyboard);
+  const rows = [
+    [ { text: '📡 Server List', callback_data: 'servers_page:1' } ],
+    [ { text: '🟢 Active', callback_data: 'users_page:active:1' }, { text: '🟡 Expire Soon', callback_data: 'users_page:soon:1' } ],
+    [ { text: '🔴 Expired Users', callback_data: 'users_page:expired:1' } ]
+  ];
+  // Notification toggle reflects the effective (per-chat overridden) preference.
+  try {
+    const chatPref = await getChatNotificationEnabled(chatId);
+    const effective = (chatPref === null ? LOGIN_NOTIFICATION : chatPref);
+    rows.push([ { text: effective ? '🔔 Notifications: ON' : '🔕 Notifications: OFF', callback_data: 'toggle_notifications' } ]);
+  } catch (_) {}
+
+  // Editing in place when navigated back from a sub-view keeps the menu single-instance.
+  return renderView(chatId, messageId, `${header}${statsText}${notifText}`, { inline_keyboard: rows }, messageId ? 'edit' : 'send');
 }
 
 async function handleCallback(callback) {
@@ -523,191 +658,175 @@ async function handleCallback(callback) {
     }
 
   // New interactive handlers for server/user drilldown and expire-date changes
-  // main_back should return to main menu
+  // main_back should return to main menu, reusing the same message when possible
   if (data === 'main_back') {
-    await answerCallback(qid, 'Returning to main menu...');
-    return handleStart(chatId, null);
+    const msgId = callback.message && callback.message.message_id;
+    return handleStart(chatId, null, msgId);
   }
 
-  // servers_page:<page>
+  // servers_page:<page> — list view, edited in place so navigation never floods the chat
   if (data && data.startsWith('servers_page:')) {
-    await answerCallback(qid, 'Fetching servers...');
+    await answerCallback(qid);
     const parts = data.split(':');
-    const page = Number(parts[1] || '1') || 1;
+    const page = Math.max(1, Number(parts[1] || '1') || 1);
+    const msgId = callback.message && callback.message.message_id;
     const all = await fetchServersList();
-    if (!all.length) return sendMessage(chatId, 'No servers found');
-    const start = (page - 1) * PAGE_SIZE_SERVERS;
-    const slice = all.slice(start, start + PAGE_SIZE_SERVERS);
-    const buttons = slice.map(s => ({ text: `📡 ${s.server_name}`, callback_data: `server:${s.id}:1` }));
-    const keyboardRows = buildTwoColumnRows(buttons);
-    // pager
+    if (!all.length) {
+      return renderView(chatId, msgId, '<b>📡 Servers</b>\n\n<i>No servers configured yet.</i>',
+        { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'main_back' }]] }, msgId ? 'edit' : 'send');
+    }
     const totalPages = Math.max(1, Math.ceil(all.length / PAGE_SIZE_SERVERS));
-    const pager = [];
-    if (page > 1) pager.push({ text: '⬅️ Prev', callback_data: `servers_page:${page - 1}` });
-    if (page < totalPages) pager.push({ text: 'Next ➡️', callback_data: `servers_page:${page + 1}` });
-    if (pager.length) keyboardRows.push(pager);
-    // main back
+    const cur = Math.min(page, totalPages);
+    const slice = all.slice((cur - 1) * PAGE_SIZE_SERVERS, (cur - 1) * PAGE_SIZE_SERVERS + PAGE_SIZE_SERVERS);
+    // Show live user counts on each button so the list is informative at a glance.
+    const dash = await fetchDashboard();
+    const counts = new Map((dash && dash.servers ? dash.servers : []).map(s => [s.id, s.total_users]));
+    const buttons = slice.map(s => ({ text: `📡 ${s.server_name} (${counts.get(s.id) || 0})`, callback_data: `server:${s.id}:1` }));
+    const keyboardRows = buildTwoColumnRows(buttons);
+    if (totalPages > 1) keyboardRows.push(buildPagerRow(cur, totalPages, p => `servers_page:${p}`));
     keyboardRows.push([ { text: '🔙 Back', callback_data: 'main_back' } ]);
-    const payload = { reply_markup: { inline_keyboard: keyboardRows } };
-    return sendMessage(chatId, `<b>📡 Servers — page ${page}/${totalPages}</b>\nSelect a server to view details`, payload);
+    return renderView(chatId, msgId, `<b>📡 Servers</b>  <i>page ${cur}/${totalPages} · ${all.length} total</i>\nSelect a server:`,
+      { inline_keyboard: keyboardRows }, msgId ? 'edit' : 'send');
   }
 
   if (data && data.startsWith('server:')) {
-    // support server:<id> or server:<id>:<page>
-    await answerCallback(qid, 'Fetching server...');
+    await answerCallback(qid);
     const parts = data.split(':');
     const sid = parts[1];
-    const page = Number(parts[2] || '1') || 1;
+    const page = Math.max(1, Number(parts[2] || '1') || 1);
+    const msgId = callback.message && callback.message.message_id;
     const server = await fetchServerById(sid);
-    if (!server) return sendMessage(chatId, 'Server not found');
+    if (!server) {
+      return renderView(chatId, msgId, '<b>⚠️ Server not found</b>\n<i>It may have been removed.</i>',
+        { inline_keyboard: [[{ text: '🔙 Back to Servers', callback_data: 'servers_page:1' }]] }, msgId ? 'edit' : 'send');
+    }
     const users = await fetchUsersByServer(sid) || [];
-    const start = (page - 1) * PAGE_SIZE_USERS;
-    const slice = users.slice(start, start + PAGE_SIZE_USERS);
-    const lines = [];
-    const header = `<b>📡 Server: ${escapeHtml(server.server_name)}</b>`;
-    if (server.ip_address) lines.push(`🌐 IP: ${escapeHtml(server.ip_address)}`);
-    if (server.domain_name) lines.push(`🔗 Domain: ${escapeHtml(server.domain_name)}`);
-    if (server.owner) lines.push(`👤 Owner: ${escapeHtml(server.owner)}`);
-    lines.push(`👥 Users: ${users.length}`);
-    const keyboard = { reply_markup: { inline_keyboard: [] } };
-    const userButtons = slice.map(u => {
-      const svcLabel = u.service_type ? ` (${escapeHtml(u.service_type)})` : '';
-      return { text: `👤 ${u.account_name}${svcLabel}`, callback_data: `server_user:${sid}:${u.id}` };
-    });
-    keyboard.reply_markup.inline_keyboard.push(...buildTwoColumnRows(userButtons));
-    // paging controls
+    if (!users.length) {
+      return renderView(chatId, msgId, `<b>📡 ${escapeHtml(server.server_name)}</b>\n\n<i>No users on this server yet.</i>`,
+        { inline_keyboard: [[{ text: '🔙 Back to Servers', callback_data: 'servers_page:1' }]] }, msgId ? 'edit' : 'send');
+    }
     const totalPages = Math.max(1, Math.ceil(users.length / PAGE_SIZE_USERS));
-    const pager = [];
-    if (page > 1) pager.push({ text: '⬅️ Prev', callback_data: `server:${sid}:${page - 1}` });
-    if (page < totalPages) pager.push({ text: 'Next ➡️', callback_data: `server:${sid}:${page + 1}` });
-    if (pager.length) keyboard.reply_markup.inline_keyboard.push(pager);
-    // Back to servers main menu
+    const cur = Math.min(page, totalPages);
+    const slice = users.slice((cur - 1) * PAGE_SIZE_USERS, (cur - 1) * PAGE_SIZE_USERS + PAGE_SIZE_USERS);
+    const info = [];
+    if (server.ip_address) info.push(`🌐 ${escapeHtml(server.ip_address)}`);
+    if (server.domain_name) info.push(`🔗 ${escapeHtml(server.domain_name)}`);
+    const header = `<b>📡 ${escapeHtml(server.server_name)}</b>\n${info.join('  ·  ')}\n👥 ${users.length} user${users.length === 1 ? '' : 's'}`;
+    // Status emoji on each button means colour coding is visible before opening a card.
+    const userButtons = slice.map(u => {
+      const st = getUserStatusObj(u.expire_date);
+      const name = String(u.account_name || 'user');
+      return { text: `${st.emoji} ${_truncateButton(name)}`, callback_data: `server_user:${sid}:${u.id}` };
+    });
+    const keyboard = { inline_keyboard: buildTwoColumnRows(userButtons) };
+    if (totalPages > 1) keyboard.reply_markup.inline_keyboard.push(buildPagerRow(cur, totalPages, p => `server:${sid}:${p}`));
     keyboard.reply_markup.inline_keyboard.push([ { text: '🔙 Back to Servers', callback_data: 'servers_page:1' } ]);
-    return sendMessage(chatId, `${header}\n${lines.join('\n')}`, keyboard);
+    return renderView(chatId, msgId, header, keyboard, msgId ? 'edit' : 'send');
   }
 
   if (data && data.startsWith('server_user:')) {
-    await answerCallback(qid, 'Fetching user...');
+    await answerCallback(qid);
     const parts = data.split(':');
     const sid = parts[1];
     const uid = parts[2];
     const user = await fetchUserById(uid);
-    if (!user) return sendMessage(chatId, 'User not found');
-    const lines = [];
-  lines.push(`👤 <b>${escapeHtml(user.account_name)}</b>`);
-  lines.push(`📛 Status: ${formatUserStatus(user.expire_date)}`);
-  lines.push(`⚙️ Service: ${escapeHtml(user.service_type || 'N/A')}`);
-  lines.push(`📡 Server: ${escapeHtml(user.server_name || 'N/A')}`);
-  lines.push(`📅 Expires: ${formatDateOnly(user.expire_date)}`);
-    const keyboard = { reply_markup: { inline_keyboard: [
-      [ { text: '🔄 Refresh', callback_data: `refresh_user:${sid}:${uid}` } ],
-      [ { text: '🗓️ Change Expire Date', callback_data: `change_expire:${uid}` } ],
-      [ { text: '🔙 Back to Server', callback_data: `server:${sid}` } ]
-    ] } };
-    return sendMessage(chatId, lines.join('\n'), keyboard);
+    if (!user) return sendMessage(chatId, '<b>⚠️ User not found</b>\n<i>This account may have been deleted.</i>');
+    // Detail cards are posted as additional messages, leaving the list above intact.
+    return renderView(chatId, null, renderUserCard(user, sid), buildUserCardKeyboard(sid, uid), 'send');
   }
 
-  // refresh_user:<serverId>:<userId>
+  // refresh_user:<serverId>:<userId> — re-render the card in place
   if (data && data.startsWith('refresh_user:')) {
-    await answerCallback(qid, 'Refreshing...');
+    await answerCallback(qid);
     const parts = data.split(':');
     const sid = parts[1];
     const uid = parts[2];
+    const msgId = callback.message && callback.message.message_id;
     const user = await fetchUserById(uid);
-    if (!user) return sendMessage(chatId, 'User not found');
-    const lines = [];
-    lines.push(`👤 <b>${escapeHtml(user.account_name)}</b>`);
-    lines.push(`📛 Status: ${formatUserStatus(user.expire_date)}`);
-    lines.push(`⚙️ Service: ${escapeHtml(user.service_type || 'N/A')}`);
-    lines.push(`📡 Server: ${escapeHtml(user.server_name || 'N/A')}`);
-    lines.push(`📅 Expires: ${formatDateOnly(user.expire_date)}`);
-    const keyboard = { reply_markup: { inline_keyboard: [
-      [ { text: '🔄 Refresh', callback_data: `refresh_user:${sid}:${uid}` } ],
-      [ { text: '🗓️ Change Expire Date', callback_data: `change_expire:${uid}` } ],
-      [ { text: '🔙 Back to Server', callback_data: `server:${sid}` } ]
-    ] } };
-    // Try to edit the current message in place
-    try {
-      const msgId = callback.message && callback.message.message_id;
-      if (API_BASE && msgId) {
-        await axios.post(`${API_BASE}/editMessageText`, { chat_id: chatId, message_id: msgId, text: lines.join('\n'), parse_mode: 'HTML', reply_markup: keyboard.reply_markup });
-        return;
-      }
-    } catch (e) {
-      // fall through to sending a new message
-      try { console.warn('[BOT] refresh_user editMessageText failed:', e && e.message ? e.message : e); } catch (_) {}
+    if (!user) {
+      return renderView(chatId, msgId, '<b>⚠️ User not found</b>\n<i>This account may have been deleted.</i>',
+        { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'main_back' }]] }, msgId ? 'edit' : 'send');
     }
-    return sendMessage(chatId, lines.join('\n'), keyboard);
+    return renderView(chatId, msgId, renderUserCard(user, sid), buildUserCardKeyboard(sid, uid), msgId ? 'edit' : 'send');
   }
 
-  // users_page:<status>:<page>
+  // users_page:<status>:<page> — list view, edited in place
   if (data && data.startsWith('users_page:')) {
-    await answerCallback(qid, 'Fetching users...');
+    await answerCallback(qid);
     const parts = data.split(':');
     const status = parts[1];
-    const page = Number(parts[2] || '1') || 1;
+    const page = Math.max(1, Number(parts[2] || '1') || 1);
+    const msgId = callback.message && callback.message.message_id;
+    const label = { expired: '🔴 Expired', soon: '🟡 Expiring Soon', active: '🟢 Active' }[status] || '👥 Users';
     const users = await fetchUsersByStatus(status) || [];
-    if (!users.length) return sendMessage(chatId, `No ${status} users found`);
-    const start = (page - 1) * PAGE_SIZE_USERS;
-    const slice = users.slice(start, start + PAGE_SIZE_USERS);
-  const lines = slice.map(u => `• 👤 <b>${escapeHtml(u.account_name)}</b> — 🏷️ ${escapeHtml(u.server_name)} — 📛 ${formatUserStatus(u.expire_date)} — 📅 ${formatDateOnly(u.expire_date)}`);
-  const keyboardRows = buildTwoColumnRows(slice.map(u => ({ text: `👤 ${u.account_name}`, callback_data: `server_user:${u.server_id}:${u.id}` })));
+    if (!users.length) {
+      return renderView(chatId, msgId, `<b>${label} Users</b>\n\n<i>Nothing here right now. 🎉</i>`,
+        { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'main_back' }]] }, msgId ? 'edit' : 'send');
+    }
     const totalPages = Math.max(1, Math.ceil(users.length / PAGE_SIZE_USERS));
-    const pager = [];
-    if (page > 1) pager.push({ text: '⬅️ Prev', callback_data: `users_page:${status}:${page - 1}` });
-    if (page < totalPages) pager.push({ text: 'Next ➡️', callback_data: `users_page:${status}:${page + 1}` });
-    if (pager.length) keyboardRows.push(pager);
-    // back to main menu
+    const cur = Math.min(page, totalPages);
+    const slice = users.slice((cur - 1) * PAGE_SIZE_USERS, (cur - 1) * PAGE_SIZE_USERS + PAGE_SIZE_USERS);
+    // The buttons ARE the list — no duplicated name lines in the message body.
+    const userButtons = slice.map(u => ({
+      text: `${getUserStatusObj(u.expire_date).emoji} ${_truncateButton(u.account_name)}`,
+      callback_data: `server_user:${u.server_id}:${u.id}`
+    }));
+    const keyboardRows = buildTwoColumnRows(userButtons);
+    if (totalPages > 1) keyboardRows.push(buildPagerRow(cur, totalPages, p => `users_page:${status}:${p}`));
     keyboardRows.push([ { text: '🔙 Back', callback_data: 'main_back' } ]);
-    const payload = { reply_markup: { inline_keyboard: keyboardRows } };
-    return sendMessage(chatId, `<b>👥 Users (${status}) — page ${page}/${totalPages}</b>\n${lines.join('\n')}`, payload);
+    return renderView(chatId, msgId, `<b>${label} Users</b>  <i>page ${cur}/${totalPages} · ${users.length} total</i>\nSelect a user for full details:`, { inline_keyboard: keyboardRows }, msgId ? 'edit' : 'send');
   }
 
   if (data && data.startsWith('change_expire:')) {
-    await answerCallback(qid, 'Choose new expiry increment...');
+    await answerCallback(qid, 'Choose how long to extend');
     const parts = data.split(':');
     const uid = parts[1];
-    const keyboard = { reply_markup: { inline_keyboard: [ [ { text: '🗓️ 1 Month', callback_data: `change_expire_choice:${uid}:1` }, { text: '🗓️ 2 Months', callback_data: `change_expire_choice:${uid}:2` }, { text: '🗓️ 6 Months', callback_data: `change_expire_choice:${uid}:6` } ], [ { text: '🔙 Cancel', callback_data: 'servers' } ] ] } };
-    return sendMessage(chatId, `Extend expires by:`, keyboard);
+    const msgId = callback.message && callback.message.message_id;
+    const user = await fetchUserById(uid);
+    const who = user ? escapeHtml(user.account_name) : `user ${uid}`;
+    const keyboard = { inline_keyboard: [
+      [ { text: '1 Month', callback_data: `change_expire_choice:${uid}:1` }, { text: '2 Months', callback_data: `change_expire_choice:${uid}:2` }, { text: '6 Months', callback_data: `change_expire_choice:${uid}:6` } ],
+      [ { text: '🔙 Cancel', callback_data: 'main_back' } ]
+    ] };
+    return renderView(chatId, msgId, `<b>🗓️ Extend ${who}</b>\nCurrent expiry: <b>${formatDateOnly(user && user.expire_date)}</b>\n\nHow long should it be extended by?`, keyboard, msgId ? 'edit' : 'send');
   }
 
   if (data && data.startsWith('change_expire_choice:')) {
-    await answerCallback(qid, 'Applying change...');
     // Extra guard: require allowed chat id or allowed actor id to perform expiry changes
     const actorId = callback.from && callback.from.id;
     if (ALLOWED_CHAT_IDS && !ALLOWED_CHAT_IDS.includes(Number(chatId)) && !(actorId && ALLOWED_CHAT_IDS.includes(Number(actorId)))) {
-      await answerCallback(qid, 'You are not authorized to perform this action');
-      return sendMessage(chatId, 'Unauthorized: you are not allowed to perform this action');
+      await answerCallback(qid, 'You are not authorized to perform this action', true);
+      return sendMessage(chatId, '⛔ Unauthorized: you are not allowed to perform this action');
     }
     const parts = data.split(':');
     const uid = parts[1];
     const months = Number(parts[2]) || 0;
-    if (!months) return sendMessage(chatId, 'Invalid selection');
+    if (!months) { await answerCallback(qid, 'Invalid selection', true); return; }
+    await answerCallback(qid, 'Applying…');
     const res = await applyExtendExpire(uid, months, actorId || chatId);
-    if (!res) return sendMessage(chatId, 'Failed to update expiry date');
-    const newDate = formatDateOnly(res.expire_date);
-    const name = res.account_name || 'User';
-    const infoText = `✅ Updated ${escapeHtml(name)} expiry to ${newDate}`;
-    // Try to replace the inline keyboard (hide the Extend box) by editing the original message text
-    try {
-      const msgId = callback.message && callback.message.message_id;
-      if (API_BASE && msgId) {
-        // editMessageText will replace the message and remove inline keyboard
-        await axios.post(`${API_BASE}/editMessageText`, { chat_id: chatId, message_id: msgId, text: infoText, parse_mode: 'HTML' });
-        // Acknowledge callback to avoid 'spinner'
-        await answerCallback(qid, 'Updated');
-        return;
-      }
-    } catch (e) {
-      // fallback to sending a new message if edit fails
-      console.warn('[BOT] editMessageText failed, sending fallback message:', e && e.message ? e.message : e);
+    if (!res) {
+      await answerCallback(qid, 'Update failed', true);
+      return sendMessage(chatId, '❌ Failed to update expiry date. Please try again.');
     }
+    const newDate = formatDateOnly(res.expire_date);
+    const name = escapeHtml(res.account_name || 'User');
+    const msgId = callback.message && callback.message.message_id;
+    // Collapse the choice message into a confirmation so no dead buttons remain.
+    return renderView(chatId, msgId, `✅ <b>${name}</b>\nExpiry extended to <b>${newDate}</b>`, { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'main_back' }]] }, msgId ? 'edit' : 'send');
+  }
 
-    return sendMessage(chatId, infoText);
+  // close_view:<uid> — dismiss a drill-down card (posted as an additional message)
+  if (data && data.startsWith('close_view:')) {
+    await answerCallback(qid);
+    const parts = data.split(':');
+    const msgId = callback.message && callback.message.message_id;
+    let label = 'View';
+    try { const u = await fetchUserById(parts[1]); if (u) label = u.account_name; } catch (_) {}
+    return closeView(chatId, msgId, label);
   }
 
   // fallthrough: unhandled callbacks
-  await answerCallback(qid, 'Action not recognized');
+  await answerCallback(qid, 'Action not recognised');
 }
 
 // Additional callback handler for toggling notifications
@@ -715,25 +834,29 @@ async function handleCallback(callback) {
 async function handleToggleNotifications(callback) {
   const qid = callback.id;
   const chatId = callback.message && callback.message.chat && callback.message.chat.id;
+  const msgId = callback.message && callback.message.message_id;
   if (!chatId) return;
   if (ALLOWED_CHAT_IDS && !ALLOWED_CHAT_IDS.includes(Number(chatId))) {
-    await answerCallback(qid, 'You are not allowed to change settings');
+    await answerCallback(qid, 'You are not allowed to change settings', true);
     return;
   }
-  await answerCallback(qid, 'Toggling notification preference...');
   try {
     const current = await getChatNotificationEnabled(chatId);
     const effective = (current === null ? LOGIN_NOTIFICATION : current);
     const nextVal = !effective;
     const res = await setChatNotificationEnabled(chatId, nextVal);
     if (res === null) {
-      await sendMessage(chatId, 'Failed to update notification preference');
-    } else {
-      await sendMessage(chatId, `🔔 Login notifications are now ${res ? 'ENABLED' : 'DISABLED'}`);
+      await answerCallback(qid, 'Could not save — try again', true);
+      return;
     }
+    // Re-render the main menu in place so the toggle label updates without
+    // destroying the stats/dashboard content of this message.
+    if (msgId) await handleStart(chatId, null, msgId);
+    else await sendMessage(chatId, `🔔 Login notifications are now ${res ? 'ENABLED' : 'DISABLED'}`);
+    await answerCallback(qid, res ? 'Notifications enabled' : 'Notifications disabled');
   } catch (e) {
     console.warn('[BOT] handleToggleNotifications failed:', e && e.message ? e.message : e);
-    await sendMessage(chatId, 'An error occurred while toggling notifications');
+    await answerCallback(qid, 'Something went wrong', true);
   }
 }
 
@@ -800,6 +923,45 @@ function scheduleSettingsReloadTimer() {
   _lastReloadMs = ms;
 }
 
+// Map a plain text command to the same view its button would open.
+// Returns true when the text was handled as a command.
+const COMMAND_VIEWS = {
+  start: (chatId, msgId) => handleStart(chatId, null, msgId),
+  servers: (chatId, msgId) => handleCallback({ data: 'servers_page:1', message: { chat: { id: chatId }, message_id: msgId }, id: null }),
+  active: (chatId, msgId) => handleCallback({ data: 'users_page:active:1', message: { chat: { id: chatId }, message_id: msgId }, id: null }),
+  soon: (chatId, msgId) => handleCallback({ data: 'users_page:soon:1', message: { chat: { id: chatId }, message_id: msgId }, id: null }),
+  expired: (chatId, msgId) => handleCallback({ data: 'users_page:expired:1', message: { chat: { id: chatId }, message_id: msgId }, id: null })
+};
+
+function _commandName(txt) {
+  const base = String(BOT_USERNAME ? `@${BOT_USERNAME}` : '');
+  const t = String(txt || '').trim().toLowerCase();
+  if (t === '/start' || t === `/start${base}`) return 'start';
+  for (const name of Object.keys(COMMAND_VIEWS)) {
+    if (t === `/${name}` || t === `/${name}${base}`) return name;
+  }
+  return null;
+}
+
+// Shared inbound-text handler used by both the poll loop and the webhook so the
+// two transports can never diverge in behaviour.
+async function handleInboundText(message) {
+  const chatId = message && message.chat && message.chat.id;
+  if (!chatId) return false;
+  const txt = (message.text || '').trim();
+  const name = _commandName(txt);
+  if (name) {
+    // Editing the user's own command message keeps the bot from adding clutter.
+    await COMMAND_VIEWS[name](chatId, message.message_id);
+    return true;
+  }
+  if (txt) {
+    await sendMessage(chatId, 'Send /start to view the dashboard');
+    return true;
+  }
+  return false;
+}
+
 async function pollLoop() {
   while (_running) {
     try {
@@ -847,13 +1009,7 @@ async function pollLoop() {
         for (const update of res.data.result) {
           lastUpdateId = Math.max(lastUpdateId, update.update_id || 0);
           if (update.message && update.message.text) {
-            const chatId = update.message.chat.id;
-            const txt = (update.message.text || '').trim();
-            if (txt === '/start' || (BOT_USERNAME && txt === '/start@' + BOT_USERNAME) || (!BOT_USERNAME && txt === '/start')) {
-              await handleStart(chatId, update.message.from);
-            } else {
-              await sendMessage(chatId, 'Send /start to view dashboard');
-            }
+            await handleInboundText(update.message);
           } else if (update.callback_query) {
             await handleCallback(update.callback_query);
           }
@@ -1124,6 +1280,155 @@ async function createBackupSnapshot() {
   }
 }
 
+// ─── Key server ZIP backup ───────────────────────────────────────────────
+// Builds a zip archive containing:
+//   manifest.json                - summary of what was captured
+//   keyserver/config.json        - backend/data/keyserver.json (port, secretKey, configDir, ...)
+//   keyserver/token_map.json     - backend/data/token_map.json (token <-> filename mapping)
+//   keyserver/keys/<file>        - every generated key file from the key server config dir
+//   database.json                - the same DB+config snapshot produced by createBackupSnapshot()
+// Returns the path to the zip, or null if it could not be created.
+const KEY_ZIP_MAX_BYTES = 45 * 1024 * 1024; // Telegram Bot API download limit is 50MB; stay under it
+const KEY_FILE_EXT_RE = /\.(ya?ml|json|txt)$/i;
+
+function _loadKeyserverConfigSafe() {
+  try {
+    const p = path.join(__dirname, 'data', 'keyserver.json');
+    if (!fs.existsSync(p)) return null;
+    return JSON.parse(fs.readFileSync(p, 'utf-8'));
+  } catch (e) {
+    console.warn('[BOT] could not read keyserver.json:', e && e.message ? e.message : e);
+    return null;
+  }
+}
+
+function _loadTokenMapSafe() {
+  try {
+    const p = path.join(__dirname, 'data', 'token_map.json');
+    if (!fs.existsSync(p)) return null;
+    return JSON.parse(fs.readFileSync(p, 'utf-8'));
+  } catch (e) {
+    console.warn('[BOT] could not read token_map.json:', e && e.message ? e.message : e);
+    return null;
+  }
+}
+
+function _collectKeyFiles(configDir) {
+  const collected = [];
+  if (!configDir || !fs.existsSync(configDir)) return collected;
+  let entries = [];
+  try { entries = fs.readdirSync(configDir); } catch (e) { return collected; }
+  for (const filename of entries) {
+    if (!KEY_FILE_EXT_RE.test(filename)) continue;
+    const full = path.join(configDir, filename);
+    try {
+      const st = fs.statSync(full);
+      if (!st.isFile()) continue;
+      collected.push({ full, filename, size: st.size, modified: st.mtime });
+    } catch (_) { /* skip unreadable entries */ }
+  }
+  return collected;
+}
+
+// Create the keys + key server config zip. `dbSnapshotPath` is the JSON produced by
+// createBackupSnapshot(); it is embedded so a single archive is enough to restore everything.
+function _resolveArchiverFactory() {
+  let mod = null;
+  try { mod = require('archiver'); } catch (e) { return null; }
+  if (!mod) return null;
+  // archiver >= 8 exports named classes; archiver <= 7 exports a factory function.
+  if (typeof mod === 'function') return (opts) => mod('zip', opts);
+  if (typeof mod.ZipArchive === 'function') return (opts) => new mod.ZipArchive(opts);
+  if (typeof mod.create === 'function') return (opts) => mod.create('zip', opts);
+  return null;
+}
+
+async function createKeysZipBackup(dbSnapshotPath = null) {
+  const createArchive = _resolveArchiverFactory();
+  if (!createArchive) {
+    console.warn('[BOT] archiver module not installed; skipping key zip backup');
+    return null;
+  }
+
+  const started = Date.now();
+  try {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const outPath = path.join(os.tmpdir(), `cmp-keys-backup-${stamp}.zip`);
+
+    const keyserverConfig = _loadKeyserverConfigSafe();
+    const configDir = (keyserverConfig && keyserverConfig.configDir) || '/srv/cmp/configs';
+    const keyFiles = _collectKeyFiles(configDir);
+    const totalKeyBytes = keyFiles.reduce((s, f) => s + (f.size || 0), 0);
+
+    if (totalKeyBytes > KEY_ZIP_MAX_BYTES) {
+      console.warn('[BOT] key files total %s bytes which exceeds the %s byte zip limit; skipping key zip backup',
+        totalKeyBytes, KEY_ZIP_MAX_BYTES);
+      return null;
+    }
+
+    const tokenMap = _loadTokenMapSafe();
+
+    await new Promise((resolve, reject) => {
+      const output = fs.createWriteStream(outPath);
+      const archive = createArchive({ zlib: { level: 9 } });
+      output.on('close', resolve);
+      output.on('error', reject);
+      archive.on('error', reject);
+      archive.on('warning', (w) => { console.warn('[BOT] archiver warning:', w && w.message ? w.message : w); });
+      archive.pipe(output);
+
+      // Manifest first so the archive is self-describing
+      const manifest = {
+        kind: 'cmp-keys-and-keyserver-backup',
+        version: 1,
+        created_at: new Date().toISOString(),
+        keyserver_config_dir: configDir,
+        keyserver_config_file_present: !!keyserverConfig,
+        token_map_present: !!tokenMap,
+        key_file_count: keyFiles.length,
+        key_files_total_bytes: totalKeyBytes,
+        database_snapshot_included: !!dbSnapshotPath,
+        key_files: keyFiles.map(f => ({ filename: f.filename, size: f.size, modified: f.modified })),
+        restore_hint: [
+          'Place keyserver/config.json at backend/data/keyserver.json',
+          'Place keyserver/token_map.json at backend/data/token_map.json',
+          'Copy keyserver/keys/* into the configDir configured in keyserver.json',
+          'database.json mirrors the DB+config JSON backup (app_settings, servers, server_keys, users, admins, domains, financial_snapshots)',
+        ].join('\n')
+      };
+      archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
+
+      // Key server configuration + token map
+      if (keyserverConfig) {
+        archive.append(JSON.stringify(keyserverConfig, null, 2), { name: 'keyserver/config.json' });
+      }
+      if (tokenMap) {
+        archive.append(JSON.stringify(tokenMap, null, 2), { name: 'keyserver/token_map.json' });
+      }
+
+      // Generated key files (yaml/yml/json/txt), including companion .meta.json files
+      for (const f of keyFiles) {
+        archive.file(f.full, { name: `keyserver/keys/${f.filename}` });
+      }
+
+      // Embed the database snapshot for a single-file restore
+      if (dbSnapshotPath && fs.existsSync(dbSnapshotPath)) {
+        archive.file(dbSnapshotPath, { name: 'database.json' });
+      }
+
+      archive.finalize();
+    });
+
+    const stats = await fs.promises.stat(outPath);
+    console.log('[BOT] created keys zip backup: %s (%s key files, %s bytes) in %sms',
+      outPath, keyFiles.length, stats.size, Date.now() - started);
+    return outPath;
+  } catch (e) {
+    console.warn('[BOT] createKeysZipBackup failed:', e && e.message ? e.message : e);
+    return null;
+  }
+}
+
 // Perform a periodic report and, if enabled, send a backup to DEFAULT_CHAT_ID
 async function performPeriodicReportAndBackup() {
   try {
@@ -1171,10 +1476,35 @@ async function performPeriodicReportAndBackup() {
           await pool.query('INSERT INTO telegram_login_notify_audit (chat_id, admin_id, role, username, ip, user_agent, status, payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [target, null, null, 'system', null, null, 'backup_sent', payload]);
         } catch (_) {}
       } catch (e) {
-        // record failure audit
         try { await pool.query('INSERT INTO telegram_login_notify_audit (chat_id, admin_id, role, username, ip, user_agent, status, error, payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [target, null, null, 'system', null, null, 'backup_failed', (e && e.message) ? String(e.message) : String(e), { type: 'backup', file: path.basename(filePath) }]); } catch (_) {}
       }
-      try { await fs.promises.unlink(filePath); } catch (_) {}
+    }
+
+    // Build and send the keys + key server configuration zip (single archive, includes the DB snapshot)
+    let zipPath = null;
+    try {
+      zipPath = await createKeysZipBackup(filePath);
+    } catch (zipErr) {
+      console.warn('[BOT] failed to build keys zip backup:', zipErr && zipErr.message ? zipErr.message : zipErr);
+    }
+    // The JSON snapshot is already sent on its own; remove the temp copy once the zip has embedded it.
+    if (filePath) { try { await fs.promises.unlink(filePath); } catch (_) {} }
+    if (zipPath) {
+      try {
+        let zstats = null;
+        try { zstats = await fs.promises.stat(zipPath); } catch (_) { zstats = null; }
+        const sizeKb = zstats && zstats.size ? Math.round(zstats.size / 1024) : null;
+        await sendDocument(target, zipPath, `🔐 Keys + key server config backup${sizeKb ? ` (${sizeKb} KB)` : ''}\n🕐 ${currentTime}`);
+        try {
+          const payload = { type: 'keys_zip_backup', file: path.basename(zipPath), size: zstats && zstats.size || null, created_at: new Date().toISOString() };
+          await pool.query('INSERT INTO telegram_login_notify_audit (chat_id, admin_id, role, username, ip, user_agent, status, payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [target, null, null, 'system', null, null, 'keys_backup_sent', payload]);
+        } catch (_) {}
+      } catch (e) {
+        try { await pool.query('INSERT INTO telegram_login_notify_audit (chat_id, admin_id, role, username, ip, user_agent, status, error, payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [target, null, null, 'system', null, null, 'keys_backup_failed', (e && e.message) ? String(e.message) : String(e), { type: 'keys_zip_backup', file: path.basename(zipPath) }]); } catch (_) {}
+      }
+      try { await fs.promises.unlink(zipPath); } catch (_) {}
+    } else {
+      try { await pool.query('INSERT INTO telegram_login_notify_audit (chat_id, admin_id, role, username, ip, user_agent, status, payload) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)', [target, null, null, 'system', null, null, 'keys_backup_skipped', { reason: 'zip_not_created' }]); } catch (_) {}
     }
   } catch (e) {
     console.warn('[BOT] performPeriodicReportAndBackup failed:', e && e.message ? e.message : e);
@@ -1275,13 +1605,7 @@ async function startWebhookIfRequested() {
         try { metrics.updates_total.inc(1); } catch (_) {}
         // mirror the same handling as in pollLoop for a single update
         if (update.message && update.message.text) {
-          const chatId = update.message.chat.id;
-          const txt = (update.message.text || '').trim();
-          if (txt === '/start' || (BOT_USERNAME && txt === '/start@' + BOT_USERNAME) || (!BOT_USERNAME && txt === '/start')) {
-            await handleStart(chatId, update.message.from);
-          } else {
-            await sendMessage(chatId, 'Send /start to view dashboard');
-          }
+          await handleInboundText(update.message);
         } else if (update.callback_query) {
           await handleCallback(update.callback_query);
         }
@@ -1469,3 +1793,6 @@ async function applySettingsNow() {
   return { reloaded: true, enabled: TELEGRAM_ENABLED, reload_seconds: SETTINGS_RELOAD_SECONDS, cron: NOTIFICATION_CRON || null };
 }
 module.exports.applySettingsNow = applySettingsNow;
+// Exported for tests/scripts: build a zip of all key files + key server configuration.
+module.exports.createKeysZipBackup = createKeysZipBackup;
+module.exports.performPeriodicReportAndBackup = performPeriodicReportAndBackup;
