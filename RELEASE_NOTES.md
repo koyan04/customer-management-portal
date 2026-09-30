@@ -6,6 +6,26 @@
 
 ---
 
+cmp ver 1.9.28
+
+What's new
+- Invalid Profile YAML Fix: resolved `bad indentation of a sequence entry` that made entire Clash/Mihomo profiles fail to load — the generator emits `alpn` as a block sequence whose items sit at the same indent as the key, turning them into siblings of the proxy instead of children of `alpn`
+- Corrected ALPN Detection: a bare `alpn:` key is no longer mistaken for an already-valid inline list, so the repair actually runs instead of being skipped
+- Orphaned List Item Recovery: sequence items stranded at proxy depth (including ones interleaved with a sibling key such as `sni:`) are reclaimed into `alpn` rather than dropped
+- Proxy Block Splitting Fix: the parser previously treated any indented `- ` as the start of a new proxy, splitting a single node into fragments and losing the context needed to repair it
+- Trojan WS ALPN Repair: Trojan-over-WebSocket nodes no longer negotiate `h2`, which fails the handshake in Clash Mi; the policy is applied where the node type is known
+- XHTTP Transport Recovery: nodes declaring `network: xhttp` without an `xhttp-opts` block now get a valid `host` / `mode: auto` / `path` instead of being unusable
+- Proxy Name De-duplication: Clash resolves group members by name, so two nodes sharing a name made the first unreachable. Duplicate names are now suffixed and every group reference repointed, restoring Shadowsocks nodes that were silently shadowed by VLESS entries
+
+Verification
+- Audited all 188 profiles / 923 proxies on the live server: every optimization from v1.9.22 through v1.9.26 confirmed intact alongside the new fixes
+- Regression-guarded against the previous sanitizer before deploying: 0 invalid profiles, 0 semantic regressions
+- Re-verified the live `/sub/` subscription endpoint end to end after restart
+
+See [Release v1.9.28](https://github.com/koyan04/customer-management-portal/releases/tag/v1.9.28) for full details.
+
+---
+
 cmp ver 1.9.27
 
 What's new

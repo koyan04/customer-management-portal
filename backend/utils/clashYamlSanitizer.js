@@ -198,7 +198,11 @@ function sanitizeClashYaml(content) {
   let currentBlock = [];
 
   for (const line of proxyLines) {
-    if (/^\s*-\s+/.test(line)) {
+    // A new proxy starts only at the canonical 2-space `- name:` indent. Splitting on
+    // ANY indented `- ` previously mis-detected block-sequence items (e.g. alpn's
+    // "- h2") as the start of a new proxy, splitting one node into fragments and
+    // losing the type/network context needed to heal it.
+    if (/^ {2}-\s+/.test(line)) {
       if (currentBlock.length > 0) blocks.push(currentBlock);
       currentBlock = [line];
     } else {
@@ -210,31 +214,74 @@ function sanitizeClashYaml(content) {
   const processedBlocks = blocks.map(block => {
     while (block.length > 0 && /^\s*$/.test(block[block.length - 1])) block.pop();
 
+    // ── Pre-pass: reclaim orphaned sequence items ────────────────────────
+    // A Clash proxy is a mapping, so a list item at the proxy-field indent
+    // (4 spaces) is ALWAYS invalid there. The generator writes alpn as a block
+    // sequence whose items sit at that same 4-space indent, and once a sibling
+    // key (e.g. `sni:`) is interleaved between the key and its items the items
+    // are orphaned -- they can no longer be re-associated by adjacency.
+    // Collect them here so they can be folded back into alpn below.
+    const orphanAlpnItems = [];
+    const orphanIdx = new Set();
+    const orphanValues = new Map();
+    for (let i = 0; i < block.length; i++) {
+      if (/^ {4}-\s+/.test(block[i])) {
+        const m = block[i].match(/^ {4}-\s*(.+?)\s*$/);
+        if (m) {
+          const v = m[1].trim().replace(/^["']|["']$/g, '');
+          orphanAlpnItems.push(v);
+          orphanValues.set(i, v);
+        }
+        orphanIdx.add(i);
+      }
+    }
+    // Track whether a bare `alpn:` key already absorbed the orphans, so the
+    // trailing reclaim does not emit a second alpn key.
+    let absorbedOrphans = false;
+    // True once we emitted a normalized (inline) alpn for this proxy, so the
+    // trailing vless/xhttp injection does not add a second alpn key.
+    let hasInlineAlpn = false;
+
     let type = '';
     let network = '';
     let port = 0;
+    let serverVal = '';
     let hasReality = false;
     let hasSni = false;
     let servernameVal = '';
+    let hasXhttpOpts = false;
+    let xhttpHostVal = '';
+    let xhttpPathVal = '/';
+    // Only an INLINE alpn value counts as present. A bare `alpn:` key means the
+    // generator emitted a block sequence (items on following lines), which is
+    // normalized below -- treating it as "already present" previously left the
+    // orphaned "- item" lines unindented and produced structurally invalid YAML.
     let hasAlpn = false;
     let hasSkipCert = false;
     let hasMlkem = false;
 
-    for (const l of block) {
+    for (let bi = 0; bi < block.length; bi++) {
+      if (orphanIdx.has(bi)) continue; // orphaned list items are not proxy fields
+      const l = block[bi];
       const tm = l.match(/^\s+type:\s*([a-zA-Z0-9-]+)/);
       if (tm) type = tm[1].trim();
       const nm = l.match(/^\s+network:\s*([a-zA-Z0-9-]+)/);
       if (nm) network = nm[1].trim();
       const pm = l.match(/^\s+port:\s*(\d+)/);
       if (pm) port = Number(pm[1]);
+      const srvM = l.match(/^\s+server:\s*["']?([^"'\r\n]+)["']?/);
+      if (srvM) serverVal = srvM[1].trim();
       if (/^\s+reality-opts:/.test(l)) hasReality = true;
+      if (/^\s+xhttp-opts:/.test(l)) hasXhttpOpts = true;
       if (/^\s+support-x25519mlkem768:\s*/.test(l)) hasMlkem = true;
       if (/^\s+sni:\s*/.test(l)) hasSni = true;
       const snm = l.match(/^\s+servername:\s*["']?([^"'\r\n]+)["']?/);
       if (snm) servernameVal = snm[1].trim();
-      if (/^\s+alpn:\s*/.test(l)) hasAlpn = true;
+      if (/^\s+alpn:\s*\[/.test(l)) hasAlpn = true;
       if (/^\s+skip-cert-verify:\s*/.test(l)) hasSkipCert = true;
     }
+    // Orphaned items are themselves evidence that an alpn list was intended.
+    if (orphanAlpnItems.length) hasAlpn = false;
 
     // Normalize redirect-causing SNIs for REALITY (e.g. yt.be, android.com return 301/302 redirects on Google servers,
     // which causes Mihomo's xhttp client to fail REALITY authentication)
@@ -248,6 +295,60 @@ function sanitizeClashYaml(content) {
 
     for (let i = 0; i < block.length; i++) {
       let l = block[i];
+
+      // Drop orphaned proxy-depth list items here; they are folded into alpn at
+      // the end of this block (see orphanAlpnItems handling below).
+      if (orphanIdx.has(i)) continue;
+
+      // Normalize a block-style `alpn:` sequence into a single inline list.
+      // The generator emits alpn as a block sequence. Two shapes occur:
+      //   1) as a direct proxy field at 4-space indent, with items ALSO at 4-space
+      //      -> items become siblings of the proxy, a hard YAML parse error.
+      //   2) as the proxy's FIRST key on the opening line ("  - alpn:"), items at
+      //      4-space -> this parses, but we normalize for consistency and so the
+      //      trojan/xhttp rewrites below see a uniform shape.
+      // Deeper alpn (6+ spaces) belongs to reality-opts / xhttp-opts / ws-opts and
+      // is left untouched -- rewriting it would detach its sibling keys.
+      // Accepts an optional leading "- " sequence marker at either proxy depth.
+      const alpnKeyMatch = l.match(/^(?: {2}- | {4})alpn:\s*$/);
+      if (alpnKeyMatch) {
+        const isOpening = /^ {2}- /.test(l);
+        const items = [];
+        let j = i + 1;
+        // Items may be adjacent OR orphaned/interleaved with a sibling key (that is
+        // precisely the corruption being repaired), so accept both, in order.
+        for (; j < block.length; j++) {
+          if (orphanIdx.has(j)) {
+            items.push(orphanValues.get(j));
+            continue;
+          }
+          const itemMatch = block[j].match(/^\s*-\s*(.+?)\s*$/);
+          if (!itemMatch) break;
+          items.push(itemMatch[1].trim().replace(/^["']|["']$/g, ''));
+        }
+        if (items.length) {
+          // Apply the type-specific ALPN policy HERE, at emission, because this
+          // branch `continue`s and the later per-line Trojan rewrite never sees
+          // the normalized line. Trojan-over-WebSocket must not negotiate h2
+          // (Clash Mi fails the handshake), so force http/1.1.
+          const finalItems = (type === 'trojan') ? ['http/1.1'] : items;
+          // A 2-space alpn is the block's opening "- alpn:" line, so it must keep
+          // the "- " sequence marker; a 4-space one is a plain sibling key.
+          const emitted = isOpening
+            ? `  - alpn: [${finalItems.join(', ')}]`
+            : `    alpn: [${finalItems.join(', ')}]`;
+          newLines.push(emitted);
+          hasAlpn = true;
+          hasInlineAlpn = true;
+          absorbedOrphans = true;
+          i = j - 1; // consume the consumed items
+          continue;
+        }
+        // Bare `alpn:` with no items: drop it rather than emit a null list.
+        hasAlpn = false;
+        continue;
+      }
+
       if (/^\s*$/.test(l)) continue; // avoid blank lines inside proxy blocks
 
       // CRITICAL: Strip skip-cert-verify if node uses REALITY.
@@ -299,8 +400,12 @@ function sanitizeClashYaml(content) {
       }
 
       // Fix Trojan WS ALPN: h2 -> http/1.1
-      if (type === 'trojan' && /^\s*alpn:\s*\[.*h2.*\]/.test(l)) {
+      // Anchored to proxy-field depth (4 spaces) or the opening "- alpn:" line
+      // (2 spaces) so we never rewrite an alpn nested inside a sub-block.
+      if (type === 'trojan' && /^ {4}alpn:\s*\[.*h2.*\]/.test(l)) {
         l = '    alpn: [http/1.1]';
+      } else if (type === 'trojan' && /^ {2}- alpn:\s*\[.*h2.*\]/.test(l)) {
+        l = '  - alpn: [http/1.1]';
       }
 
       // Ensure xhttp mode is auto for streaming compatibility with Xray (packet-up causes packet fragmentation failures)
@@ -345,9 +450,32 @@ function sanitizeClashYaml(content) {
       if (servernameVal && !hasSni) {
         newLines.push(`    sni: ${servernameVal}`);
       }
-      if (network === 'xhttp' && !hasAlpn) {
+      if (network === 'xhttp' && !hasAlpn && !hasInlineAlpn) {
         newLines.push('    alpn: [h2]');
       }
+    }
+
+    // Ensure an xhttp node actually carries xhttp-opts. Some generated profiles
+    // declare `network: xhttp` but omit the block entirely, which leaves Clash /
+    // Mihomo with no mode, path, or host for the transport. Rebuild a minimal one
+    // from the node's own server/servername so the profile is usable.
+    if (network === 'xhttp' && !hasXhttpOpts) {
+      const xhttpHost = xhttpHostVal || servernameVal || serverVal || 'www.goo.gl';
+      newLines.push('    xhttp-opts:');
+      newLines.push(`      host: ${xhttpHost}`);
+      newLines.push('      mode: auto');
+      newLines.push(`      path: ${xhttpPathVal}`);
+    }
+
+    // Reclaim orphans that no bare `alpn:` key absorbed (e.g. the alpn key itself
+    // was missing, leaving only stray items). Emit them as an alpn list rather than
+    // dropping data, and collapse any earlier alpn so we never emit a duplicate key.
+    if (orphanAlpnItems.length && !absorbedOrphans) {
+      for (let k = newLines.length - 1; k >= 0; k--) {
+        if (/^ {4}alpn:\s*\[/.test(newLines[k])) newLines.splice(k, 1);
+      }
+      const finalItems = (type === 'trojan') ? ['http/1.1'] : orphanAlpnItems;
+      newLines.push(`    alpn: [${finalItems.join(', ')}]`);
     }
 
     return newLines;
@@ -360,7 +488,117 @@ function sanitizeClashYaml(content) {
 
   content = [...preLines, ...flatProxies, ...postLines].join('\n');
 
+  // 5. De-duplicate proxy names within the profile.
+  // Clash / Mihomo resolve proxy-group members BY NAME, so two proxies sharing a
+  // name make the first one unreachable: the second silently shadows it and every
+  // group reference points at the winner. The generator can emit a name collision
+  // when different protocols (e.g. shadowsocks "SG01" and vless "SG01") are both
+  // present. Rename the later duplicates and repoint every group reference.
+  content = dedupeProxyNames(content);
+
   return content;
+}
+
+/**
+ * Ensure every proxy in the `proxies:` block has a unique name, updating all
+ * proxy-group member references to match. Returns the content unchanged when
+ * there is nothing to fix.
+ */
+function dedupeProxyNames(content) {
+  const lines = content.split('\n');
+  const pIdx = lines.findIndex(l => /^proxies:\s*$/.test(l));
+  if (pIdx === -1) return content;
+
+  let endIdx = lines.findIndex((l, idx) => idx > pIdx && /^[a-zA-Z0-9_-]+:/.test(l));
+  if (endIdx === -1) endIdx = lines.length;
+
+  // Collect names in order; a proxy name may sit on the opening "- name: ..." line
+  // or on a following "    name: ..." line when the block starts with another key.
+  const nameLineIdx = [];
+  const names = [];
+  let currentName = null;
+  let currentNameIdx = -1;
+
+  for (let i = pIdx + 1; i < endIdx; i++) {
+    const l = lines[i];
+    if (/^ {2}-\s+/.test(l)) {
+      if (currentName) { nameLineIdx.push(currentNameIdx); names.push(currentName); }
+      currentName = null; currentNameIdx = -1;
+      const m = l.match(/^ {2}-\s+name:\s*(.+?)\s*$/);
+      // Strip any existing quotes: we re-quote on write, so keeping them would
+      // produce doubled quotes such as - name: ""node"".
+      if (m) { currentName = m[1].trim().replace(/^["']|["']$/g, ''); currentNameIdx = i; }
+    } else {
+      const m = l.match(/^ {4}name:\s*(.+?)\s*$/);
+      if (m && !currentName) { currentName = m[1].trim().replace(/^["']|["']$/g, ''); currentNameIdx = i; }
+    }
+  }
+  if (currentName) { nameLineIdx.push(currentNameIdx); names.push(currentName); }
+  if (names.length < 2) return content;
+
+  // Assign a "(n)" suffix to the 2nd+ occurrence of any duplicated name.
+  const seen = new Map();
+  const assigned = [];
+  for (const n of names) {
+    const c = (seen.get(n) || 0) + 1;
+    seen.set(n, c);
+    assigned.push(c === 1 ? n : `${n} (${c})`);
+  }
+  // Nothing to do when every name is already unique.
+  if (assigned.every((n, i) => n === names[i])) return content;
+
+  // Rewrite each proxy's name line to its assigned (possibly suffixed) value.
+  assigned.forEach((newName, idx) => {
+    const li = nameLineIdx[idx];
+    const l = lines[li];
+    if (/^ {2}-\s+name:/.test(l)) {
+      lines[li] = l.replace(/^ {2}-\s+name:\s*.+$/, `  - name: "${newName}"`);
+    } else {
+      lines[li] = l.replace(/^ {4}name:\s*.+$/, `    name: "${newName}"`);
+    }
+  });
+
+  // Build old->new lookup for every duplicate occurrence. Group references are
+  // ambiguous for a duplicated name (they cannot distinguish the two), so point
+  // each reference at the renamed occurrence in order of appearance.
+  const occurrences = new Map(); // oldName -> [newName, ...]
+  names.forEach((oldName, idx) => {
+    if (!occurrences.has(oldName)) occurrences.set(oldName, []);
+    occurrences.get(oldName).push(assigned[idx]);
+  });
+
+  // Repoint group member references.
+  // A reference to a duplicated name is ambiguous on its own, so resolve it by
+  // position: the Nth reference within a group maps to the Nth occurrence of that
+  // proxy. The cursor is per-group -- if it were shared globally, the first group
+  // would consume every occurrence slot and later groups would collapse onto the
+  // same renamed node, silently dropping the others from those groups.
+  const gStart = lines.findIndex(l => /^proxy-groups:\s*$/.test(l));
+  if (gStart !== -1) {
+    let gEnd = lines.findIndex((l, i) => i > gStart && /^rules:\s*$/.test(l));
+    if (gEnd === -1) gEnd = lines.length;
+    let cursor = new Map();
+    for (let i = gStart; i < gEnd; i++) {
+      // A new group begins at "- name:"; start its reference numbering over.
+      if (/^ {2}-\s+name:/.test(lines[i])) {
+        cursor = new Map();
+        continue;
+      }
+      const rm = lines[i].match(/^(\s+-\s+)(.+?)(\s*)$/);
+      if (!rm) continue;
+      const unquoted = rm[2].trim().replace(/^["']|["']$/g, '');
+      const list = occurrences.get(unquoted);
+      if (!list || list.length < 2) continue; // unique name: nothing to repoint
+      const used = cursor.get(unquoted) || 0;
+      const target = list[Math.min(used, list.length - 1)];
+      cursor.set(unquoted, used + 1);
+      if (target !== unquoted) {
+        lines[i] = `${rm[1]}"${target}"${rm[3]}`;
+      }
+    }
+  }
+
+  return lines.join('\n');
 }
 
 function safeDecode(str) {
@@ -378,4 +616,4 @@ function safeDecode(str) {
   return decoded;
 }
 
-module.exports = { sanitizeClashYaml, safeDecode };
+module.exports = { sanitizeClashYaml, safeDecode, dedupeProxyNames };
