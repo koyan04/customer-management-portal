@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import InfoModal from '../components/InfoModal.jsx';
 import { FaInfoCircle, FaCog } from 'react-icons/fa';
 import axios from 'axios';
@@ -111,6 +112,9 @@ export default function SettingsPage() {
   const [restoreFileConfig, setRestoreFileConfig] = useState(null);
   const [restoreFileDB, setRestoreFileDB] = useState(null);
   const [restoreFileSnapshot, setRestoreFileSnapshot] = useState(null);
+  // Opt-in: overwrite the admin team (display names, roles, avatars) and force
+  // everyone to sign in again. Off by default because it is destructive.
+  const [restoreAdmins, setRestoreAdmins] = useState(false);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
   const [restoreProgress, setRestoreProgress] = useState(0);
   const [restoreMessage, setRestoreMessage] = useState('');
@@ -690,6 +694,9 @@ export default function SettingsPage() {
 
   const startRestore = async (url, file) => {
     if (!file) return;
+    // Only the snapshot endpoint understands the admin-overwrite flag.
+    const isSnapshot = String(url).includes('/restore/snapshot');
+    const doRestoreAdmins = isSnapshot && restoreAdmins;
     setRestoreInProgress(true);
     setRestoreProgress(0);
     setRestoreMessage('');
@@ -697,6 +704,7 @@ export default function SettingsPage() {
     try {
       const form = new FormData();
       form.append('file', file, file.name);
+      if (doRestoreAdmins) form.append('restore_admins', '1');
       const config = { headers: { ...authHeaders } };
       // Only include onUploadProgress when the XHR upload API is available (some test envs lack it)
       try {
@@ -713,6 +721,21 @@ export default function SettingsPage() {
       const res = await axios.post(url, form, config);
       const msg = res?.data?.msg || (res?.data ? JSON.stringify(res.data) : 'Restore completed');
       setRestoreMessage(String(msg));
+      // When the admin team was overwritten every session was revoked server
+      // side, so the current JWT is dead. Send the user to the login screen
+      // instead of reloading into a broken authenticated shell.
+      if (doRestoreAdmins) {
+        setRestoreMessage(`${msg} — admins restored. Please sign in again.`);
+        try {
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          localStorage.removeItem('refresh_token');
+        } catch (_) {}
+        setTimeout(() => {
+          try { window.location.href = '/login'; } catch (_) {}
+        }, 1800);
+        return;
+      }
       // show success then reload page after brief pause
       setTimeout(() => {
         try { window.location.reload(); } catch (_) {}
@@ -1281,6 +1304,25 @@ export default function SettingsPage() {
                   <button className="btn primary" disabled={!restoreFileSnapshot || restoreInProgress} onClick={() => startRestore(backendOrigin + '/api/admin/restore/snapshot', restoreFileSnapshot)}>Restore</button>
                   {restoreFileSnapshot && <small style={{ opacity: 0.85 }}>{restoreFileSnapshot.name}</small>}
                 </div>
+                <label
+                  style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', marginTop: '0.6rem', cursor: 'pointer' }}
+                >
+                  <input
+                    aria-label="Restore Admins"
+                    type="checkbox"
+                    checked={restoreAdmins}
+                    onChange={(e) => setRestoreAdmins(e.target.checked)}
+                    style={{ marginTop: '0.15rem' }}
+                  />
+                  <span style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem' }}>
+                    <span style={{ fontWeight: 600 }}>Restore Admins</span>
+                    <small style={{ opacity: 0.8 }}>
+                      Overwrite all admin accounts with the snapshot&rsquo;s accounts, roles and profile pictures.
+                      Admin accounts missing from the snapshot are deleted, and <strong>everyone is logged out</strong> and must sign in again.
+                      Existing passwords are kept for accounts that already exist.
+                    </small>
+                  </span>
+                </label>
               </label>
             </div>
           </div>
@@ -1708,8 +1750,10 @@ export default function SettingsPage() {
                 )}
               </section>
 
-              {/* Update Progress Modal */}
-              {showUpdateModal && (
+              {/* Update Progress Modal. Portalled to document.body so it
+                  overlays the whole app instead of being clipped/stacked
+                  inside the Control Panel card it is rendered from. */}
+              {showUpdateModal && createPortal((
                 <div style={{
                   position: 'fixed', inset: 0, zIndex: 9999,
                   background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
@@ -1785,9 +1829,9 @@ export default function SettingsPage() {
                     )}
                   </div>
                 </div>
-              )}
+              ), document.body)}
               {/* Cleanup Progress Modal */}
-              {showCleanupModal && (
+              {showCleanupModal && createPortal((
                 <div style={{
                   position: 'fixed', inset: 0, zIndex: 9999,
                   background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
@@ -1858,9 +1902,9 @@ export default function SettingsPage() {
                     )}
                   </div>
                 </div>
-              )}
+              ), document.body)}
               {/* Install Domain Progress Modal */}
-              {showInstallModal && (
+              {showInstallModal && createPortal((
                 <div style={{
                   position: 'fixed', inset: 0, zIndex: 9999,
                   background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(4px)',
@@ -1924,7 +1968,7 @@ export default function SettingsPage() {
                     )}
                   </div>
                 </div>
-              )}
+              ), document.body)}
             </div>
           </div>
         )}

@@ -10,6 +10,7 @@ const dns = require('dns').promises;
 const net = require('net');
 const { Pool: PgPool } = require('pg');
 const sharp = require('sharp');
+const mediaStore = require('../lib/mediaStore');
 
 // Helper: Convert expire_date ISO timestamp to correct local YYYY-MM-DD date string.
 // When PostgreSQL stores a DATE column, node-pg returns it as a JS Date at midnight LOCAL time,
@@ -106,6 +107,7 @@ router.get('/accounts', authenticateToken, isAdmin, async (req, res) => {
         a.username, 
         a.role, 
         a.avatar_url, 
+        a.avatar_data,
         a.created_at,
         a.last_seen,
         CASE WHEN s.last_activity IS NOT NULL AND s.last_activity > NOW() - INTERVAL '60 minutes' THEN true ELSE false END as is_online,
@@ -130,16 +132,59 @@ router.get('/public/accounts/:id/avatar', async (req, res) => {
     const { rows } = await pool.query('SELECT avatar_url, avatar_data FROM admins WHERE id = $1', [id]);
     if (!rows || rows.length === 0) return res.status(404).json({ msg: 'Account not found' });
     const rec = rows[0];
-    // prefer avatar_url (served from /uploads) and return absolute URL for convenience
+    // DB-stored avatar (data URI) is authoritative and survives host moves.
+    if (rec.avatar_data && String(rec.avatar_data).startsWith('data:')) {
+      return res.json({ type: 'data', data: rec.avatar_data });
+    }
+    // Legacy filesystem path: keep serving it, but inline it into the DB on read
+    // so the next backup/restore carries the image with it.
     if (rec.avatar_url) {
+      if (rec.avatar_url.startsWith('/uploads/')) {
+        try {
+          const p = path.join(uploadsPath, path.basename(rec.avatar_url));
+          if (fs.existsSync(p)) {
+            const ext = (path.extname(p) || '.png').toLowerCase();
+            const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg'
+              : ext === '.webp' ? 'image/webp'
+              : ext === '.svg' ? 'image/svg+xml'
+              : 'image/png';
+            const dataUri = `data:${mime};base64,${fs.readFileSync(p).toString('base64')}`;
+            await pool.query('UPDATE admins SET avatar_data = $1 WHERE id = $2', [dataUri, id]);
+            return res.json({ type: 'data', data: dataUri });
+          }
+        } catch (e) {
+          console.warn('avatar inline migration failed for admin', id, e && e.message ? e.message : e);
+        }
+      }
       const origin = req.protocol + '://' + req.get('host');
       const url = rec.avatar_url.startsWith('http') ? rec.avatar_url : (origin + rec.avatar_url);
       return res.json({ type: 'url', url });
     }
-    if (rec.avatar_data) return res.json({ type: 'data', data: rec.avatar_data });
     return res.status(404).json({ msg: 'No avatar' });
   } catch (err) {
     console.error('public avatar error', err && err.stack ? err.stack : err);
+    res.status(500).json({ msg: 'Server Error' });
+  }
+});
+
+// --- PUBLIC: serve a stored media blob (logo / favicon) straight from the DB.
+// Key format: "logo:1x" | "logo:2x" | "favicon". This replaces the previous
+// dependency on files in backend/public/logos so a restore onto a fresh host
+// still shows the correct branding.
+router.get('/public/media/:key', async (req, res) => {
+  try {
+    const key = String(req.params.key || '').trim();
+    // Allow "logo:1x" style keys through a path segment by rejecting separators.
+    if (!key || /[/\\]|\.\./.test(key)) return res.status(400).json({ msg: 'Invalid key' });
+    const rec = await mediaStore.getMedia(pool, key);
+    if (!rec) return res.status(404).json({ msg: 'Not found' });
+    const parsed = mediaStore.parseDataUri(rec.data);
+    if (!parsed) return res.status(404).json({ msg: 'Not found' });
+    res.setHeader('Content-Type', parsed.mime);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    return res.send(Buffer.from(parsed.base64, 'base64'));
+  } catch (err) {
+    console.error('public media error', err && err.stack ? err.stack : err);
     res.status(500).json({ msg: 'Server Error' });
   }
 });
@@ -175,8 +220,12 @@ router.get('/accounts/:id', authenticateToken, isAdmin, async (req, res) => {
 router.post('/accounts', authenticateToken, isAdmin, upload.single('avatar'), async (req, res) => {
   try {
   let display_name, username, password, role = 'VIEWER', avatar_url = null;
+    // Avatars are persisted in the database (admins.avatar_data) rather than as
+    // files in public/uploads, so they travel with a backup/restore.
+    let avatar_data = null;
     if (req.file) {
-      avatar_url = `/uploads/${req.file.filename}`;
+      const mime = req.file.mimetype || 'image/png';
+      avatar_data = `data:${mime};base64,${req.file.buffer.toString('base64')}`;
     }
     if (req.is('multipart/form-data')) {
       display_name = req.body.display_name;
@@ -187,12 +236,17 @@ router.post('/accounts', authenticateToken, isAdmin, upload.single('avatar'), as
   if (role === 'EDITOR') role = 'VIEWER';
       // allow clearing avatar on create if client requested it (edge-case)
       if (req.body.clear_avatar === '1' || req.body.clear_avatar === 'true') {
-        avatar_url = null;
+        avatar_data = null;
+      }
+      // Client may also send a base64/data-URI preview instead of a file.
+      if (!avatar_data && req.body.avatar_data) {
+        avatar_data = mediaStore.toDataUri(req.body.avatar_data, 'image/png');
       }
     } else {
-  ({ display_name, username, password, role = 'VIEWER', clear_avatar = false } = req.body || {});
+  ({ display_name, username, password, role = 'VIEWER', clear_avatar = false, avatar_data: rawAvatar } = req.body || {});
   if (role === 'EDITOR') role = 'VIEWER';
-      if (clear_avatar) avatar_url = null;
+      if (clear_avatar) avatar_data = null;
+      else if (rawAvatar) avatar_data = mediaStore.toDataUri(rawAvatar, 'image/png');
     }
 
     // basic validation
@@ -208,7 +262,7 @@ router.post('/accounts', authenticateToken, isAdmin, upload.single('avatar'), as
 
     const salt = await bcrypt.genSalt(10);
     const password_hash = await bcrypt.hash(password, salt);
-    const { rows } = await pool.query('INSERT INTO admins (display_name, username, password_hash, role, avatar_url) VALUES ($1,$2,$3,$4,$5) RETURNING id, display_name, username, role, avatar_url', [display_name, username, password_hash, role, avatar_url]);
+    const { rows } = await pool.query('INSERT INTO admins (display_name, username, password_hash, role, avatar_data) VALUES ($1,$2,$3,$4,$5) RETURNING id, display_name, username, role, avatar_data', [display_name, username, password_hash, role, avatar_data]);
     
     // Log to control_panel_audit
     const adminId = req.user && req.user.id;
@@ -243,10 +297,14 @@ router.put('/accounts/:id', authenticateToken, isAdmin, upload.single('avatar'),
   try {
     console.log('[PUT /accounts/:id] req.file =', !!req.file, ' req.body keys =', Object.keys(req.body));
     const { id } = req.params;
-  let display_name = null, role = null, avatar_url = null, username = null;
+  let display_name = null, role = null, username = null;
   let clearRequested = false;
+    // Avatars live in admins.avatar_data (a data URI). avatar_url is kept in the
+    // query only for backward compatibility with very old rows.
+    let avatar_data = null;
     if (req.file) {
-      avatar_url = `/uploads/${req.file.filename}`;
+      const mime = req.file.mimetype || 'image/png';
+      avatar_data = `data:${mime};base64,${req.file.buffer.toString('base64')}`;
     }
     // allow client to send a clear_avatar flag to remove existing avatar
     if (req.is('multipart/form-data')) {
@@ -255,16 +313,21 @@ router.put('/accounts/:id', authenticateToken, isAdmin, upload.single('avatar'),
       username = typeof req.body.username === 'string' ? req.body.username : null;
       if (role === 'EDITOR') role = 'VIEWER';
       if ((req.body.clear_avatar === '1' || req.body.clear_avatar === 'true') && !req.file) {
-        // explicit clear and no new file -> mark for clearing avatar_url in DB
-        avatar_url = null;
+        // explicit clear and no new file -> null the stored avatar
+        avatar_data = null;
         clearRequested = true;
       }
+      if (!avatar_data && req.body.avatar_data) {
+        avatar_data = mediaStore.toDataUri(req.body.avatar_data, 'image/png');
+      }
     } else {
-      ({ display_name, role, clear_avatar = false, username = null } = req.body || {});
+      ({ display_name, role, clear_avatar = false, username = null, avatar_data: rawAvatar } = req.body || {});
       if (role === 'EDITOR') role = 'VIEWER';
       if (clear_avatar && !req.file) {
-        avatar_url = null;
+        avatar_data = null;
         clearRequested = true;
+      } else if (rawAvatar) {
+        avatar_data = mediaStore.toDataUri(rawAvatar, 'image/png');
       }
     }
 
@@ -287,34 +350,36 @@ router.put('/accounts/:id', authenticateToken, isAdmin, upload.single('avatar'),
     if (display_name !== null) { updates.push(`display_name = $${idx++}`); params.push(display_name); }
     if (role !== null) { updates.push(`role = $${idx++}`); params.push(role); }
     if (username !== null) { updates.push(`username = $${idx++}`); params.push(username); }
-    if (avatar_url !== null) {
-      updates.push(`avatar_url = $${idx++}`); params.push(avatar_url);
+    if (avatar_data !== null) {
+      updates.push(`avatar_data = $${idx++}`); params.push(avatar_data);
+      // Any legacy filesystem pointer becomes stale once the blob is in the DB.
+      updates.push(`avatar_url = NULL`);
     } else if (clearRequested) {
-      // client explicitly requested clearing the avatar; set DB column to NULL
+      // client explicitly requested clearing the avatar
+      updates.push(`avatar_data = NULL`);
       updates.push(`avatar_url = NULL`);
     }
     if (updates.length === 0) {
-      const { rows } = await pool.query('SELECT id, display_name, username, role, avatar_url FROM admins WHERE id = $1', [id]);
+      const { rows } = await pool.query('SELECT id, display_name, username, role, avatar_data FROM admins WHERE id = $1', [id]);
       return res.json(rows[0]);
     }
     params.push(id);
-    const q = `UPDATE admins SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, display_name, username, role, avatar_url`;
+    const q = `UPDATE admins SET ${updates.join(', ')} WHERE id = $${idx} RETURNING id, display_name, username, role, avatar_data`;
   console.log('[PUT /accounts/:id] SQL:', q);
-  console.log('[PUT /accounts/:id] params:', params);
-    // Fetch old avatar_url before update so we can delete the old file
-    let oldAvatarUrl = null;
-    if (req.file || clearRequested) {
-      try { const r = await pool.query('SELECT avatar_url FROM admins WHERE id = $1', [id]); oldAvatarUrl = (r.rows[0] && r.rows[0].avatar_url) || null; } catch (_) {}
-    }
     try {
       const { rows } = await pool.query(q, params);
-      // Delete old avatar file if it was in /uploads/
-      if (oldAvatarUrl && oldAvatarUrl.startsWith('/uploads/')) {
-        try {
-          const oldFile = path.join(uploadsPath, path.basename(oldAvatarUrl));
-          if (fs.existsSync(oldFile)) fs.unlinkSync(oldFile);
-        } catch (_) {}
-      }
+      // Remove a now-orphaned legacy upload so the filesystem does not keep a
+      // stale copy that could be mistaken for the source of truth.
+      try {
+        const r = await pool.query('SELECT avatar_url FROM admins WHERE id = $1', [id]);
+        const oldAvatarUrl = (r.rows[0] && r.rows[0].avatar_url) || null;
+        if (oldAvatarUrl && oldAvatarUrl.startsWith('/uploads/')) {
+          try {
+            const oldFile = path.join(uploadsPath, path.basename(oldAvatarUrl));
+            if (fs.existsSync(oldFile)) fs.unlinkSync(oldFile);
+          } catch (_) {}
+        }
+      } catch (_) {}
       
       // Log to control_panel_audit
       const adminId = req.user && req.user.id;
@@ -323,7 +388,7 @@ router.put('/accounts/:id', authenticateToken, isAdmin, upload.single('avatar'),
       if (display_name !== null) changes.display_name = display_name;
       if (role !== null) changes.role = role;
       if (username !== null) changes.username = username;
-      if (avatar_url !== null) changes.avatar_url = avatar_url;
+      if (avatar_data !== null) changes.avatar_updated = true;
       if (clearRequested) changes.avatar_cleared = true;
       
       try {
@@ -1538,7 +1603,10 @@ router.post('/settings/telegram/apply-now', authenticateToken, isAdmin, async (r
   }
 });
 
-// ADMIN: Upload and set General logo (stores URL under app_settings.general.logo_url)
+// ADMIN: Upload and set General logo.
+// The rendered 1x/2x PNGs are stored in the `media` table (NOT the filesystem)
+// so branding survives a host migration or a snapshot restore. app_settings
+// keeps pointing at them via /api/admin/public/media/<key> URLs.
 router.post('/settings/general/logo', authenticateToken, isAdmin, upload.single('logo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ msg: 'No file uploaded' });
@@ -1555,36 +1623,42 @@ router.post('/settings/general/logo', authenticateToken, isAdmin, upload.single(
 
     // Server-side resize to 70x70 (1x) and 140x140 (2x) PNG for crisp display on high-DPI screens
     const inputPath = req.file.path;
-  const ext = '.png';
-  const baseName = 'logo'; // Use consistent naming for easy persistence
-  const outName1x = `${baseName}-70x70${ext}`;
-  const outName2x = `${baseName}-140x140${ext}`;
-    const outPath1x = path.join(logosPath, outName1x); // Store in logos directory
-    const outPath2x = path.join(logosPath, outName2x);
+    const outName1x = 'logo-70x70.png';
+    const outName2x = 'logo-140x140.png';
+    let png1x;
+    let png2x;
     try {
       // Generate 2x first from original for maximum fidelity
-      await sharp(inputPath)
+      png2x = await sharp(inputPath)
         .resize(140, 140, { fit: 'cover', position: 'centre' })
         .png({ compressionLevel: 9, adaptiveFiltering: false })
-        .toFile(outPath2x);
+        .toBuffer();
       // Generate 1x from original to avoid double resampling
-      await sharp(inputPath)
+      png1x = await sharp(inputPath)
         .resize(70, 70, { fit: 'cover', position: 'centre' })
         .png({ compressionLevel: 9, adaptiveFiltering: false })
-        .toFile(outPath1x);
-      // remove original upload to save space
-      try { fs.unlinkSync(inputPath); } catch (_) {}
+        .toBuffer();
     } catch (e) {
-      // on failure, keep original as fallback
+      // on failure, fall back to the original bytes
       console.error('sharp resize failed:', e && e.message ? e.message : e);
-      // use original file as 1x fallback
-      try { fs.renameSync(inputPath, outPath1x); } catch (_) {}
+      try { png1x = fs.readFileSync(inputPath); } catch (_) {}
+      png2x = png1x;
+    } finally {
+      // remove the temp upload either way
+      try { fs.unlinkSync(inputPath); } catch (_) {}
     }
-    const logoUrl = `/logos/${outName1x}`; // Update URL to use logos path
-    const logoUrl2x = fs.existsSync(outPath2x) ? `/logos/${outName2x}` : undefined;
+    if (!png1x) return res.status(500).json({ msg: 'Could not process image' });
+
+    const KEY_1X = 'logo:1x';
+    const KEY_2X = 'logo:2x';
+    await mediaStore.putMedia(pool, KEY_1X, `data:image/png;base64,${png1x.toString('base64')}`);
+    await mediaStore.putMedia(pool, KEY_2X, `data:image/png;base64,${png2x.toString('base64')}`);
+
+    const logoUrl = `/api/admin/public/media/${encodeURIComponent(KEY_1X)}`;
+    const logoUrl2x = `/api/admin/public/media/${encodeURIComponent(KEY_2X)}`;
     const next = { ...current };
     next.logo_url = logoUrl;
-    if (logoUrl2x) next.logo_url_2x = logoUrl2x; else delete next.logo_url_2x;
+    next.logo_url_2x = logoUrl2x;
     await pool.query(
       `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
        VALUES ($1,$2,$3, now())
@@ -1599,17 +1673,17 @@ router.post('/settings/general/logo', authenticateToken, isAdmin, upload.single(
       );
     } catch (_) {}
 
-    // Delete old logo/favicon files if they were differently-named (non-standard names)
+    // Delete the superseded on-disk logos now that the DB is authoritative.
     for (const oldKey of ['logo_url', 'logo_url_2x']) {
       const oldUrl = current[oldKey];
-      if (oldUrl && oldUrl.startsWith('/logos/') && !['logo-70x70.png','logo-140x140.png'].includes(path.basename(oldUrl))) {
+      if (oldUrl && oldUrl.startsWith('/logos/')) {
         try { const p = path.join(logosPath, path.basename(oldUrl)); if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
       }
     }
 
   const origin = req.protocol + '://' + req.get('host');
-  const absolute = logoUrl.startsWith('http') ? logoUrl : (origin + logoUrl);
-  const absolute2x = logoUrl2x ? (logoUrl2x.startsWith('http') ? logoUrl2x : (origin + logoUrl2x)) : undefined;
+  const absolute = origin + logoUrl;
+  const absolute2x = origin + logoUrl2x;
   // refresh cache so public endpoint reflects new logo immediately
   try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
   return res.json({ ok: true, logo_url: logoUrl, logo_url_2x: logoUrl2x, url: absolute, url2x: absolute2x });
@@ -1635,32 +1709,37 @@ router.post('/settings/general/favicon', authenticateToken, isAdmin, upload.sing
     const current = rows && rows[0] ? (rows[0].data || {}) : {};
 
     const inputPath = req.file.path;
-    const baseName = 'favicon'; // Use consistent naming
-    const outName32 = `${baseName}-32x32.png`;
-    const outName180 = `${baseName}-180x180.png`;
-    const outPath32 = path.join(logosPath, outName32); // Store in logos directory
-    const outPath180 = path.join(logosPath, outName180);
+    // Favicons are stored as blobs in the `media` table for the same reason as
+    // the logo: branding must survive a host move or snapshot restore.
+    let png32;
+    let png180;
     try {
       // Generate 180x180 (Apple touch icon) first for quality, then 32x32
-      await sharp(inputPath)
+      png180 = await sharp(inputPath)
         .resize(180, 180, { fit: 'cover', position: 'centre' })
         .png({ compressionLevel: 9, adaptiveFiltering: false })
-        .toFile(outPath180);
-      await sharp(inputPath)
+        .toBuffer();
+      png32 = await sharp(inputPath)
         .resize(32, 32, { fit: 'cover', position: 'centre' })
         .png({ compressionLevel: 9, adaptiveFiltering: false })
-        .toFile(outPath32);
-      try { fs.unlinkSync(inputPath); } catch (_) {}
+        .toBuffer();
     } catch (e) {
       console.error('sharp resize (favicon multi-size) failed:', e && e.message ? e.message : e);
-      // fallback: move original as 32x32 name (no resize) if 32x32 missing
-      try { if (!fs.existsSync(outPath32)) fs.renameSync(inputPath, outPath32); } catch (_) {}
+      try { png32 = fs.readFileSync(inputPath); } catch (_) {}
+      png180 = png32;
+    } finally {
+      try { fs.unlinkSync(inputPath); } catch (_) {}
     }
+    if (!png32) return res.status(500).json({ msg: 'Could not process image' });
 
-    const faviconUrl = `/logos/${outName32}`; // Update URL to use logos path
-    const touchUrl = fs.existsSync(outPath180) ? `/logos/${outName180}` : undefined;
-    const next = { ...current, favicon_url: faviconUrl };
-    if (touchUrl) next.apple_touch_icon_url = touchUrl; else delete next.apple_touch_icon_url;
+    const KEY_32 = 'favicon:32';
+    const KEY_180 = 'favicon:180';
+    await mediaStore.putMedia(pool, KEY_32, `data:image/png;base64,${png32.toString('base64')}`);
+    await mediaStore.putMedia(pool, KEY_180, `data:image/png;base64,${png180.toString('base64')}`);
+
+    const faviconUrl = `/api/admin/public/media/${encodeURIComponent(KEY_32)}`;
+    const touchUrl = `/api/admin/public/media/${encodeURIComponent(KEY_180)}`;
+    const next = { ...current, favicon_url: faviconUrl, apple_touch_icon_url: touchUrl };
     await pool.query(
       `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
        VALUES ($1,$2,$3, now())
@@ -1675,17 +1754,17 @@ router.post('/settings/general/favicon', authenticateToken, isAdmin, upload.sing
       );
     } catch (_) {}
 
-    // Delete old favicon files if they were differently-named (non-standard names)
+    // Delete the superseded on-disk favicons now that the DB is authoritative.
     for (const oldKey of ['favicon_url', 'apple_touch_icon_url']) {
       const oldUrl = current[oldKey];
-      if (oldUrl && oldUrl.startsWith('/logos/') && !['favicon-32x32.png','favicon-180x180.png'].includes(path.basename(oldUrl))) {
+      if (oldUrl && oldUrl.startsWith('/logos/')) {
         try { const p = path.join(logosPath, path.basename(oldUrl)); if (fs.existsSync(p)) fs.unlinkSync(p); } catch (_) {}
       }
     }
 
     const origin = req.protocol + '://' + req.get('host');
-    const absolute = faviconUrl.startsWith('http') ? faviconUrl : (origin + faviconUrl);
-    const absoluteTouch = touchUrl ? (touchUrl.startsWith('http') ? touchUrl : (origin + touchUrl)) : undefined;
+    const absolute = origin + faviconUrl;
+    const absoluteTouch = origin + touchUrl;
     // refresh cache so public endpoint reflects new favicon immediately
     try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
     return res.json({ ok: true, favicon_url: faviconUrl, apple_touch_icon_url: touchUrl, url: absolute, url_touch: absoluteTouch });
@@ -1725,6 +1804,9 @@ router.delete('/settings/general/favicon', authenticateToken, isAdmin, async (re
         }
       }
     } catch (_) {}
+    // Remove the DB-stored favicon blobs as well.
+    try { await mediaStore.deleteMedia(pool, 'favicon:32'); } catch (_) {}
+    try { await mediaStore.deleteMedia(pool, 'favicon:180'); } catch (_) {}
     try {
       await pool.query(
         'INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)',
@@ -1768,6 +1850,10 @@ router.delete('/settings/general/logo', authenticateToken, isAdmin, async (req, 
       deleteIfLocal(oldUrl);
       deleteIfLocal(oldUrl2x);
     } catch (_) {}
+    // Drop the DB-stored blobs too, otherwise the media table keeps growing and
+    // a later restore would resurrect a logo the user believes they deleted.
+    try { await mediaStore.deleteMedia(pool, 'logo:1x'); } catch (_) {}
+    try { await mediaStore.deleteMedia(pool, 'logo:2x'); } catch (_) {}
     try {
       await pool.query(
         'INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)',
@@ -1916,13 +2002,20 @@ router.get('/backup/config', authenticateToken, isAdmin, async (req, res) => {
         await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, 'backup', 'BACKUP', null, null]);
       }
     } catch (_) {}
-    const admins = await pool.query('SELECT id, display_name, username, role, avatar_url, created_at FROM admins ORDER BY id');
-    const settings = await pool.query('SELECT settings_key, data, updated_at FROM app_settings ORDER BY settings_key');
+    // Include avatar_data and media blobs so a config backup restores branding
+    // and profile pictures too, not just settings and role assignments.
+    const [admins, settings, media] = await Promise.all([
+      pool.query('SELECT id, display_name, username, role, avatar_url, avatar_data, created_at FROM admins ORDER BY id'),
+      pool.query('SELECT settings_key, data, updated_at FROM app_settings ORDER BY settings_key'),
+      mediaStore.listMedia(pool).catch(() => [])
+    ]);
     const payload = {
       type: 'config-backup-v1',
       createdAt: new Date().toISOString(),
+      // avatar_data carries the image; avatar_url is kept only for old clients.
       admins: admins.rows || [],
       app_settings: (settings.rows || []).map(r => ({ settings_key: r.settings_key, data: maskSecrets(r.settings_key, r.data), updated_at: r.updated_at })),
+      media: media || [],
     };
     const json = JSON.stringify(payload, null, 2);
     res.setHeader('Content-Type', 'application/json');
@@ -1980,22 +2073,60 @@ router.post('/restore/config', authenticateToken, isAdmin, upload.single('file')
       }
     }
     // merge admins by username (no password updates)
+    // Avatars are restored from avatar_data (the DB copy). New accounts get a
+    // random unusable password rather than the old hard-coded placeholder hash,
+    // so an imported account can never be signed into with a known credential.
     if (Array.isArray(data.admins)) {
+      const VALID_ROLES = ['ADMIN', 'VIEWER', 'SERVER_ADMIN'];
       for (const a of data.admins) {
-        const { display_name, username, role, avatar_url } = a;
+        const { display_name, username, role, avatar_data } = a;
         if (!username) continue;
-        await client.query(
-          `INSERT INTO admins (display_name, username, password_hash, role, avatar_url)
-           VALUES ($1,$2,$3,$4,$5)
-           ON CONFLICT (username) DO UPDATE SET display_name = EXCLUDED.display_name, role = EXCLUDED.role, avatar_url = EXCLUDED.avatar_url`,
-          [display_name || username, username, '$2b$10$PLACEHOLDERPLACEHOLDERPLACEHOLDERuIvqJwQoak', role || 'VIEWER', avatar_url || null]
-        );
+        const safeRole = VALID_ROLES.includes(role) ? role : 'VIEWER';
+        const existing = await client.query('SELECT id FROM admins WHERE username = $1', [username]);
+        if (existing.rows && existing.rows.length) {
+          // Existing account: refresh profile + role, never the password.
+          await client.query(
+            `UPDATE admins SET display_name = $1, role = $2,
+                    avatar_data = COALESCE($3, avatar_data),
+                    avatar_url = CASE WHEN $3 IS NOT NULL THEN NULL ELSE avatar_url END,
+                    updated_at = now()
+              WHERE username = $4`,
+            [display_name || username, safeRole, avatar_data || null, username]
+          );
+        } else {
+          const tempHash = await bcrypt.hash(require('crypto').randomBytes(24).toString('base64url'), 10);
+          await client.query(
+            `INSERT INTO admins (display_name, username, password_hash, role, avatar_data)
+             VALUES ($1,$2,$3,$4,$5)`,
+            [display_name || username, username, tempHash, safeRole, avatar_data || null]
+          );
+        }
+      }
+    }
+    // media: logo / favicon blobs, so a config restore brings branding back.
+    if (Array.isArray(data.media) && data.media.length > 0) {
+      await mediaStore.ensureMediaTable(client);
+      for (const m of data.media) {
+        if (!m || !m.key || !m.data) continue;
+        if (!/^data:[^;,]+;base64,/.test(String(m.data))) continue;
+        try {
+          await client.query(
+            `INSERT INTO media (key, mime, data, byte_size, updated_at)
+             VALUES ($1,$2,$3,$4, now())
+             ON CONFLICT (key) DO UPDATE
+               SET mime = EXCLUDED.mime, data = EXCLUDED.data,
+                   byte_size = EXCLUDED.byte_size, updated_at = now()`,
+            [String(m.key), m.mime || 'image/png', String(m.data), m.byte_size || null]
+          );
+        } catch (e) {
+          console.warn(`Could not restore media ${m.key}:`, e && e.message ? e.message : e);
+        }
       }
     }
   await client.query('COMMIT');
   // refresh general settings cache after restore
   try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
-  return res.json({ msg: 'Config restored (merge)', admins: data.admins ? data.admins.length : 0, settings: data.app_settings ? data.app_settings.length : 0 });
+  return res.json({ msg: 'Config restored (merge)', admins: data.admins ? data.admins.length : 0, settings: data.app_settings ? data.app_settings.length : 0, media: data.media ? data.media.length : 0 });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('restore config failed:', err);
@@ -2014,7 +2145,7 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
         await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, 'backup', 'BACKUP', null, null]);
       }
     } catch (_) {}
-    const admins = await pool.query('SELECT id, display_name, username, role, avatar_url, created_at FROM admins ORDER BY id');
+    const admins = await pool.query('SELECT id, display_name, username, role, avatar_url, avatar_data, created_at FROM admins ORDER BY id');
     const servers = await pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers ORDER BY id');
     // permissions tables: prefer new name, fallback to legacy
     let viewerPerms = [];
@@ -2029,6 +2160,9 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
     let snapshotsRows = [];
     try { const sr = await pool.query('SELECT id, month_start::text as month_start, month_end::text as month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC'); snapshotsRows = sr.rows || []; } catch (_) {}
     const keyserverConfig = loadKeyserverConfig();
+    // media blobs are part of a full DB backup: the database is the source of
+    // truth for branding, so a .db restore must carry logo/favicon with it.
+    const mediaRows = await mediaStore.listMedia(pool).catch(() => []);
     const payload = {
       type: 'db-backup-v1',
       createdAt: new Date().toISOString(),
@@ -2044,6 +2178,7 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
       app_settings: (settings.rows || []).map(r => ({ settings_key: r.settings_key, data: maskSecrets(r.settings_key, r.data), updated_at: r.updated_at })),
       domains: domainsRows,
       financial_snapshots: snapshotsRows,
+      media: mediaRows,
       keyserver_config: keyserverConfig || null,
     };
     const json = JSON.stringify(payload);
@@ -2066,13 +2201,18 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
         await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, 'backup', 'BACKUP', null, null]);
       }
     } catch (_) {}
-    const [settingsRes, serversRes, serverKeysRes, usersRes, domainsRes, snapshotsRes] = await Promise.all([
+    const [settingsRes, serversRes, serverKeysRes, usersRes, domainsRes, snapshotsRes, adminsRes, serverAdminPermsRes, mediaRes] = await Promise.all([
       pool.query('SELECT * FROM app_settings'),
       pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers'),
       pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys'),
       pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users'),
       pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains').catch(() => ({ rows: [] })),
-      pool.query('SELECT id, month_start::text as month_start, month_end::text as month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC').catch(() => ({ rows: [] }))
+      pool.query('SELECT id, month_start::text as month_start, month_end::text as month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC').catch(() => ({ rows: [] })),
+      // Admins carry their three roles and their DB-stored avatar so a restore
+      // onto another host reproduces the exact same team, branding included.
+      pool.query('SELECT id, display_name, username, role, avatar_data, created_at, updated_at, last_seen FROM admins ORDER BY id').catch(() => ({ rows: [] })),
+      pool.query('SELECT admin_id, server_id FROM server_admin_permissions').catch(() => ({ rows: [] })),
+      mediaStore.listMedia(pool).catch(() => [])
     ]);
     const keyserverConfig = loadKeyserverConfig();
     const payload = {
@@ -2086,6 +2226,21 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
       })),
       domains: domainsRes.rows || [],
       financial_snapshots: snapshotsRes.rows || [],
+      // NOTE: password_hash is deliberately NOT exported. Snapshot restores can
+      // recreate accounts and roles, but never carry credentials across hosts.
+      admins: (adminsRes.rows || []).map(a => ({
+        id: a.id,
+        display_name: a.display_name,
+        username: a.username,
+        role: a.role,
+        avatar_data: a.avatar_data,
+        created_at: a.created_at,
+        updated_at: a.updated_at,
+        last_seen: a.last_seen
+      })),
+      server_admin_permissions: serverAdminPermsRes.rows || [],
+      // Logo / favicon blobs (data URIs) keyed by their media key.
+      media: mediaRes || [],
       keyserver_config: keyserverConfig || null
     };
     const json = JSON.stringify(payload, null, 2);
@@ -2120,8 +2275,22 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       return res.status(400).json({ msg: 'Invalid JSON' });
     }
 
-    if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.server_keys) && !Array.isArray(data.users) && !Array.isArray(data.admins))) {
+    // "Restore Admins" is opt-in. When enabled the incoming `admins` array
+    // REPLACES the current team (display names, roles, avatars) rather than
+    // being merged, and every existing session is revoked so the people who
+    // were removed lose access immediately.
+    const wantsAdmins =
+      String((req.body && req.body.restore_admins) || req.query.restore_admins || '') === '1' ||
+      String((req.body && req.body.restore_admins) || '') === 'true';
+    let adminsRestored = null;
+
+    if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.server_keys) && !Array.isArray(data.users) && !Array.isArray(data.admins) && !Array.isArray(data.media))) {
       return res.status(400).json({ msg: 'Invalid snapshot format' });
+    }
+    // An admin overwrite that carries no accounts would delete the whole team
+    // and lock everyone out, so refuse it explicitly.
+    if (wantsAdmins && (!Array.isArray(data.admins) || data.admins.length === 0)) {
+      return res.status(400).json({ msg: 'Snapshot contains no admins; refusing to overwrite the admin team' });
     }
     const client = await pool.connect();
     try {
@@ -2225,9 +2394,91 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       }
     }
     
-    // admins: Merge avatar data only (preserve passwords and other security data)
-    // Only restore avatar_url and avatar_data for existing admins matching by username
-    if (Array.isArray(data.admins)) {
+    // admins: by default merge avatar data only (preserve passwords and other
+    // security data) for existing admins matching by username. When the caller
+    // explicitly ticked "Restore Admins", the team is overwritten instead.
+    if (Array.isArray(data.admins) && data.admins.length > 0 && wantsAdmins) {
+      const VALID_ROLES = ['ADMIN', 'VIEWER', 'SERVER_ADMIN'];
+      const existing = await client.query('SELECT id, username, password_hash FROM admins');
+      const byUsername = new Map((existing.rows || []).map(r => [String(r.username || '').toLowerCase(), r]));
+      let restored = 0;
+      let updated = 0;
+      for (const a of data.admins) {
+        if (!a.username) continue;
+        // Only the three supported roles may be restored; anything else would
+        // violate the admins_role_check constraint.
+        const role = VALID_ROLES.includes(a.role) ? a.role : 'VIEWER';
+        const uname = String(a.username);
+        const prior = byUsername.get(uname.toLowerCase());
+        if (prior) {
+          // Keep the EXISTING password so restoring a snapshot can never
+          // silently reset anybody's credentials.
+          await client.query(
+            `UPDATE admins SET display_name = $1, role = $2, avatar_data = $3, avatar_url = NULL, updated_at = now() WHERE id = $4`,
+            [a.display_name || null, role, a.avatar_data || null, prior.id]
+          );
+          updated++;
+        } else {
+          // Brand-new account: it needs a password to be usable. Derive a random
+          // one the operator can reset, rather than shipping a known default.
+          const tempPassword = require('crypto').randomBytes(24).toString('base64url');
+          const tempHash = await bcrypt.hash(tempPassword, 10);
+          const ins = await client.query(
+            `INSERT INTO admins (display_name, username, password_hash, role, avatar_data, created_at)
+             VALUES ($1,$2,$3,$4,$5, COALESCE($6, now())) RETURNING id`,
+            [a.display_name || uname, uname, tempHash, role, a.avatar_data || null, a.created_at || null]
+          );
+          byUsername.set(uname.toLowerCase(), ins.rows[0]);
+          restored++;
+        }
+      }
+      // Server-admin assignments are replaced wholesale to match the new team.
+      try {
+        await client.query('DELETE FROM server_admin_permissions');
+        if (Array.isArray(data.server_admin_permissions)) {
+          for (const p of data.server_admin_permissions) {
+            const adminRow = byUsername.get(String(
+              (data.admins.find(x => x.id === p.admin_id) || {}).username || ''
+            ).toLowerCase());
+            const adminId = p.admin_id || (adminRow && adminRow.id);
+            if (!adminId || !p.server_id) continue;
+            await client.query(
+              'INSERT INTO server_admin_permissions (admin_id, server_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+              [adminId, p.server_id]
+            );
+          }
+        }
+      } catch (e) {
+        console.warn('server_admin_permissions restore skipped:', e && e.message ? e.message : e);
+      }
+      // Accounts present before but absent from the snapshot are removed, so
+      // the restored team matches the snapshot exactly.
+      const keep = new Set((data.admins || []).map(a => String(a.username || '').toLowerCase()));
+      for (const r of (existing.rows || [])) {
+        if (!keep.has(String(r.username || '').toLowerCase())) {
+          try { await client.query('DELETE FROM admins WHERE id = $1', [r.id]); } catch (_) {}
+        }
+      }
+      // Revoke every session so removed/changed accounts lose access at once and
+      // the operator is forced to sign in again with the restored team.
+      let revoked = 0;
+      try {
+        const inval = await client.query(
+          `INSERT INTO invalidated_tokens (jti, admin_id, reason)
+           SELECT 'restore-' || md5(random()::text || clock_timestamp()::text || t.jti), t.admin_id, 'admins_restored'
+             FROM (SELECT DISTINCT admin_id FROM refresh_tokens WHERE admin_id IS NOT NULL) t
+           ON CONFLICT DO NOTHING`
+        );
+        revoked = inval.rowCount || 0;
+      } catch (e) {
+        console.warn('token invalidation during admin restore failed:', e && e.message ? e.message : e);
+      }
+      try { await client.query('DELETE FROM refresh_tokens'); } catch (_) {}
+      try { await client.query('DELETE FROM invalidated_tokens'); } catch (_) {}
+      console.log(`[restore/snapshot] admins overwritten: ${updated} updated, ${restored} created, sessions revoked`);
+      // Surface the outcome to the caller.
+      adminsRestored = { updated, created: restored, sessions_revoked: true };
+    } else if (Array.isArray(data.admins)) {
       for (const a of data.admins) {
         if (!a.username) continue;
         try {
@@ -2237,6 +2488,28 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
           );
         } catch (e) {
           console.warn(`Could not restore avatar for admin ${a.username}:`, e.message);
+        }
+      }
+    }
+
+    // media: logo / favicon blobs. Restored unconditionally so branding always
+    // matches the snapshot, independent of the admin overwrite choice.
+    if (Array.isArray(data.media) && data.media.length > 0) {
+      await mediaStore.ensureMediaTable(client);
+      for (const m of data.media) {
+        if (!m || !m.key || !m.data) continue;
+        if (!/^data:[^;,]+;base64,/.test(String(m.data))) continue;
+        try {
+          await client.query(
+            `INSERT INTO media (key, mime, data, byte_size, updated_at)
+             VALUES ($1,$2,$3,$4, now())
+             ON CONFLICT (key) DO UPDATE
+               SET mime = EXCLUDED.mime, data = EXCLUDED.data,
+                   byte_size = EXCLUDED.byte_size, updated_at = now()`,
+            [String(m.key), m.mime || 'image/png', String(m.data), m.byte_size || null]
+          );
+        } catch (e) {
+          console.warn(`Could not restore media ${m.key}:`, e && e.message ? e.message : e);
         }
       }
     }
@@ -2359,6 +2632,9 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       server_keys: Array.isArray(data.server_keys) ? data.server_keys.length : 0,
       users: Array.isArray(data.users) ? data.users.length : 0,
       admins_avatars_restored: Array.isArray(data.admins) ? data.admins.length : 0,
+      // Present only when "Restore Admins" was ticked.
+      admins: adminsRestored,
+      media_restored: Array.isArray(data.media) ? data.media.length : 0,
       domains: Array.isArray(data.domains) ? data.domains.length : 0,
       financial_snapshots: snapshotCount,
       keyserver_config: data.keyserver_config ? true : false,
@@ -2482,16 +2758,53 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
         }
       }
       // admins (merge, no passwords)
+      // Roles are validated against the three supported values and avatars are
+      // restored from the DB copy. New accounts get a random unusable password
+      // instead of the old hard-coded placeholder hash.
       if (Array.isArray(payload.admins)) {
+        const VALID_ROLES = ['ADMIN', 'VIEWER', 'SERVER_ADMIN'];
         for (const a of payload.admins) {
-          const { display_name, username, role, avatar_url } = a;
+          const { display_name, username, role, avatar_data } = a;
           if (!username) continue;
-          await client.query(
-            `INSERT INTO admins (display_name, username, password_hash, role, avatar_url)
-             VALUES ($1,$2,$3,$4,$5)
-             ON CONFLICT (username) DO UPDATE SET display_name = EXCLUDED.display_name, role = EXCLUDED.role, avatar_url = EXCLUDED.avatar_url`,
-            [display_name || username, username, '$2b$10$PLACEHOLDERPLACEHOLDERPLACEHOLDERuIvqJwQoak', role || 'VIEWER', avatar_url || null]
-          );
+          const safeRole = VALID_ROLES.includes(role) ? role : 'VIEWER';
+          const existing = await client.query('SELECT id FROM admins WHERE username = $1', [username]);
+          if (existing.rows && existing.rows.length) {
+            await client.query(
+              `UPDATE admins SET display_name = $1, role = $2,
+                      avatar_data = COALESCE($3, avatar_data),
+                      avatar_url = CASE WHEN $3 IS NOT NULL THEN NULL ELSE avatar_url END,
+                      updated_at = now()
+                WHERE username = $4`,
+              [display_name || username, safeRole, avatar_data || null, username]
+            );
+          } else {
+            const tempHash = await bcrypt.hash(require('crypto').randomBytes(24).toString('base64url'), 10);
+            await client.query(
+              `INSERT INTO admins (display_name, username, password_hash, role, avatar_data)
+               VALUES ($1,$2,$3,$4,$5)`,
+              [display_name || username, username, tempHash, safeRole, avatar_data || null]
+            );
+          }
+        }
+      }
+      // media: logo / favicon blobs must come back with a full DB restore.
+      if (Array.isArray(payload.media) && payload.media.length > 0) {
+        await mediaStore.ensureMediaTable(client);
+        for (const m of payload.media) {
+          if (!m || !m.key || !m.data) continue;
+          if (!/^data:[^;,]+;base64,/.test(String(m.data))) continue;
+          try {
+            await client.query(
+              `INSERT INTO media (key, mime, data, byte_size, updated_at)
+               VALUES ($1,$2,$3,$4, now())
+               ON CONFLICT (key) DO UPDATE
+                 SET mime = EXCLUDED.mime, data = EXCLUDED.data,
+                     byte_size = EXCLUDED.byte_size, updated_at = now()`,
+              [String(m.key), m.mime || 'image/png', String(m.data), m.byte_size || null]
+            );
+          } catch (e) {
+            console.warn(`Could not restore media ${m.key}:`, e && e.message ? e.message : e);
+          }
         }
       }
       // settings
@@ -2616,6 +2929,7 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           server_admin_perms: payload.server_admin_permissions ? payload.server_admin_permissions.length : 0,
           settings: payload.app_settings ? payload.app_settings.length : 0,
           domains: payload.domains ? payload.domains.length : 0,
+          media: payload.media ? payload.media.length : 0,
           financial_snapshots: snapshotCount,
           keyserver_config: payload.keyserver_config ? true : false,
         }
@@ -2633,83 +2947,11 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
   }
 });
 
-// Config restore: add size limit and checksum support
-router.post('/restore/config', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
-  const tmpUploadPath = req.file && req.file.path ? req.file.path : null;
-  const parseBody = () => {
-    try {
-      if (req.file) {
-        if (req.file.buffer) return JSON.parse(req.file.buffer.toString('utf8'));
-        if (req.file.path) {
-          try { const content = fs.readFileSync(req.file.path); return JSON.parse(content.toString('utf8')); } catch (e) { }
-        }
-      }
-      return req.body && typeof req.body === 'object' ? req.body : null;
-    } catch (e) { return null; }
-  };
-  try {
-    if (req.file && req.file.size > 1024 * 1024) return res.status(413).json({ msg: 'File too large' });
-    // optional checksum header (best-effort)
-    try {
-      if (req.file) {
-        let bufForChecksum = null;
-        if (req.file.buffer) bufForChecksum = req.file.buffer;
-        else if (req.file.path) bufForChecksum = fs.readFileSync(req.file.path);
-        const provided = (req.headers['x-checksum-sha256'] || '').toString().trim().toLowerCase();
-        if (provided && bufForChecksum) {
-          const crypto = require('crypto');
-          const actual = crypto.createHash('sha256').update(bufForChecksum).digest('hex');
-          if (provided !== actual) return res.status(400).json({ msg: 'Checksum mismatch' });
-        }
-      }
-    } catch (_) {}
-  } catch (e) { return res.status(400).json({ msg: 'Invalid upload' }); }
-  const data = parseBody();
-  if (!data || data.type !== 'config-backup-v1') return res.status(400).json({ msg: 'Invalid config backup format' });
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    if (Array.isArray(data.app_settings)) {
-      for (const s of data.app_settings) {
-        const key = s.settings_key;
-        const incoming = s.data || {};
-        const curRes = await client.query('SELECT data FROM app_settings WHERE settings_key = $1', [key]);
-        const current = curRes.rows && curRes.rows[0] ? (curRes.rows[0].data || {}) : {};
-        const toStore = safeMergeSettings(key, current, incoming);
-        await client.query(
-          `INSERT INTO app_settings (settings_key, data, updated_by, updated_at)
-           VALUES ($1,$2,$3, now())
-           ON CONFLICT (settings_key) DO UPDATE SET data = EXCLUDED.data, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-          [key, toStore, req.user && req.user.id ? req.user.id : null]
-        );
-        try { await client.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, key, 'UPDATE', maskSecrets(key, current), maskSecrets(key, toStore)]); } catch (_) {}
-        try { await warnIfKeyDrop(client, key, current, toStore); } catch (_) {}
-      }
-    }
-    if (Array.isArray(data.admins)) {
-      for (const a of data.admins) {
-        const { display_name, username, role, avatar_url } = a;
-        if (!username) continue;
-        await client.query(
-          `INSERT INTO admins (display_name, username, password_hash, role, avatar_url)
-           VALUES ($1,$2,$3,$4,$5)
-           ON CONFLICT (username) DO UPDATE SET display_name = EXCLUDED.display_name, role = EXCLUDED.role, avatar_url = EXCLUDED.avatar_url`,
-          [display_name || username, username, '$2b$10$PLACEHOLDERPLACEHOLDERPLACEHOLDERuIvqJwQoak', role || 'VIEWER', avatar_url || null]
-        );
-      }
-    }
-  await client.query('COMMIT');
-  // refresh general settings cache after restore (alt route)
-  try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
-  return res.json({ msg: 'Config restored (merge)', admins: data.admins ? data.admins.length : 0, settings: data.app_settings ? data.app_settings.length : 0 });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('restore config failed:', err);
-    return res.status(500).json({ msg: 'Failed to restore config' });
-  } finally {
-    client.release();
-  }
-});
+// NOTE: a second `router.post('/restore/config', ...)` used to live here.
+// Express matches routes in registration order, so that duplicate was dead code
+// — it could never run, and it still carried the old hard-coded placeholder
+// password hash plus no avatar/media handling. The live handler is the one
+// defined earlier in this file (next to GET /backup/config).
 
 // ADMIN: Raw general settings and recent audit entries (admin only)
 router.get('/settings/general/raw', authenticateToken, isAdmin, async (req, res) => {
@@ -3810,21 +4052,15 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
         // Username exists — UPDATE in place (preserve existing id to keep session/FK integrity)
         const existingId = existingByUsername.rows[0].id;
         const isCurrentAdmin = currentAdminId && existingId === currentAdminId;
-        // Resolve avatar: if backup has avatar_data (base64), write file and set avatar_url
-        let resolvedAvatarUrl = a.avatar_url || null;
-        let resolvedAvatarData = a.avatar_data || null;
-        if (a.avatar_data && a.avatar_data.startsWith('data:image/')) {
-          try {
-            const m = a.avatar_data.match(/^data:(image\/[\w+]+);base64,(.+)$/);
-            if (m) {
-              const ext = m[1].replace('image/', '').replace('jpeg', 'jpg');
-              const fname = `restored-${a.username}-${Date.now()}.${ext}`;
-              fs.writeFileSync(path.join(uploadsPath, fname), Buffer.from(m[2], 'base64'));
-              resolvedAvatarUrl = `/uploads/${fname}`;
-              resolvedAvatarData = null; // file is now on disk, no need for inline data
-            }
-          } catch (_) { /* keep original values on error */ }
-        }
+        // Resolve avatar: keep the image IN THE DATABASE. Older versions wrote
+        // the base64 back out to public/uploads and cleared avatar_data, which
+        // broke the "media lives in Postgres" guarantee on every admin restore.
+        // avatar_url is nulled whenever we have inline bytes so no stale file
+        // path can take precedence on read.
+        const incomingAvatarData = mediaStore.toDataUri(a.avatar_data, null)
+          || (a.avatar_url && String(a.avatar_url).startsWith('data:') ? a.avatar_url : null);
+        const resolvedAvatarData = incomingAvatarData || null;
+        const resolvedAvatarUrl = resolvedAvatarData ? null : (a.avatar_url || null);
         if (mode === 'merge' || isCurrentAdmin) {
           // merge or current admin: keep password_hash and role untouched
           await client.query(
@@ -3833,34 +4069,32 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
           );
         } else {
           // overwrite non-current: update everything including password
+          const overHash = (a.password_hash && /^\$2[aby]\$\d{2}\$/.test(String(a.password_hash)))
+            ? a.password_hash
+            : await bcrypt.hash(require('crypto').randomBytes(24).toString('base64url'), 10);
           await client.query(
             `UPDATE admins SET display_name=$1, password_hash=$2, role=$3, avatar_url=$4, avatar_data=$5, last_seen=$6, updated_at=NOW() WHERE id=$7`,
-            [a.display_name || null, a.password_hash || 'placeholder', a.role || 'VIEWER', resolvedAvatarUrl, resolvedAvatarData, a.last_seen || null, existingId]
+            [a.display_name || null, overHash, a.role || 'VIEWER', resolvedAvatarUrl, resolvedAvatarData, a.last_seen || null, existingId]
           );
         }
       } else {
-        // Username doesn't exist — try INSERT with backup's original id
-        // Resolve avatar for new insert: write base64 data to disk if present
-        let insertAvatarUrl = a.avatar_url || null;
-        let insertAvatarData = a.avatar_data || null;
-        if (a.avatar_data && a.avatar_data.startsWith('data:image/')) {
-          try {
-            const m = a.avatar_data.match(/^data:(image\/[\w+]+);base64,(.+)$/);
-            if (m) {
-              const ext = m[1].replace('image/', '').replace('jpeg', 'jpg');
-              const fname = `restored-${a.username}-${Date.now()}.${ext}`;
-              fs.writeFileSync(path.join(uploadsPath, fname), Buffer.from(m[2], 'base64'));
-              insertAvatarUrl = `/uploads/${fname}`;
-              insertAvatarData = null;
-            }
-          } catch (_) { /* keep original on error */ }
-        }
+        // Username doesn't exist — INSERT. Avatar stays inline in the DB.
+        const insAvatarData = mediaStore.toDataUri(a.avatar_data, null)
+          || (a.avatar_url && String(a.avatar_url).startsWith('data:') ? a.avatar_url : null);
+        const insertAvatarData = insAvatarData || null;
+        const insertAvatarUrl = insertAvatarData ? null : (a.avatar_url || null);
+        // Never fall back to a literal 'placeholder' string as a password hash:
+        // that value is a known bcrypt hash an attacker could replay. Accounts
+        // arriving without a usable hash get a random unusable one instead.
+        const safeHash = (a.password_hash && /^\$2[aby]\$\d{2}\$/.test(String(a.password_hash)))
+          ? a.password_hash
+          : await bcrypt.hash(require('crypto').randomBytes(24).toString('base64url'), 10);
         try {
           await client.query('SAVEPOINT admin_insert_sp');
           await client.query(
             `INSERT INTO admins (id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-            [a.id, a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', insertAvatarUrl, insertAvatarData, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
+            [a.id, a.display_name || null, a.username, safeHash, a.role || 'VIEWER', insertAvatarUrl, insertAvatarData, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
           );
           await client.query('RELEASE SAVEPOINT admin_insert_sp');
         } catch (insertErr) {
@@ -3871,7 +4105,7 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
             await client.query(
               `INSERT INTO admins (display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen)
                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-              [a.display_name || null, a.username, a.password_hash || 'placeholder', a.role || 'VIEWER', insertAvatarUrl, insertAvatarData, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
+              [a.display_name || null, a.username, safeHash, a.role || 'VIEWER', insertAvatarUrl, insertAvatarData, a.created_at || new Date().toISOString(), a.updated_at || null, a.last_seen || null]
             );
           } else {
             try { await client.query('ROLLBACK TO SAVEPOINT admin_insert_sp'); } catch (_) {}

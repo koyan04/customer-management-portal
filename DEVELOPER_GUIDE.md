@@ -475,9 +475,28 @@ All endpoints are prefixed with `/api`. Protected endpoints require `Authorizati
 
 | Method | Path | Auth | Role | Description |
 |---|---|---|---|---|
-| `POST` | `/api/auth/register` | Public | — | Register a new admin (should be restricted in production) |
-| `POST` | `/api/auth/login` | Public | — | Authenticate; returns `{ token }` |
+| `POST` | `/api/auth/register` | Public | — | **Disabled (410).** Public self-registration was a critical flaw; use `POST /api/admin/accounts` or `node seedAdmin.js` |
+| `POST` | `/api/auth/login` | Public | — | Authenticate; returns `{ token }`. Rate-limited and locks the account on repeated failures |
 | `POST` | `/api/auth/invalidate` | Bearer | Any | Invalidate current token (server-side logout) |
+
+**Login throttling** — enforced by `backend/lib/authGuard.js`, applied automatically to
+`POST /api/auth/login`. Two independent layers:
+
+| Layer | Limit | Window | Storage |
+|---|---|---|---|
+| Per-IP | 10 failed attempts | 15 min | in-memory (resets on restart) |
+| Per-account | 8 failed attempts | 15 min | `login_lockouts` table (survives restart) |
+
+A locked account returns `429` with a `Retry-After` header, even for the correct password.
+A successful login clears both layers. Unknown usernames still run a dummy `bcrypt.compare`
+so response timing does not reveal which accounts exist. Both layers **fail open** — a
+database problem will never lock a legitimate administrator out.
+
+To clear a lockout manually:
+
+```sql
+DELETE FROM login_lockouts WHERE username = 'your_username';
+```
 
 **`POST /api/auth/login` — Request body:**
 ```json
@@ -1361,17 +1380,21 @@ Service types are stored as free-text strings in `users.service_type`. The canon
 - **Role-based middleware** — DB role is re-validated on protected endpoints (not just trusted from JWT)
 - **Parameterized SQL queries** throughout — no raw string interpolation in queries
 - **Rate limiting** on import/export — 10 req/min in-memory bucket per user
+- **Login throttling + account lockout** — per-IP (10/15 min) and per-account (8/15 min, persisted in `login_lockouts`); see `lib/authGuard.js`
+- **Login timing equalisation** — unknown usernames still run a dummy `bcrypt.compare`
+- **Public self-registration disabled** — `POST /api/auth/register` returns 410
 - **File upload restrictions** — multer limits avatar uploads to 5 MB; import to 25 MB
 - **CORS** — currently allows all origins (suitable for same-host deployments; tighten for production)
 - **Content-Security headers** — none configured by default; add via nginx or a middleware like `helmet`
 
 ### Production Hardening Checklist
 
+- [x] Restrict the `/api/auth/register` endpoint — now disabled (410)
+- [x] Rate-limit and lock out `POST /api/auth/login`
 - [ ] Set a strong `JWT_SECRET` (≥ 64 random bytes)
 - [ ] Set `NODE_ENV=production`
 - [ ] Restrict Nginx to HTTPS only; use `certbot` or similar for TLS
 - [ ] Set `secure: true` on the refresh token cookie (automatic when not on localhost)
-- [ ] Restrict the `/api/auth/register` endpoint or remove it after initial setup
 - [ ] Review the CORS policy in `app.js` if the frontend is on a different domain
 - [ ] Keep PostgreSQL behind the firewall; only allow connections from the backend host
 - [ ] Add `helmet` middleware for standard HTTP security headers

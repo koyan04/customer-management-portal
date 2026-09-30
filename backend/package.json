@@ -15,6 +15,10 @@
     "pm2-start-bot": "pm2 start pm2.config.js --env production",
     "telegram-bot": "node telegram_bot.js",
     "test-unit": "jest --runInBand",
+    "test-clash": "node tests/clashValidator.test.js",
+    "test-telegram-nav": "node tests/telegramNav.test.js",
+    "test-backup-restore": "node tests/backupRestoreCoverage.test.js",
+    "test-auth-guard": "node tests/authGuard.test.js",
     "ci": "npm test"
   },
   "keywords": [],
@@ -46,6 +50,12 @@
     "supertest": "^7.0.0"
   },
   "jest": {
-    "globalTeardown": "./tests/jest.teardown.js"
+    "globalTeardown": "./tests/jest.teardown.js",
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "clashValidator\\.test\\.js$",
+      "telegramNav\\.test\\.js$",
+      "backupRestoreCoverage\\.test\\.js$"
+    ]
   }
 }

@@ -1328,12 +1328,9 @@ else
 fi
 
 color "Installation complete"
-echo "Primary domain: https://$DOMAIN"
-echo "All domains: ${ALL_DOMAINS[*]}"
-echo "Backend service: $BACKEND_SERVICE (port $BACKEND_PORT)"
-echo "Admin credentials: $ADMIN_USER / $ADMIN_PASS"
 
-# v1.6.0 verification tips (automated checks)
+# ── Automated verification (runs before the summary so the panel is last) ──
+# v1.6.0 verification tips
 color "v1.6.0 verification: running lightweight checks..."
 # 1) Check app version reported by /api/health
 if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
@@ -1354,18 +1351,67 @@ else
   warn "Skipping automated v1.3.0 checks: 'curl' and/or 'jq' not available on this system."
 fi
 
+# ── Final summary panel ───────────────────────────────────────────────────
+# A single, scannable block: where to go, how to sign in, what to do next.
+# This is printed LAST so it is the final thing on screen after a long install.
+echo
+divider
+echo -e "\033[1;32m  INSTALLATION COMPLETE\033[0m"
+divider
+echo
+echo -e "  \033[1mSign in\033[0m"
+echo -e "    URL       \033[4mhttps://$DOMAIN\033[0m"
+echo -e "    Username  \033[1m$ADMIN_USER\033[0m"
+echo -e "    Password  \033[1m$ADMIN_PASS\033[0m"
+if [ ${#ADMIN_PASS} -le 12 ]; then
+  echo -e "              \033[2m(short — consider changing it after first login)\033[0m"
+fi
+echo
+if [ ${#ALL_DOMAINS[@]} -gt 1 ]; then
+  echo -e "  \033[1mAlso served on\033[0m"
+  for d in "${ALL_DOMAINS[@]}"; do
+    [ "$d" = "$DOMAIN" ] && continue
+    echo -e "    $d"
+  done
+  echo
+fi
+echo -e "  \033[1mDetails\033[0m"
+echo -e "    Service   $BACKEND_SERVICE (port $BACKEND_PORT)"
+echo -e "    Install   $APP_DIR"
+if [ "$probe_ok" -eq 1 ]; then
+  echo -e "    Health    \033[1;32mhealthy\033[0m"
+else
+  echo -e "    Health    \033[1;33mdegraded — health probe did not pass; check the logs below\033[0m"
+fi
+if [ -f "$ROOT_ENV" ]; then
+  echo -e "    Config    $ROOT_ENV"
+fi
+echo
+echo -e "  \033[1mNext steps\033[0m"
+echo -e "    1. Sign in and change the admin password"
+echo -e "    2. Settings → General — set your logo, title and timezone"
+echo -e "    3. Add a server, then add users to it"
+echo -e "    4. Settings → Database — download a backup snapshot"
+echo
+echo -e "  \033[1mUseful commands\033[0m"
+echo -e "    status     systemctl status $BACKEND_SERVICE"
+echo -e "    logs       journalctl -u $BACKEND_SERVICE -f"
+echo -e "    restart    systemctl restart $BACKEND_SERVICE"
+echo -e "    uninstall  bash $APP_DIR/scripts/uninstall.sh"
+echo
+divider
+echo
+
 cat <<'EOF'
 
 Manual verification (GUI):
 
-- Open the frontend and go to Settings → General. Confirm the timezone selector shows a live current date/time preview.
-- Open Servers → Server list and confirm a "Transfer user" control is available on server rows for Admin/Server Admin roles.
-- Open Financial page and inspect the monthly report table; ensure month headers and values appear correctly for your timezone.
-- Navigate to any server detail page and verify the user enable/disable toggle icon (checkmark/slash) is present.
-- Test disabling a user: click the enable/disable icon, verify the user row becomes grayed out with status "Disabled".
-- Verify disabled users appear in lists but are excluded from all counts (Total Users, Active, Soon, Expired, Mini, Basic, Unlimited).
-- Check that the "Disabled" filter option is available in the status dropdown and shows only disabled users when selected.
-
-If you want scripted, authenticated verification, provide an admin API token or DB access and I can add a post-install verification script that exercises the admin endpoints.
+- Settings → General: confirm the timezone selector shows a live date/time preview.
+- Servers: confirm a "Transfer user" control appears on server rows for Admin / Server Admin.
+- Financial page: confirm monthly report headers and values match your timezone.
+- Any server detail page: confirm the user enable/disable toggle is present.
+- Disable a user and confirm the row greys out with status "Disabled".
+- Confirm disabled users are excluded from all counts (Total, Active, Soon, Expired, tiers).
+- Confirm the "Disabled" status filter exists and lists only disabled users.
 
 EOF

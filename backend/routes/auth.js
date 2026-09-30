@@ -6,6 +6,7 @@ const jwt = require('jsonwebtoken');
 const { authenticateToken } = require('../middleware/authMiddleware');
 const { randomBytes } = require('crypto');
 const crypto = require('crypto');
+const authGuard = require('../lib/authGuard');
 
 // Optional telegram_bot module for login notifications
 let tgBot = null;
@@ -15,46 +16,49 @@ try {
   // telegram_bot module not found - notifications disabled
 }
 
+// Create the lockout table at boot so the very first failed login is recorded.
+authGuard.ensureLockTable().catch(() => {});
+
 // --- REGISTER A NEW ADMIN/EDITOR ---
-// This route should ideally be protected or used only once for initial setup.
+// SECURITY: this endpoint was previously PUBLIC, which let anyone on the
+// internet create themselves an ADMIN account with a password of their
+// choosing — a full compromise of the portal. It is now disabled outright.
+//
+// The supported way to add an account is the authenticated Admin Panel
+// (POST /api/admin/accounts), or the `node seedAdmin.js` CLI on the server.
 router.post('/register', async (req, res) => {
-  const { display_name, username, password, role } = req.body;
-
-  try {
-    // 1. Check if the username already exists
-    const user = await pool.query('SELECT * FROM admins WHERE username = $1', [username]);
-    if (user.rows.length > 0) {
-      return res.status(401).json("Username already exists");
-    }
-
-    // 2. Hash the password
-    const saltRounds = 10;
-    const salt = await bcrypt.genSalt(saltRounds);
-    const password_hash = await bcrypt.hash(password, salt);
-
-    // 3. Insert the new admin into the database
-    const newAdmin = await pool.query(
-      'INSERT INTO admins (display_name, username, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, username, role',
-      [display_name, username, password_hash, role]
-    );
-
-    res.status(201).json(newAdmin.rows[0]);
-
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
-  }
+  return res.status(410).json({
+    error: 'Registration disabled',
+    msg: 'Public self-registration is disabled. Add accounts from the Admin Panel, or run: node seedAdmin.js'
+  });
 });
 
+// Retained for reference only — the previous implementation:
+//   router.post('/register', ...) accepted { display_name, username, password, role }
+//   from any caller, hashed the password with bcrypt, and INSERTed into admins
+//   with whatever `role` the request body asked for, including 'ADMIN'.
+//   Nothing called authenticateToken or isAdmin. Do not re-enable.
+
+
+// A real bcrypt hash of a value nobody knows. Comparing against it burns the
+// same CPU as a genuine check, so an unknown username and a wrong password take
+// the same time and the endpoint does not leak which accounts exist.
+// Cost matches the app's cost factor (10) and the 60-char shape is valid.
+const TIMING_EQUALISER_HASH = '$2b$10$riOn8okxN0ev4jm5p2S9Mu.LbwH5Yvo/sROFHGtm1K8Do3/w6t.be';
 
 // --- LOGIN AN ADMIN/EDITOR ---
-router.post('/login', async (req, res) => {
+// Protected by authGuard: per-IP sliding window + per-account lockout.
+router.post('/login', authGuard.loginGuard(), async (req, res) => {
   const { username, password } = req.body;
 
   try {
-    // 1. Check if the user exists
+    // 1. Check if the user exists.
+    //    A bcrypt comparison is still performed for unknown usernames so the
+    //    response time does not reveal which accounts exist.
     const user = await pool.query('SELECT * FROM admins WHERE username = $1', [username]);
     if (user.rows.length === 0) {
+      try { await bcrypt.compare(password || '', TIMING_EQUALISER_HASH); } catch (_) {}
+      await authGuard.noteFailure(req, username);
       return res.status(401).json("Invalid credentials");
     }
 
@@ -62,8 +66,19 @@ router.post('/login', async (req, res) => {
     const admin = user.rows[0];
     const isMatch = await bcrypt.compare(password, admin.password_hash);
     if (!isMatch) {
+      const lock = await authGuard.noteFailure(req, username);
+      if (lock && lock.locked) {
+        try { res.set('Retry-After', String(lock.retryAfterSec)); } catch (_) {}
+        return res.status(429).json({
+          error: 'Account temporarily locked',
+          msg: `Too many failed attempts. Try again in ${Math.ceil(lock.retryAfterSec / 60)} minute(s).`
+        });
+      }
       return res.status(401).json("Invalid credentials");
     }
+
+    // 3. Successful login: clear both throttle layers.
+    await authGuard.noteSuccess(req, username);
 
     // 3. If credentials are correct, create a JWT token
     const payload = {

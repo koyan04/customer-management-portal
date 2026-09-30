@@ -354,6 +354,23 @@ fi
 npm run build
 unset NODE_OPTIONS
 
+# Publish the build to backend/public.
+# backend/app.js serves backend/public/index.html in preference to
+# frontend/dist/index.html, so building into frontend/dist alone leaves the
+# live site serving stale assets. Copy assets + index.html across, while
+# preserving the runtime-managed uploads/ and logos/ directories.
+if [ -d "$APP_DIR/frontend/dist/assets" ]; then
+    rm -rf "$APP_DIR/backend/public/assets"
+    cp -r "$APP_DIR/frontend/dist/assets" "$APP_DIR/backend/public/assets"
+    cp -f "$APP_DIR/frontend/dist/index.html" "$APP_DIR/backend/public/index.html"
+    # Carry over any static files that live only in backend/public.
+    for f in favicon.ico vite.svg; do
+        [ -f "$APP_DIR/frontend/dist/$f" ] && cp -f "$APP_DIR/frontend/dist/$f" "$APP_DIR/backend/public/$f"
+    done
+    [ -d "$APP_DIR/frontend/dist/fonts" ] && cp -r "$APP_DIR/frontend/dist/fonts" "$APP_DIR/backend/public/" 2>/dev/null || true
+    echo "  ✓ Frontend published to backend/public"
+fi
+
 # Remove temporary swap if created
 if [ "$SWAP_CREATED" -eq 1 ] && [ -n "$SWAP_FILE" ]; then
   swapoff "$SWAP_FILE" 2>/dev/null || true
@@ -421,20 +438,49 @@ echo ""
 echo "  (The Telegram bot runs inside cmp-backend; its logs appear in the same unit.)"
 echo ""
 
-echo "=== Update Complete ==="
-echo ""
-echo "Backup location: $BACKUP_DIR"
-echo ""
-echo "To view logs:"
-echo "  journalctl -u cmp-backend -f"
-echo ""
-echo "To rollback (if needed):"
-echo "  systemctl stop cmp-backend"
-echo "  rm -rf $APP_DIR"
-echo "  cp -r $BACKUP_DIR/cmp $APP_DIR"
-if [ -f "$BACKUP_DIR/database.sql" ]; then
-  echo "  # Database restore:"
-  echo "  psql -h $DB_HOST -p $DB_PORT -U ${DB_USER:-cmp} $DB_NAME < $BACKUP_DIR/database.sql"
+# --- Final summary panel -------------------------------------------------
+# Same visual shape as the installer's closing panel, using only variables
+# that actually exist in this script (LATEST_TAG / NEW_VERSION / HEALTH).
+# Updates never touch admin accounts, so no credentials are printed here.
+if [ "$NEW_VERSION" != "Unknown" ]; then
+  PANEL_VERSION="$NEW_VERSION"
+else
+  PANEL_VERSION="${LATEST_TAG:-unknown}"
 fi
-echo "  systemctl start cmp-backend"
+case "$HEALTH" in
+  *'"ok"'*|*'"ok":true'*) PANEL_HEALTH="healthy" ;;
+  *) PANEL_HEALTH="degraded — check the logs" ;;
+esac
+
+echo ""
+echo "────────────────────────────────────────────────────────"
+printf "\033[1;32m  UPDATE COMPLETE\033[0m\n"
+echo "────────────────────────────────────────────────────────"
+echo ""
+echo -e "  \033[1mAccess\033[0m"
+echo "    Your URL and admin credentials are unchanged."
+echo "    Sign in exactly as before."
+echo ""
+echo -e "  \033[1mDetails\033[0m"
+echo "    Version   $PANEL_VERSION"
+echo "    Service   cmp-backend (port 3001)"
+echo "    Install   $APP_DIR"
+echo -e "    Health    $PANEL_HEALTH"
+echo "    Backup    $BACKUP_DIR"
+echo ""
+echo -e "  \033[1mUseful commands\033[0m"
+echo "    logs      journalctl -u cmp-backend -f"
+echo "    status    systemctl status cmp-backend"
+echo "    restart   systemctl restart cmp-backend"
+echo ""
+echo -e "  \033[1mRollback\033[0m"
+echo "    systemctl stop cmp-backend"
+echo "    rm -rf $APP_DIR"
+echo "    cp -r $BACKUP_DIR/cmp $APP_DIR"
+if [ -f "$BACKUP_DIR/database.sql" ]; then
+  echo "    psql -h $DB_HOST -p $DB_PORT -U ${DB_USER:-cmp} $DB_NAME < $BACKUP_DIR/database.sql"
+fi
+echo "    systemctl start cmp-backend"
+echo ""
+echo "────────────────────────────────────────────────────────"
 echo ""

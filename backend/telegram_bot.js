@@ -9,6 +9,7 @@ const pool = require('./db');
 const dbCompat = require('./lib/dbCompat');
 const { createHelpers, DEFAULT_LOCK_KEY } = require('./lib/telegramHelpers');
 const helpers = createHelpers(pool, dbCompat);
+const { renderHostInfo } = require('./lib/hostInfo');
 const express = require('express');
 const bodyParser = require('body-parser');
 const clientMetrics = require('prom-client');
@@ -70,6 +71,51 @@ const metrics = {
 const PAGE_SIZE_SERVERS = 8; // 2 columns -> 4 rows
 const PAGE_SIZE_USERS = 10;  // 2 columns -> 5 rows
 
+// ─── Navigation origins ─────────────────────────────────────────────────
+// Every list view remembers a compact "where did I come from" token so the
+// Back button always returns to the exact screen the user was on, instead of a
+// hardcoded guess. Tokens are deliberately tiny because callback_data is capped
+// at 64 bytes by Telegram.
+//
+//   m            main menu
+//   s<n>         servers list, page <n>
+//   a<n>         active users, page <n>
+//   o<n>         users expiring soon, page <n>
+//   e<n>         expired users, page <n>
+//   c            a user card (the list above it is still on screen)
+const ORIGIN_MAIN = 'm';
+const ORIGIN_CARD = 'c';
+const STATUS_ORIGIN_PREFIX = { active: 'a', soon: 'o', expired: 'e' };
+
+function normalizeOrigin(token) {
+  const t = String(token == null ? '' : token).trim();
+  if (!t) return ORIGIN_MAIN;
+  if (t === ORIGIN_CARD) return ORIGIN_CARD;
+  if (t === ORIGIN_MAIN) return ORIGIN_MAIN;
+  const m = t.match(/^([soae])(\d*)$/);
+  if (m) return `${m[1]}${Math.max(1, Number(m[2] || '1') || 1)}`;
+  return ORIGIN_MAIN;
+}
+
+// Map an origin token back to the callback_data that re-renders that view.
+function originToCallback(token) {
+  const t = normalizeOrigin(token);
+  if (t === ORIGIN_MAIN) return 'main_back';
+  if (t === ORIGIN_CARD) return 'main_back';
+  const kind = t[0];
+  const page = Math.max(1, Number(t.slice(1) || '1') || 1);
+  if (kind === 's') return `servers_page:${page}`;
+  const status = Object.keys(STATUS_ORIGIN_PREFIX).find(k => STATUS_ORIGIN_PREFIX[k] === kind);
+  return status ? `users_page:${status}:${page}` : 'main_back';
+}
+
+// The token a child view should carry so its Back button returns here.
+function serversOrigin(page) { return `s${Math.max(1, Number(page) || 1)}`; }
+function statusOrigin(status, page) {
+  const p = STATUS_ORIGIN_PREFIX[status] || 'a';
+  return `${p}${Math.max(1, Number(page) || 1)}`;
+}
+
 function buildTwoColumnRows(items) {
   const rows = [];
   for (let i = 0; i < items.length; i += 2) {
@@ -80,6 +126,11 @@ function buildTwoColumnRows(items) {
     rows.push(row);
   }
   return rows;
+}
+
+// Standard trailing row for list views: Back returns to the recorded origin.
+function backRow(origin, label) {
+  return [{ text: label || '🔙 Back', callback_data: originToCallback(origin) }];
 }
 
 // Telegram truncates very long button labels unpredictably across clients, so we
@@ -360,7 +411,7 @@ async function fetchServersList() {
 }
 
 // Use helpers module for DB operations (keeps this file focused on bot logic)
-const { fetchServerById, fetchUsersByServer, fetchUserById, applyExtendExpire } = helpers;
+const { fetchServerById, fetchUsersByServer, fetchUserById, applyExtendExpire, searchUsers } = helpers;
 
 async function fetchUsersByStatus(status) {
   // status: 'expired' | 'soon' | 'active'
@@ -414,28 +465,63 @@ function getUserStatusObj(expire_date) {
 
 // Single source of truth for the user detail card. `server_user` and
 // `refresh_user` both render through this so they can never drift apart.
-function renderUserCard(user, sid) {
+// `origin` is the token describing the list the user opened the card from, so
+// the Back button returns to exactly that screen (and page) they came from.
+// Deliberately exactly six fixed lines: no optional extras, so the card is
+// scannable at a glance and never changes shape between users.
+function renderUserCard(user, sid, origin) {
   const st = getUserStatusObj(user.expire_date);
-  const lines = [];
-  lines.push(`${st.emoji} <b>${escapeHtml(user.account_name)}</b>  <i>${st.label}</i>`);
-  lines.push('');
-  lines.push(`🏷️ Server: ${escapeHtml(user.server_name || 'N/A')}`);
-  lines.push(`🧩 Service: ${escapeHtml(user.service_type || 'N/A')}`);
-  lines.push(`📅 Expires: <b>${formatDateOnly(user.expire_date)}</b>`);
-  if (user.contact) lines.push(`📞 Contact: ${escapeHtml(user.contact)}`);
-  if (user.total_devices) lines.push(`📱 Devices: ${escapeHtml(String(user.total_devices))}`);
-  if (user.data_limit_gb) lines.push(`📶 Data: ${escapeHtml(String(user.data_limit_gb))} GB`);
-  if (user.remark) lines.push(`📝 Note: ${escapeHtml(user.remark)}`);
-  return lines.join('\n');
+  const L = [];
+  L.push(`👤 <b>${escapeHtml(user.account_name || 'user')}</b>`);
+  L.push(`📛 Status: ${st.emoji} ${st.label}`);
+  L.push(`⚙️ Service: ${escapeHtml(user.service_type || 'N/A')}`);
+  L.push(`📡 Server: ${escapeHtml(user.server_name || 'N/A')}`);
+  L.push(`📅 Expires: ${formatDateOnly(user.expire_date)}`);
+  L.push(`📱 Device Limit: ${user.total_devices == null || user.total_devices === '' ? 'N/A' : escapeHtml(String(user.total_devices))}`);
+  return L.join('\n');
 }
 
-function buildUserCardKeyboard(sid, uid) {
+function buildUserCardKeyboard(sid, uid, origin) {
   return {
     inline_keyboard: [
-      [ { text: '🗓️ Change Expire Date', callback_data: `change_expire:${uid}` } ],
-      [ { text: '🔄 Refresh', callback_data: `refresh_user:${sid}:${uid}` } ],
-      [ { text: '🔙 Back to Server', callback_data: `server:${sid}` } ],
+      [ { text: '🗓️ Change Expire Date', callback_data: `change_expire:${uid}:${normalizeOrigin(origin) || ORIGIN_MAIN}` } ],
+      [ { text: '🔄 Refresh', callback_data: `refresh_user:${sid}:${uid}:${normalizeOrigin(origin) || ORIGIN_MAIN}` } ],
+      backRow(normalizeOrigin(origin) || ORIGIN_MAIN, '🔙 Back'),
       [ { text: '✖️ Close', callback_data: `close_view:${uid}` } ]
+    ]
+  };
+}
+
+// ─── Search ─────────────────────────────────────────────────────────────
+// Telegram has no text input, so "Search" flips the chat into a listening
+// state and the next plain-text message is used as the query.
+async function runUserSearch(chatId, term, msgId) {
+  const q = String(term || '').trim();
+  if (!q) return;
+  const rows = await searchUsers(q, 20);
+  if (!rows.length) {
+    return renderView(chatId, msgId, `🔍 <b>No matches</b>\n<i>Nothing found for "${escapeHtml(q)}".</i>`,
+      { inline_keyboard: [backRow(ORIGIN_MAIN)] }, msgId ? 'edit' : 'send');
+  }
+  // Each result reuses the standard user card, with Back pointing at the menu.
+  const btns = rows.map(u => ({
+    text: `${getUserStatusObj(u.expire_date).emoji} ${_truncateButton(u.account_name)}`,
+    callback_data: `server_user:${u.server_id}:${u.id}:${ORIGIN_MAIN}`
+  }));
+  const kbRows = buildTwoColumnRows(btns);
+  kbRows.push(backRow(ORIGIN_MAIN));
+  const head = rows.length === 1
+    ? `🔍 <b>1 match</b> for "${escapeHtml(q)}"`
+    : `🔍 <b>${rows.length} matches</b> for "${escapeHtml(q)}"`;
+  return renderView(chatId, msgId, `${head}\nSelect a user for full details:`, { inline_keyboard: kbRows }, msgId ? 'edit' : 'send');
+}
+
+// ─── Host info ──────────────────────────────────────────────────────────
+function buildHostInfoKeyboard() {
+  return {
+    inline_keyboard: [
+      [ { text: '🔄 Refresh', callback_data: 'host_info' } ],
+      [ { text: '🔙 Back', callback_data: 'main_back' } ]
     ]
   };
 }
@@ -617,19 +703,24 @@ async function handleStart(chatId, from, messageId = null) {
     return;
   }
   const title = await fetchTitle() || 'Customer Management Portal';
-  const header = `<b>🌏 ${escapeHtml(title)}</b>`;
+  const header = `<b>🌍 ${escapeHtml(title)}</b>`;
   const dash = await fetchDashboard();
   const statsText = dash
-    ? `\n\n<b>📊 Stats</b>\n📡 Servers: <b>${dash.totalServers}</b>   👥 Users: <b>${dash.totalUsers}</b>\n🏷️ Mini ${dash.tiers.Mini} · Basic ${dash.tiers.Basic} · Unlimited ${dash.tiers.Unlimited}\n🟢 Active ${dash.status.active} · 🟡 Soon ${dash.status.soon} · 🔴 Expired ${dash.status.expired}`
+    ? `\n\n<b>📊 Stats</b>\n` +
+      `📡 Servers: ${dash.totalServers}  |  👥 Users: ${dash.totalUsers}\n` +
+      `🏷️ Tiers: Mini ${dash.tiers.Mini}, Basic ${dash.tiers.Basic}, Unlimited ${dash.tiers.Unlimited}\n` +
+      `⚙️ Status: 🟢 Active ${dash.status.active}, 🟡 Soon ${dash.status.soon}, 🔴 Expired ${dash.status.expired}`
     : '\n\n<i>Stats unavailable</i>';
-  const notifText = LOGIN_NOTIFICATION ? `\n\n🔔 Login notifications are <b>enabled</b>` : '';
 
   const rows = [
-    [ { text: '📡 Server List', callback_data: 'servers_page:1' } ],
+    [ { text: '🔍 Search User', callback_data: 'search_prompt' } ],
+    [ { text: 'Server List', callback_data: 'servers_page:1' } ],
+    [ { text: '💻 Host Info', callback_data: 'host_info' } ],
     [ { text: '🟢 Active', callback_data: 'users_page:active:1' }, { text: '🟡 Expire Soon', callback_data: 'users_page:soon:1' } ],
-    [ { text: '🔴 Expired Users', callback_data: 'users_page:expired:1' } ]
+    [ { text: '🔴 Expired', callback_data: 'users_page:expired:1' } ]
   ];
   // Notification toggle reflects the effective (per-chat overridden) preference.
+  const notifText = LOGIN_NOTIFICATION ? `\n\n🔔 Login notifications are <b>enabled</b>` : '';
   try {
     const chatPref = await getChatNotificationEnabled(chatId);
     const effective = (chatPref === null ? LOGIN_NOTIFICATION : chatPref);
@@ -650,16 +741,43 @@ async function handleCallback(callback) {
     return;
   }
   if (data === 'servers') {
-    // Backwards compat: redirect to first page
-    return handleCallback({ data: 'servers_page:1', message: { chat: { id: chatId } }, id: qid });
+    // Backwards compat: redirect to first page, preserving the message so the
+    // view is edited in place rather than posted as a duplicate.
+    return handleCallback({ data: 'servers_page:1', message: callback.message, id: qid });
   } else if (data === 'soon' || data === 'expired' || data === 'active') {
     // support paged users for statuses via users_page:<status>:<page>
-    return handleCallback({ data: `users_page:${data}:1`, message: { chat: { id: chatId } }, id: qid });
+    return handleCallback({ data: `users_page:${data}:1`, message: callback.message, id: qid });
     }
 
   // New interactive handlers for server/user drilldown and expire-date changes
   // main_back should return to main menu, reusing the same message when possible
   if (data === 'main_back') {
+    setSearchMode(chatId, false);
+    const msgId = callback.message && callback.message.message_id;
+    return handleStart(chatId, null, msgId);
+  }
+
+  // host_info — server telemetry card; the same callback doubles as Refresh.
+  if (data === 'host_info') {
+    await answerCallback(qid, 'Refreshing…');
+    const msgId = callback.message && callback.message.message_id;
+    const text = renderHostInfo({ serviceState: 'running' });
+    return renderView(chatId, msgId, text, buildHostInfoKeyboard(), msgId ? 'edit' : 'send');
+  }
+
+  // search_prompt — ask the user to type a name, then listen for the reply.
+  if (data === 'search_prompt') {
+    await answerCallback(qid, 'Type a name to search');
+    const msgId = callback.message && callback.message.message_id;
+    setSearchMode(chatId, true);
+    return renderView(chatId, msgId, '🔍 <b>Search User</b>\n\nType a name, contact or user ID and I will look them up.',
+      { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'main_back' }]] }, msgId ? 'edit' : 'send');
+  }
+
+  // search_cancel — leave search mode without searching.
+  if (data === 'search_cancel') {
+    setSearchMode(chatId, false);
+    await answerCallback(qid, 'Search cancelled');
     const msgId = callback.message && callback.message.message_id;
     return handleStart(chatId, null, msgId);
   }
@@ -681,10 +799,10 @@ async function handleCallback(callback) {
     // Show live user counts on each button so the list is informative at a glance.
     const dash = await fetchDashboard();
     const counts = new Map((dash && dash.servers ? dash.servers : []).map(s => [s.id, s.total_users]));
-    const buttons = slice.map(s => ({ text: `📡 ${s.server_name} (${counts.get(s.id) || 0})`, callback_data: `server:${s.id}:1` }));
+    const buttons = slice.map(s => ({ text: `${s.server_name} (${counts.get(s.id) || 0})`, callback_data: `server:${s.id}:1:${serversOrigin(cur)}` }));
     const keyboardRows = buildTwoColumnRows(buttons);
     if (totalPages > 1) keyboardRows.push(buildPagerRow(cur, totalPages, p => `servers_page:${p}`));
-    keyboardRows.push([ { text: '🔙 Back', callback_data: 'main_back' } ]);
+    keyboardRows.push(backRow(ORIGIN_MAIN));
     return renderView(chatId, msgId, `<b>📡 Servers</b>  <i>page ${cur}/${totalPages} · ${all.length} total</i>\nSelect a server:`,
       { inline_keyboard: keyboardRows }, msgId ? 'edit' : 'send');
   }
@@ -694,16 +812,18 @@ async function handleCallback(callback) {
     const parts = data.split(':');
     const sid = parts[1];
     const page = Math.max(1, Number(parts[2] || '1') || 1);
+    // part[3] records which list the user drilled in from, so Back returns there.
+    const origin = normalizeOrigin(parts[3] || ORIGIN_MAIN);
     const msgId = callback.message && callback.message.message_id;
     const server = await fetchServerById(sid);
     if (!server) {
       return renderView(chatId, msgId, '<b>⚠️ Server not found</b>\n<i>It may have been removed.</i>',
-        { inline_keyboard: [[{ text: '🔙 Back to Servers', callback_data: 'servers_page:1' }]] }, msgId ? 'edit' : 'send');
+        { inline_keyboard: [[{ text: '🔙 Back', callback_data: originToCallback(origin) }]] }, msgId ? 'edit' : 'send');
     }
     const users = await fetchUsersByServer(sid) || [];
     if (!users.length) {
       return renderView(chatId, msgId, `<b>📡 ${escapeHtml(server.server_name)}</b>\n\n<i>No users on this server yet.</i>`,
-        { inline_keyboard: [[{ text: '🔙 Back to Servers', callback_data: 'servers_page:1' }]] }, msgId ? 'edit' : 'send');
+        { inline_keyboard: [[{ text: '🔙 Back', callback_data: originToCallback(origin) }]] }, msgId ? 'edit' : 'send');
     }
     const totalPages = Math.max(1, Math.ceil(users.length / PAGE_SIZE_USERS));
     const cur = Math.min(page, totalPages);
@@ -711,17 +831,21 @@ async function handleCallback(callback) {
     const info = [];
     if (server.ip_address) info.push(`🌐 ${escapeHtml(server.ip_address)}`);
     if (server.domain_name) info.push(`🔗 ${escapeHtml(server.domain_name)}`);
-    const header = `<b>📡 ${escapeHtml(server.server_name)}</b>\n${info.join('  ·  ')}\n👥 ${users.length} user${users.length === 1 ? '' : 's'}`;
+    // The page indicator MUST be part of the header. renderView caches the last
+    // text per message and skips identical edits, so a header without the page
+    // number makes every page look the same and the pager silently does nothing.
+    const header = `<b>📡 ${escapeHtml(server.server_name)}</b>  <i>page ${cur}/${totalPages} · ${users.length} user${users.length === 1 ? '' : 's'}</i>\n${info.join('  ·  ')}`;
     // Status emoji on each button means colour coding is visible before opening a card.
+    const self = serversOrigin(cur);
     const userButtons = slice.map(u => {
       const st = getUserStatusObj(u.expire_date);
       const name = String(u.account_name || 'user');
-      return { text: `${st.emoji} ${_truncateButton(name)}`, callback_data: `server_user:${sid}:${u.id}` };
+      return { text: `${st.emoji} ${_truncateButton(name)}`, callback_data: `server_user:${sid}:${u.id}:${self}` };
     });
-    const keyboard = { inline_keyboard: buildTwoColumnRows(userButtons) };
-    if (totalPages > 1) keyboard.reply_markup.inline_keyboard.push(buildPagerRow(cur, totalPages, p => `server:${sid}:${p}`));
-    keyboard.reply_markup.inline_keyboard.push([ { text: '🔙 Back to Servers', callback_data: 'servers_page:1' } ]);
-    return renderView(chatId, msgId, header, keyboard, msgId ? 'edit' : 'send');
+    const keyboardRows = buildTwoColumnRows(userButtons);
+    if (totalPages > 1) keyboardRows.push(buildPagerRow(cur, totalPages, p => `server:${sid}:${p}:${origin}`));
+    keyboardRows.push(backRow(origin));
+    return renderView(chatId, msgId, header, { inline_keyboard: keyboardRows }, msgId ? 'edit' : 'send');
   }
 
   if (data && data.startsWith('server_user:')) {
@@ -729,25 +853,27 @@ async function handleCallback(callback) {
     const parts = data.split(':');
     const sid = parts[1];
     const uid = parts[2];
+    const origin = normalizeOrigin(parts[3] || ORIGIN_MAIN);
     const user = await fetchUserById(uid);
     if (!user) return sendMessage(chatId, '<b>⚠️ User not found</b>\n<i>This account may have been deleted.</i>');
     // Detail cards are posted as additional messages, leaving the list above intact.
-    return renderView(chatId, null, renderUserCard(user, sid), buildUserCardKeyboard(sid, uid), 'send');
+    return renderView(chatId, null, renderUserCard(user, sid, origin), buildUserCardKeyboard(sid, uid, origin), 'send');
   }
 
-  // refresh_user:<serverId>:<userId> — re-render the card in place
+  // refresh_user:<serverId>:<userId>[:<origin>] — re-render the card in place
   if (data && data.startsWith('refresh_user:')) {
-    await answerCallback(qid);
+    await answerCallback(qid, 'Refreshed');
     const parts = data.split(':');
     const sid = parts[1];
     const uid = parts[2];
+    const origin = normalizeOrigin(parts[3] || ORIGIN_MAIN);
     const msgId = callback.message && callback.message.message_id;
     const user = await fetchUserById(uid);
     if (!user) {
       return renderView(chatId, msgId, '<b>⚠️ User not found</b>\n<i>This account may have been deleted.</i>',
-        { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'main_back' }]] }, msgId ? 'edit' : 'send');
+        { inline_keyboard: [[{ text: '🔙 Back', callback_data: originToCallback(origin) }]] }, msgId ? 'edit' : 'send');
     }
-    return renderView(chatId, msgId, renderUserCard(user, sid), buildUserCardKeyboard(sid, uid), msgId ? 'edit' : 'send');
+    return renderView(chatId, msgId, renderUserCard(user, sid, origin), buildUserCardKeyboard(sid, uid, origin), msgId ? 'edit' : 'send');
   }
 
   // users_page:<status>:<page> — list view, edited in place
@@ -757,23 +883,25 @@ async function handleCallback(callback) {
     const status = parts[1];
     const page = Math.max(1, Number(parts[2] || '1') || 1);
     const msgId = callback.message && callback.message.message_id;
-    const label = { expired: '🔴 Expired', soon: '🟡 Expiring Soon', active: '🟢 Active' }[status] || '👥 Users';
+    const label = { expired: '🔴 Expired', soon: '🟡 Expiring Soon', active: '🟢 Active' }[status] || 'Users';
     const users = await fetchUsersByStatus(status) || [];
     if (!users.length) {
-      return renderView(chatId, msgId, `<b>${label} Users</b>\n\n<i>Nothing here right now. 🎉</i>`,
+      return renderView(chatId, msgId, `<b>${label} Users</b>\n\n<i>Nothing here right now.</i>`,
         { inline_keyboard: [[{ text: '🔙 Back', callback_data: 'main_back' }]] }, msgId ? 'edit' : 'send');
     }
     const totalPages = Math.max(1, Math.ceil(users.length / PAGE_SIZE_USERS));
     const cur = Math.min(page, totalPages);
     const slice = users.slice((cur - 1) * PAGE_SIZE_USERS, (cur - 1) * PAGE_SIZE_USERS + PAGE_SIZE_USERS);
+    // Cards opened from here return to this exact status page.
+    const self = statusOrigin(status, cur);
     // The buttons ARE the list — no duplicated name lines in the message body.
     const userButtons = slice.map(u => ({
       text: `${getUserStatusObj(u.expire_date).emoji} ${_truncateButton(u.account_name)}`,
-      callback_data: `server_user:${u.server_id}:${u.id}`
+      callback_data: `server_user:${u.server_id}:${u.id}:${self}`
     }));
     const keyboardRows = buildTwoColumnRows(userButtons);
     if (totalPages > 1) keyboardRows.push(buildPagerRow(cur, totalPages, p => `users_page:${status}:${p}`));
-    keyboardRows.push([ { text: '🔙 Back', callback_data: 'main_back' } ]);
+    keyboardRows.push(backRow(ORIGIN_MAIN));
     return renderView(chatId, msgId, `<b>${label} Users</b>  <i>page ${cur}/${totalPages} · ${users.length} total</i>\nSelect a user for full details:`, { inline_keyboard: keyboardRows }, msgId ? 'edit' : 'send');
   }
 
@@ -781,14 +909,18 @@ async function handleCallback(callback) {
     await answerCallback(qid, 'Choose how long to extend');
     const parts = data.split(':');
     const uid = parts[1];
+    const origin = normalizeOrigin(parts[2] || ORIGIN_MAIN);
     const msgId = callback.message && callback.message.message_id;
     const user = await fetchUserById(uid);
     const who = user ? escapeHtml(user.account_name) : `user ${uid}`;
     const keyboard = { inline_keyboard: [
-      [ { text: '1 Month', callback_data: `change_expire_choice:${uid}:1` }, { text: '2 Months', callback_data: `change_expire_choice:${uid}:2` }, { text: '6 Months', callback_data: `change_expire_choice:${uid}:6` } ],
-      [ { text: '🔙 Cancel', callback_data: 'main_back' } ]
+      [ { text: '1 Month', callback_data: `change_expire_choice:${uid}:1:${origin}` },
+        { text: '2 Months', callback_data: `change_expire_choice:${uid}:2:${origin}` },
+        { text: '3 Months', callback_data: `change_expire_choice:${uid}:3:${origin}` },
+        { text: '6 Months', callback_data: `change_expire_choice:${uid}:6:${origin}` } ],
+      backRow(origin, '🔙 Cancel')
     ] };
-    return renderView(chatId, msgId, `<b>🗓️ Extend ${who}</b>\nCurrent expiry: <b>${formatDateOnly(user && user.expire_date)}</b>\n\nHow long should it be extended by?`, keyboard, msgId ? 'edit' : 'send');
+    return renderView(chatId, msgId, `🗓️ <b>Extend ${who}</b>\nCurrent expiry: <b>${formatDateOnly(user && user.expire_date)}</b>\n\nHow long should it be extended by?`, keyboard, msgId ? 'edit' : 'send');
   }
 
   if (data && data.startsWith('change_expire_choice:')) {
@@ -808,11 +940,19 @@ async function handleCallback(callback) {
       await answerCallback(qid, 'Update failed', true);
       return sendMessage(chatId, '❌ Failed to update expiry date. Please try again.');
     }
+    const origin = normalizeOrigin(parts[3] || ORIGIN_MAIN);
+    const msgId = callback.message && callback.message.message_id;
+    // Re-read the user so the card shows the NEW expiry, refreshed status and
+    // live device limit — not just a bare confirmation line.
+    const fresh = await fetchUserById(uid);
+    if (fresh) {
+      await answerCallback(qid, `✅ Extended by ${months} month${months === 1 ? '' : 's'}`);
+      return renderView(chatId, msgId, renderUserCard(fresh, fresh.server_id, origin), buildUserCardKeyboard(fresh.server_id, uid, origin), msgId ? 'edit' : 'send');
+    }
+    // Fallback when the row can no longer be joined to a server.
     const newDate = formatDateOnly(res.expire_date);
     const name = escapeHtml(res.account_name || 'User');
-    const msgId = callback.message && callback.message.message_id;
-    // Collapse the choice message into a confirmation so no dead buttons remain.
-    return renderView(chatId, msgId, `✅ <b>${name}</b>\nExpiry extended to <b>${newDate}</b>`, { inline_keyboard: [[{ text: '🔙 Back to Menu', callback_data: 'main_back' }]] }, msgId ? 'edit' : 'send');
+    return renderView(chatId, msgId, `✅ <b>${name}</b>\nExpiry extended to <b>${newDate}</b>`, { inline_keyboard: [backRow(origin, '🔙 Back')] }, msgId ? 'edit' : 'send');
   }
 
   // close_view:<uid> — dismiss a drill-down card (posted as an additional message)
@@ -930,8 +1070,19 @@ const COMMAND_VIEWS = {
   servers: (chatId, msgId) => handleCallback({ data: 'servers_page:1', message: { chat: { id: chatId }, message_id: msgId }, id: null }),
   active: (chatId, msgId) => handleCallback({ data: 'users_page:active:1', message: { chat: { id: chatId }, message_id: msgId }, id: null }),
   soon: (chatId, msgId) => handleCallback({ data: 'users_page:soon:1', message: { chat: { id: chatId }, message_id: msgId }, id: null }),
-  expired: (chatId, msgId) => handleCallback({ data: 'users_page:expired:1', message: { chat: { id: chatId }, message_id: msgId }, id: null })
+  expired: (chatId, msgId) => handleCallback({ data: 'users_page:expired:1', message: { chat: { id: chatId }, message_id: msgId }, id: null }),
+  host: (chatId, msgId) => handleCallback({ data: 'host_info', message: { chat: { id: chatId }, message_id: msgId }, id: null }),
+  search: (chatId, msgId) => handleCallback({ data: 'search_prompt', message: { chat: { id: chatId }, message_id: msgId }, id: null })
 };
+
+// Chats currently in "type a name to search" mode. Telegram has no input box,
+// so the bot listens for the next plain-text message in that chat.
+const _searchMode = new Map(); // chatId -> true
+function isSearchMode(chatId) { return _searchMode.has(Number(chatId)); }
+function setSearchMode(chatId, on) {
+  const k = Number(chatId);
+  if (on) _searchMode.set(k, true); else _searchMode.delete(k);
+}
 
 function _commandName(txt) {
   const base = String(BOT_USERNAME ? `@${BOT_USERNAME}` : '');
@@ -951,8 +1102,16 @@ async function handleInboundText(message) {
   const txt = (message.text || '').trim();
   const name = _commandName(txt);
   if (name) {
+    // A command always wins and cancels any pending search prompt.
+    setSearchMode(chatId, false);
     // Editing the user's own command message keeps the bot from adding clutter.
     await COMMAND_VIEWS[name](chatId, message.message_id);
+    return true;
+  }
+  // Search mode: the next thing the user types is treated as the search term.
+  if (isSearchMode(chatId) && txt) {
+    setSearchMode(chatId, false);
+    await runUserSearch(chatId, txt, message.message_id);
     return true;
   }
   if (txt) {
@@ -1239,15 +1398,30 @@ async function createBackupSnapshot() {
     const now = new Date().toISOString().replace(/[:.]/g, '-');
     const tmpdir = os.tmpdir();
     const outPath = path.join(tmpdir, `cmp-backup-${now}.json`);
-    // Fetch app settings, servers, server_keys, users, admins (with avatars), domains, and financial snapshots
-    const [settingsRes, serversRes, serverKeysRes, usersRes, adminsRes, domainsRes, snapshotsRes] = await Promise.all([
+    // Server-admin assignments are needed to reproduce the team with the same
+    // per-server permissions after a "Restore Admins" overwrite.
+    let serverAdminPerms = [];
+    try {
+      const sap = await pool.query('SELECT admin_id, server_id FROM server_admin_permissions');
+      serverAdminPerms = sap.rows || [];
+    } catch (_) {}
+    // Fetch app settings, servers, server_keys, users, admins (with avatars),
+    // domains, financial snapshots and the media blobs (logo / favicon).
+    const [settingsRes, serversRes, serverKeysRes, usersRes, adminsRes, domainsRes, snapshotsRes, mediaRes] = await Promise.all([
       pool.query('SELECT * FROM app_settings'),
       pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers'),
       pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys'),
       pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users'),
       pool.query('SELECT id, display_name, username, role, avatar_url, avatar_data, created_at FROM admins'),
       pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains').catch(() => ({ rows: [] })),
-      pool.query('SELECT id, month_start::text as month_start, month_end::text as month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC').catch(() => ({ rows: [] }))
+      pool.query('SELECT id, month_start::text as month_start, month_end::text as month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC').catch(() => ({ rows: [] })),
+      // Logo / favicon blobs live in the DB, so they must be part of the backup.
+      (async () => {
+        try {
+          const mediaStore = require('./lib/mediaStore');
+          return await mediaStore.listMedia(pool);
+        } catch (_) { return []; }
+      })()
     ]);
     // Load keyserver config from file
     let keyserverConfig = null;
@@ -1267,10 +1441,13 @@ async function createBackupSnapshot() {
         expire_date: u.expire_date ? _fixExpireDate(u.expire_date instanceof Date ? u.expire_date.toISOString() : String(u.expire_date)) : null
       })),
       admins: adminsRes.rows || [],
+      server_admin_permissions: serverAdminPerms,
       domains: domainsRes.rows || [],
       financial_snapshots: snapshotsRes.rows || [],
+      // Logo / favicon images, stored in the DB as data URIs.
+      media: mediaRes || [],
       keyserver_config: keyserverConfig || null,
-      note: 'Avatar files in public/uploads/ are not included - backup that directory separately'
+      note: 'Logos, favicons and admin avatars are embedded as base64 data URIs, so no separate media backup is needed. Password hashes are never included.'
     };
     await fs.promises.writeFile(outPath, JSON.stringify(payload, null, 2), 'utf8');
     return outPath;
@@ -1796,6 +1973,12 @@ module.exports.applySettingsNow = applySettingsNow;
 // Exported for tests/scripts: build a zip of all key files + key server configuration.
 module.exports.createKeysZipBackup = createKeysZipBackup;
 module.exports.performPeriodicReportAndBackup = performPeriodicReportAndBackup;
+// Exported for the navigation harness/tests: drive the real callback router
+// against a real (or fake) DB without starting the getUpdates poller.
+module.exports.handleCallback = handleCallback;
+module.exports.handleStart = handleStart;
+module.exports.loadTelegramSettings = loadTelegramSettings;
+module.exports.handleInboundText = handleInboundText;
 
 // ─── Standalone entrypoint ───────────────────────────────────────────────
 // This file only *exports* startTelegramBot; requiring it starts nothing. When

@@ -4,6 +4,51 @@
 
 ---
 
+cmp ver 1.9.30
+
+Security, media persistence, and Telegram bot UX hardening.
+
+**Security**
+- Public Admin Registration Closed: `POST /api/auth/register` returned **HTTP 201 and inserted a real `ADMIN`** into the `admins` table, with the role taken straight from the request body. Anyone who could reach the API could mint themselves a full administrator. It was proven exploitable, then the created row was deleted. The route now returns **410 Gone** and writes nothing. Self-service admin creation is gone for good
+- Login Rate Limiting and Lockout: new `backend/lib/authGuard.js` adds two fail-open layers — per-IP throttling (10 attempts / 15 min) and per-account lockout (8 failures / 15 min), backed by a new `login_lockouts` table (migration `024`). Successful logins clear the counter
+- Timing Equalization: an unknown username previously returned fast while a known one ran bcrypt, leaking which accounts exist. Unknown usernames now run a real 60-character bcrypt compare against a fixed dummy hash so both paths cost the same
+- Password Hash Integrity: restored-admin placeholder hashes were 50 characters where bcrypt requires 60, so `bcrypt.compare` always returned false. This was an availability bug, not an auth bypass — but it locked anyone restored that way out. All three restore paths now generate a real random bcrypt hash
+
+**Media and avatars moved into the database**
+- Logos, favicons and all three admin avatars are stored in PostgreSQL instead of the filesystem, so they survive a redeploy, a container rebuild, or a move to another host
+- Avatars are held as data URIs in `admins.avatar_data`; `GET /api/admin/accounts` now actually selects that column. It previously returned `avatar_url` only, so every card silently fell back to initials even though the image was sitting in the database
+- New `GET /api/admin/public/accounts/:id/avatar` serves the blob and self-heals legacy file-path rows
+- New `media` table and `GET /api/admin/public/media/:key` for logos and favicons (migration `023`)
+- Every backup and restore path now carries media and avatars: snapshot, config, db, and admins backups all include them, and all restore paths write them back
+
+**Restore Admins**
+- New **Restore Admins** checkbox on the Settings restore form. When checked, the restore overwrites the entire admin team, validates each bcrypt hash, and revokes every session (`refresh_tokens` cleared, tokens invalidated) so nobody stays logged in against replaced credentials
+- A restore that would leave you with zero admins is refused outright rather than locking everyone out
+
+**Telegram bot**
+- Server drilldown crash fixed: `keyboard.reply_markup.inline_keyboard.push(...)` dereferenced `undefined` and threw a TypeError on every single server click
+- Next/Prev were dead on server user lists. The header was byte-identical across pages, so the view cache skipped the edit and the buttons froze. The header now carries `page X/Y`
+- Back navigation now returns to whichever list you actually came from, instead of always jumping to the main menu
+- User cards reduced to exactly six lines (name, status, service, server, expiry, device limit), with consistent emoji throughout
+- Disabled users are no longer listed
+- Change-expire now offers a 3-month option, and the card reflects the new date immediately
+- New **Host Info** card (uptime, load, RAM, traffic, IPs, version) and user **Search**
+
+**Installer and updates**
+- Install, update, and Windows scripts end with a clean summary panel showing the URL, login, and service health
+- `update-vps.sh` now publishes the built frontend to `backend/public/`. `backend/app.js` serves `backend/public/index.html` in preference to `frontend/dist/`, so building alone left the live site serving stale assets
+- Update, Clean Up, and Install Domain progress modals are portalled to `document.body` so they no longer render nested inside the Control Panel card
+
+**Tests**
+- `npm test` now passes. Three standalone suites were sitting under Jest's default `.test.js` pattern and hard-failing with "Your test suite must contain at least one test" — `clashValidator`, `telegramNav`, and `backupRestoreCoverage` are node scripts, not Jest tests. They are now ignored by Jest and exposed as `npm run test-clash`, `test-telegram-nav`, `test-backup-restore`, and `test-auth-guard`
+- Those suites hardcoded `/srv/cmp/backend` and could only run on one machine. Paths are now resolved relative to the test file, and each skips cleanly when no `.env` is present
+- 167 assertions across the four suites, all passing
+
+Verification
+- Deployed and verified on the VPS: service active, both admin avatars confirmed loading from the database
+- All four standalone suites pass against the live database
+- `npm test` 8/8 passing (was failing before this release)
+
 ---
 
 cmp ver 1.9.29

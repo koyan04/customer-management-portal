@@ -14,11 +14,44 @@ function createHelpers(pool, dbCompat) {
   async function fetchUsersByServer(serverId) {
     try {
       const hasStatus = dbCompat && typeof dbCompat.hasColumn === 'function' ? await dbCompat.hasColumn(pool, 'users', 'status') : false;
-      const cols = hasStatus ? 'id, account_name, service_type, expire_date, status' : 'id, account_name, service_type, expire_date';
-      const r = await pool.query(`SELECT ${cols} FROM users WHERE server_id = $1 ORDER BY expire_date ASC`, [serverId]);
+      const hasEnabled = dbCompat && typeof dbCompat.hasColumn === 'function' ? await dbCompat.hasColumn(pool, 'users', 'enabled') : true;
+      const cols = ['id', 'account_name', 'service_type', 'expire_date'];
+      if (hasStatus) cols.push('status');
+      if (hasEnabled) cols.push('enabled');
+      // Disabled accounts must never appear in bot lists.
+      const enabledFilter = hasEnabled ? ' AND enabled = TRUE' : '';
+      const r = await pool.query(
+        `SELECT ${cols.join(', ')} FROM users WHERE server_id = $1${enabledFilter} ORDER BY expire_date ASC`,
+        [serverId]
+      );
       return r.rows || [];
     } catch (e) {
       console.error('fetchUsersByServer failed:', e && e.message ? e.message : e);
+      return [];
+    }
+  }
+
+  // Search enabled users by name / contact / id across all servers.
+  async function searchUsers(term, limit = 20) {
+    const q = String(term == null ? '' : term).trim();
+    if (!q) return [];
+    try {
+      const hasEnabled = dbCompat && typeof dbCompat.hasColumn === 'function' ? await dbCompat.hasColumn(pool, 'users', 'enabled') : true;
+      const enabledFilter = hasEnabled ? ' AND u.enabled = TRUE' : '';
+      // Numeric input also matches the user id so "#432" or "432" both work.
+      const asId = /^\d+$/.test(q) ? Number(q) : null;
+      const r = await pool.query(
+        `SELECT u.id, u.account_name, u.service_type, u.expire_date, u.contact, s.server_name, u.server_id
+           FROM users u JOIN servers s ON s.id = u.server_id
+          WHERE u.enabled = TRUE
+            AND (u.account_name ILIKE $1 OR u.contact ILIKE $1 OR ($2::int IS NOT NULL AND u.id = $2))
+          ORDER BY u.expire_date ASC NULLS LAST
+          LIMIT $3`,
+        [`%${q}%`, asId, limit]
+      );
+      return r.rows || [];
+    } catch (e) {
+      console.error('searchUsers failed:', e && e.message ? e.message : e);
       return [];
     }
   }
@@ -58,7 +91,7 @@ function createHelpers(pool, dbCompat) {
     }
   }
 
-  return { fetchServerById, fetchUsersByServer, fetchUserById, applyExtendExpire };
+  return { fetchServerById, fetchUsersByServer, fetchUserById, applyExtendExpire, searchUsers };
 }
 
 module.exports = { createHelpers, DEFAULT_LOCK_KEY };
