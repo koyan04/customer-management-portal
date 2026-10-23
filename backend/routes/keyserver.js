@@ -59,6 +59,57 @@ const removeTokenForFile = (filename) => {
   }
 };
 
+// Re-point a file's subscription token (the /sub/<token> segment of the
+// customer's URL). Both directions of the map must be rewritten together or
+// the file becomes unreachable, so this refuses to write a half-updated map.
+//
+// A file may legitimately hold more than one token in byToken (two URLs serving
+// identical bytes); only byFile -> byToken -> byFile has to round-trip.
+const renameTokenForFile = (filename, newToken) => {
+  const map = loadTokenMap();
+  const oldToken = map.byFile[filename];
+
+  // Collision: the requested token already resolves to a different file.
+  const existingTarget = map.byToken[newToken];
+  if (existingTarget && existingTarget !== filename) {
+    const err = new Error(`Token already in use by "${existingTarget}"`);
+    err.code = 'TOKEN_TAKEN';
+    throw err;
+  }
+
+  if (oldToken) delete map.byToken[oldToken];
+  map.byToken[newToken] = filename;
+  map.byFile[filename] = newToken;
+
+  // Verify round-trip before persisting so we never store a broken map.
+  if (map.byToken[newToken] !== filename) {
+    const err = new Error('Token map would become inconsistent; aborted');
+    err.code = 'MAP_INCONSISTENT';
+    throw err;
+  }
+  for (const [fn, tok] of Object.entries(map.byFile)) {
+    if (map.byToken[tok] !== fn) {
+      const err = new Error(`Token map would become inconsistent at "${fn}"; aborted`);
+      err.code = 'MAP_INCONSISTENT';
+      throw err;
+    }
+  }
+
+  saveTokenMap(map);
+  return { oldToken: oldToken || null, newToken };
+};
+
+// Keep the token_map on a file whose token we just created/changed, in sync.
+const getOrCreateTokenForNewFile = (filename) => {
+  const map = loadTokenMap();
+  if (map.byFile[filename]) return map.byFile[filename];
+  const token = crypto.randomBytes(16).toString('hex');
+  map.byToken[token] = filename;
+  map.byFile[filename] = token;
+  saveTokenMap(map);
+  return token;
+};
+
 // Load config
 const loadConfig = () => {
   try {
@@ -133,6 +184,15 @@ const syncNginxConfig = (config) => {
 };
 
 const { sanitizeClashYaml, validateClashYaml } = require('../utils/clashYamlSanitizer');
+const yaml = require('js-yaml');
+const {
+  PROXY_TYPES,
+  yamlToJsonObject,
+  jsonToYamlObject,
+  stringifySingbox,
+  stringifyClash,
+  profileTitleFor,
+} = require('../utils/configConverter');
 
 
 // In-memory key server instance
@@ -506,6 +566,15 @@ const startKeyServer = (config) => {
         } catch (_) { return null; }
       };
 
+      // Convert a Clash YAML profile to a sing-box JSON config.
+      // Hiddify is a sing-box client, so this is the format it parses natively.
+      const clashYamlToSingbox = (rawYaml) => {
+        try {
+          const { config: sb } = yamlToJsonObject(sanitizeClashYaml(rawYaml));
+          return JSON.stringify({ outbounds: sb.outbounds }, null, 2);
+        } catch (_) { return null; }
+      };
+
       keyServerApp.get('/sub/:id', (req, res) => {
         const idParam = req.params.id;
         const userKey = req.query.key;
@@ -551,6 +620,23 @@ const startKeyServer = (config) => {
         } catch (_) {}
 
         res.setHeader('profile-update-interval', '24');
+
+        // Human-readable profile name for subscription clients.
+        //
+        // Hiddify's name hierarchy is: user override, `profile-title` header,
+        // `content-disposition` header, URL fragment, URL filename. This
+        // endpoint's URL ends in a random token, so without this header the
+        // app displays the token. Sent as `base64:`-prefixed per RFC 5987 so
+        // non-ASCII names survive the header round-trip; Hiddify decodes it
+        // (and falls back to the literal value for clients that do not).
+        try {
+          const rawForTitle = fs.readFileSync(filePath, 'utf-8').slice(0, 512);
+          const title = profileTitleFor(sanitized, rawForTitle);
+          if (title) {
+            res.setHeader('profile-title', `base64:${Buffer.from(title, 'utf-8').toString('base64')}`);
+            res.setHeader('Content-Disposition', `inline; filename="${sanitized.replace(/"/g, '')}"`);
+          }
+        } catch (_) {}
 
         // For .json files: handle format conversions
         // - default:      base64 proxy URIs (V2Box / V2RayNG / any standard subscription client)
@@ -614,13 +700,34 @@ const startKeyServer = (config) => {
         res.setHeader('Content-Type', contentType);
 
         if (sanitized.endsWith('.yaml') || sanitized.endsWith('.yml')) {
-          try {
-            const rawYaml = fs.readFileSync(filePath, 'utf-8');
-            const sanitizedYaml = sanitizeClashYaml(rawYaml);
-            res.send(sanitizedYaml);
-            console.log(`[KeyServer] [${new Date().toISOString()}] Served (sanitized YAML): ${sanitized} to ${req.ip}`);
-            return;
-          } catch (_) {}
+          const rawYaml = fs.readFileSync(filePath, 'utf-8');
+          const sanitizedYaml = sanitizeClashYaml(rawYaml);
+
+          // Optional format conversion for Clash YAML. Without a ?format= the
+          // raw (sanitized) Clash YAML is served exactly as before, so existing
+          // subscription links are unaffected.
+          //
+          // `singbox` is what Hiddify parses natively (Hiddify is a sing-box
+          // client). `hiddify` is accepted as an alias.
+          const yamlFormat = String(req.query.format || '').toLowerCase();
+
+          if (yamlFormat === 'singbox' || yamlFormat === 'hiddify') {
+            const sb = clashYamlToSingbox(rawYaml);
+            if (sb) {
+              res.setHeader('Content-Type', 'application/json; charset=utf-8');
+              res.send(sb);
+              console.log(`[KeyServer] [${new Date().toISOString()}] Served (Clash YAML -> sing-box JSON): ${sanitized} to ${req.ip}`);
+              return;
+            }
+            // Conversion failed: fall through to raw YAML so the client still
+            // receives a usable profile rather than an error.
+            console.warn(`[KeyServer] [${new Date().toISOString()}] sing-box conversion failed for ${sanitized}; serving raw YAML`);
+          }
+
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.send(sanitizedYaml);
+          console.log(`[KeyServer] [${new Date().toISOString()}] Served (sanitized YAML): ${sanitized} to ${req.ip}`);
+          return;
         }
 
         res.sendFile(filePath);
@@ -842,7 +949,15 @@ router.post('/keys', authenticateToken, isAdmin, (req, res) => {
     // Generate or retrieve a stable token for this file (hides the real filename from URLs)
     const { token } = getOrCreateToken(finalName);
 
-    res.json({ message: 'File saved', filename: finalName, token });
+    const rawDomain = config.publicDomain || '';
+    const normDomain = rawDomain
+      ? (rawDomain.match(/^https?:\/\//) ? rawDomain : `http://${rawDomain}`).replace(/\/+$/, '')
+      : '';
+    const host = req.hostname || 'localhost';
+    const baseHost = normDomain || `http://${host}:${config.port || 8088}`;
+    const subscriptionUrl = `${baseHost}/sub/${token}?key=${config.secretKey || ''}`;
+
+    res.json({ message: 'File saved', filename: finalName, token, subscriptionUrl });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1083,6 +1198,208 @@ router.post('/keys/batch-delete', authenticateToken, isAdmin, (req, res) => {
     res.json({
       message: `Deleted ${results.deleted} file(s), ${results.notFound} not found.`,
       ...results,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/keyserver/convert - Convert a key file or rename its token
+//
+// Three modes:
+//   rename        - re-point /sub/<token> for an existing file
+//   yaml-to-json  - Clash YAML        -> sing-box JSON
+//   json-to-yaml  - sing-box JSON     -> Clash YAML
+//
+// `overwrite` defaults to false: a conversion that would clobber an existing
+// different file returns 409 and writes nothing unless the caller opts in.
+router.post('/convert', authenticateToken, isAdmin, (req, res) => {
+  try {
+    const { mode, filename, newFilename, content, newToken, overwrite } = req.body || {};
+
+    if (!mode) return res.status(400).json({ error: 'mode is required' });
+
+    const config = loadConfig();
+    const configDir = config.configDir || DEFAULT_CONFIG.configDir;
+    if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
+
+    // Sanitize to a bare filename so `../` cannot escape configDir.
+    const sanitizeName = (n) => path.basename(String(n || '')).replace(/[^a-zA-Z0-9._-]/g, '-');
+    const ensureExt = (n, ext) => {
+      const base = sanitizeName(n);
+      if (!base) return '';
+      return /\.(yaml|yml|json|txt)$/i.test(base) ? base : `${base}${ext}`;
+    };
+
+    const writeFile = (name, body) => fs.writeFileSync(path.join(configDir, name), body, 'utf-8');
+
+    // ── Mode 1: key rename (token rotation) ──
+    if (mode === 'rename') {
+      const src = sanitizeName(filename);
+      if (!src) return res.status(400).json({ error: 'filename is required' });
+
+      const srcPath = path.join(configDir, src);
+      if (!fs.existsSync(srcPath)) {
+        return res.status(404).json({ error: `File not found: ${src}` });
+      }
+
+      // Accept a full 32-char hex token; reject anything else so a typo can't
+      // produce an unreachable subscription URL.
+      const cleanToken = String(newToken || '').trim().toLowerCase();
+      if (!/^[0-9a-f]{32}$/.test(cleanToken)) {
+        return res.status(400).json({
+          error: 'newToken must be 32 hexadecimal characters (e.g. 338184141cfac8a5ce12bb5bfcccc580)',
+        });
+      }
+
+      const map = loadTokenMap();
+      if (map.byFile[src] === cleanToken) {
+        return res.status(400).json({ error: 'This file already uses that token' });
+      }
+
+      let result;
+      try {
+        result = renameTokenForFile(src, cleanToken);
+      } catch (e) {
+        if (e.code === 'TOKEN_TAKEN') {
+          return res.status(409).json({
+            error: e.message,
+            hint: 'Pick a different token, or convert the other file first.',
+          });
+        }
+        if (e.code === 'MAP_INCONSISTENT') {
+          return res.status(500).json({ error: e.message });
+        }
+        throw e;
+      }
+
+      return res.json({
+        message: `Token updated for ${src}`,
+        mode,
+        filename: src,
+        oldToken: result.oldToken,
+        newToken: result.newToken,
+      });
+    }
+
+    // ── Modes 2 & 3: format conversion ──
+    if (mode !== 'yaml-to-json' && mode !== 'json-to-yaml') {
+      return res.status(400).json({ error: `Unknown mode: ${mode}` });
+    }
+
+    const src = sanitizeName(filename);
+    if (!src) return res.status(400).json({ error: 'filename is required' });
+
+    const srcPath = path.join(configDir, src);
+    if (!fs.existsSync(srcPath)) {
+      return res.status(404).json({ error: `File not found: ${src}` });
+    }
+
+    const targetExt = mode === 'yaml-to-json' ? '.json' : '.yaml';
+    const dest = ensureExt(newFilename || src.replace(/\.(yaml|yml|json|txt)$/i, '') + targetExt, targetExt);
+    if (!dest) return res.status(400).json({ error: 'newFilename is required' });
+
+    // The destination extension must match the format we are about to write.
+    // Without this, `json-to-yaml` with newFilename "x.json" would try to
+    // write Clash YAML into a .json file, corrupting it (and leaving a
+    // .json file the key server can no longer parse as sing-box).
+    if (mode === 'yaml-to-json' && !/\.json$/i.test(dest)) {
+      return res.status(400).json({ error: `Output file must end in .json for yaml-to-json, got "${dest}"` });
+    }
+    if (mode === 'json-to-yaml' && !/\.ya?ml$/i.test(dest)) {
+      return res.status(400).json({ error: `Output file must end in .yaml/.yml for json-to-yaml, got "${dest}"` });
+    }
+
+    // Guard the source extension: converting a .json as if it were YAML would
+    // silently produce a garbage file.
+    const srcLower = src.toLowerCase();
+    if (mode === 'yaml-to-json' && !/\.(yaml|yml)$/.test(srcLower)) {
+      return res.status(400).json({ error: `yaml-to-json needs a .yaml/.yml source, got "${src}"` });
+    }
+    if (mode === 'json-to-yaml' && !/\.json$/.test(srcLower)) {
+      return res.status(400).json({ error: `json-to-yaml needs a .json source, got "${src}"` });
+    }
+
+    const destPath = path.join(configDir, dest);
+    const destExists = fs.existsSync(destPath);
+
+    // Overwrite check. The destination extension must match the target format
+    // (checked above), so the destination can never be the source file: a
+    // conversion always produces a new, differently-named file. Overwriting
+    // therefore only ever replaces a DIFFERENT file that already exists, and
+    // that requires explicit confirmation.
+    if (destExists && !overwrite) {
+      const existingSize = fs.statSync(destPath).size;
+      return res.status(409).json({
+        error: `"${dest}" already exists`,
+        conflict: true,
+        existingSize,
+        hint: 'Re-send with overwrite: true to replace it.',
+      });
+    }
+
+    const raw = fs.readFileSync(srcPath, 'utf-8');
+    const { config: converted, warnings } =
+      mode === 'yaml-to-json' ? yamlToJsonObject(raw) : jsonToYamlObject(raw);
+
+    const body =
+      mode === 'yaml-to-json' ? stringifySingbox(converted) : stringifyClash(converted);
+
+    // A conversion that yields nothing usable must not overwrite good data.
+    if (!body || !body.trim()) {
+      return res.status(422).json({ error: 'Conversion produced empty output; nothing written' });
+    }
+
+    // Round-trip the output through the same parser before it hits disk, so a
+    // customer can never be served a config the client app will reject.
+    try {
+      if (mode === 'yaml-to-json') JSON.parse(body);
+      else yaml.load(body);
+    } catch (e) {
+      return res.status(422).json({
+        error: 'Converted output failed validation and was not saved',
+        details: e.reason || e.message,
+      });
+    }
+
+    writeFile(dest, body);
+
+    // Carry subscription metadata (expiry / data quota) across, otherwise the
+    // new file would silently serve as "unlimited" and the customer's limits
+    // would vanish.
+    let metaCopied = false;
+    const srcMetaPath = srcPath + '.meta.json';
+    const destMetaPath = destPath + '.meta.json';
+    try {
+      if (fs.existsSync(srcMetaPath)) {
+        fs.copyFileSync(srcMetaPath, destMetaPath);
+        metaCopied = true;
+      } else if (destExists && fs.existsSync(destMetaPath)) {
+        // Overwriting an existing file: keep the target's own metadata.
+        metaCopied = true;
+      }
+    } catch (e) {
+      warnings.push(`Could not copy subscription metadata: ${e.message}`);
+    }
+
+    // Register the new file so it gets a working subscription URL immediately.
+    const token = getOrCreateTokenForNewFile(dest);
+
+    res.json({
+      message: `Converted ${src} -> ${dest}`,
+      mode,
+      filename: dest,
+      sourceFilename: src,
+      replaced: destExists,
+      bytes: Buffer.byteLength(body, 'utf-8'),
+      // Count real proxy entries only. A sing-box config also carries
+      // selector/direct/block outbounds, which are not user-facing nodes.
+      proxyCount: Array.isArray(converted.proxies)
+        ? converted.proxies.length
+        : (converted.outbounds || []).filter(o => PROXY_TYPES.includes(o.type)).length,
+      metaCopied,
+      token,
+      warnings: warnings.length ? warnings : undefined,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

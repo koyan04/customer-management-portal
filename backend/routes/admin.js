@@ -780,7 +780,11 @@ router.get('/accounts/:id/activity-logs', authenticateToken, isAdmin, async (req
         object: row.user_name || 'User',
         server: row.server_name || null,
         created_at: row.created_at,
-        source: row.source
+        source: row.source,
+        // Needed so the UI can say WHICH direction a status toggle went
+        // ("Enable" vs "Disable") rather than a vague "Change Enabled".
+        before_data: row.before_data,
+        after_data: row.after_data
       })),
       ...serverKeysResult.rows.map(row => ({
         id: row.id,
@@ -4005,6 +4009,31 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
     await client.query('BEGIN');
 
     const admins = Array.isArray(data.admins) ? data.admins : [];
+
+    // Guard: an overwrite that carries no usable accounts would wipe the entire
+    // team and lock everybody out, including the operator who is running the
+    // restore. Refuse rather than destroy.
+    const restorable = admins.filter(a => a && a.username);
+    if (mode === 'overwrite' && restorable.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ msg: 'Backup contains no admin accounts; refusing to overwrite the admin team' });
+    }
+    // The restoring account must exist in the incoming data, otherwise the
+    // restore would delete the very session performing it and leave the
+    // operator locked out with no way back in.
+    const currentAdminId = req.user && req.user.id ? req.user.id : null;
+    if (mode === 'overwrite' && currentAdminId) {
+      const self = await client.query('SELECT username FROM admins WHERE id = $1', [currentAdminId]);
+      const selfUsername = self.rows.length ? String(self.rows[0].username || '').toLowerCase() : '';
+      const present = restorable.some(a => String(a.username || '').toLowerCase() === selfUsername);
+      if (!present) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          msg: `This backup does not contain your own account ("${selfUsername}"). Overwriting would lock you out; restore in merge mode instead.`
+        });
+      }
+    }
+
     const adminsAudit = Array.isArray(data.admins_audit) ? data.admins_audit : [];
     const loginAudit = Array.isArray(data.login_audit) ? data.login_audit : [];
     const pwResetAudit = Array.isArray(data.password_reset_audit) ? data.password_reset_audit : [];
@@ -4030,20 +4059,19 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
       try { await client.query('DELETE FROM server_admin_permissions'); } catch (_) {}
       // Disable audit trigger during bulk admin delete/insert to avoid double entries
       try { await client.query('ALTER TABLE admins DISABLE TRIGGER admins_audit_trigger'); } catch (_) {}
-      // Don't delete the current admin doing the restore
-      const currentAdminId = req.user && req.user.id ? req.user.id : null;
-      if (currentAdminId) {
-        await client.query('DELETE FROM admins WHERE id != $1', [currentAdminId]);
-      } else {
-        await client.query('DELETE FROM admins');
-      }
+      // Overwrite means overwrite: remove EVERY admin, including the one running
+      // the restore. The previous version spared the current admin, so the
+      // operator's own row survived with its old role and password while every
+      // other account was replaced — the restored team was never actually in
+      // force. The guard above guarantees the backup contains this username, so
+      // the account is re-created below from the backup's own data.
+      await client.query('DELETE FROM admins');
     }
 
     // Restore admins
     let adminCount = 0;
     for (const a of admins) {
       if (!a.username) continue;
-      const currentAdminId = req.user && req.user.id ? req.user.id : null;
 
       // Check if username already exists in DB (find by username to avoid PK conflicts)
       const existingByUsername = await client.query('SELECT id FROM admins WHERE username=$1', [a.username]);
@@ -4051,7 +4079,6 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
       if (existingByUsername.rows.length > 0) {
         // Username exists — UPDATE in place (preserve existing id to keep session/FK integrity)
         const existingId = existingByUsername.rows[0].id;
-        const isCurrentAdmin = currentAdminId && existingId === currentAdminId;
         // Resolve avatar: keep the image IN THE DATABASE. Older versions wrote
         // the base64 back out to public/uploads and cleared avatar_data, which
         // broke the "media lives in Postgres" guarantee on every admin restore.
@@ -4061,14 +4088,17 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
           || (a.avatar_url && String(a.avatar_url).startsWith('data:') ? a.avatar_url : null);
         const resolvedAvatarData = incomingAvatarData || null;
         const resolvedAvatarUrl = resolvedAvatarData ? null : (a.avatar_url || null);
-        if (mode === 'merge' || isCurrentAdmin) {
-          // merge or current admin: keep password_hash and role untouched
+        if (mode === 'merge') {
+          // merge: keep password_hash untouched
           await client.query(
             `UPDATE admins SET display_name=$1, role=$2, avatar_url=$3, avatar_data=$4, updated_at=NOW() WHERE id=$5`,
             [a.display_name || null, a.role || 'VIEWER', resolvedAvatarUrl, resolvedAvatarData, existingId]
           );
         } else {
-          // overwrite non-current: update everything including password
+          // overwrite: update everything including password and role, for the
+          // restoring admin too. There is deliberately no isCurrentAdmin escape
+          // hatch — an overwrite that silently keeps the operator's old
+          // credentials is not an overwrite.
           const overHash = (a.password_hash && /^\$2[aby]\$\d{2}\$/.test(String(a.password_hash)))
             ? a.password_hash
             : await bcrypt.hash(require('crypto').randomBytes(24).toString('base64url'), 10);
@@ -4121,6 +4151,62 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
     if (mode === 'overwrite') {
       try { await client.query('ALTER TABLE admins ENABLE TRIGGER admins_audit_trigger'); } catch (_) {}
       try { await client.query('ALTER TABLE app_settings ENABLE TRIGGER trg_app_settings_enforce_general_updated_by'); } catch (_) {}
+    }
+
+    // ── Log everyone out ────────────────────────────────────────────────────
+    // An overwrite replaces the team, so every session issued against the old
+    // team is stale and must stop working immediately.
+    //
+    // Revocation works by writing the session's `jti` into invalidated_tokens;
+    // authenticateToken rejects any token whose jti is listed. So the jti of
+    // every ACTIVE session has to be recorded — and, critically, must NOT then
+    // be deleted. (The snapshot-restore path inserts revocations and then runs
+    // `DELETE FROM invalidated_tokens`, which throws the list away and leaves
+    // old sessions valid; the jti values it invents are random rather than the
+    // real ones, so they never match a live token either.)
+    let revokedSessions = 0;
+    if (mode === 'overwrite') {
+      // Revoke the refresh tokens first. `token_hash` is what /api/auth/refresh
+      // looks up, and clearing the table stops it minting new access tokens.
+      try {
+        const refresh = await client.query(
+          `INSERT INTO invalidated_tokens (jti, admin_id, reason)
+           SELECT 'restore-' || t.token_hash, t.admin_id, 'admins_restored'
+             FROM refresh_tokens t
+            WHERE t.admin_id IS NOT NULL
+           ON CONFLICT (jti) DO NOTHING`
+        );
+        revokedSessions += refresh.rowCount || 0;
+      } catch (e) {
+        console.warn('[restore/admins] refresh-token revocation failed:', e && e.message ? e.message : e);
+      }
+      try { await client.query('DELETE FROM refresh_tokens'); } catch (_) {}
+
+      // Then revoke live access tokens. authenticateToken rejects a request
+      // whose jti appears in invalidated_tokens, so the jti of every current
+      // session has to be recorded — and these rows must be KEPT. (The
+      // snapshot-restore path inserts revocations and then runs
+      // `DELETE FROM invalidated_tokens`, which discards the list, and the jti
+      // values it invents are random rather than the real ones, so they never
+      // match a live token either.)
+      //
+      // active_sessions is not in the migration files, so it may not exist on
+      // every host: each step is best-effort and refresh-token clearing above
+      // is what guarantees the team is signed out.
+      try {
+        const ins = await client.query(
+          `INSERT INTO invalidated_tokens (jti, admin_id, reason)
+           SELECT s.token_jti, s.admin_id, 'admins_restored'
+             FROM active_sessions s
+            WHERE s.token_jti IS NOT NULL
+           ON CONFLICT (jti) DO NOTHING`
+        );
+        revokedSessions += ins.rowCount || 0;
+      } catch (e) {
+        console.warn('[restore/admins] access-token revocation skipped:', e && e.message ? e.message : e);
+      }
+      try { await client.query('DELETE FROM active_sessions'); } catch (_) {}
+      console.log(`[restore/admins] overwrite complete: ${adminCount} admins, ${revokedSessions} sessions revoked`);
     }
 
     // Restore audit logs (always insert — skip existing IDs)
@@ -4221,7 +4307,7 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
     try { await client.query("SELECT setval('server_keys_audit_id_seq', COALESCE((SELECT MAX(id) FROM server_keys_audit), 1))"); } catch (_) {}
 
     await client.query('COMMIT');
-    return res.json({ ok: true, counts: { admins: adminCount, admins_audit: auditCount, login_audit: loginCount, password_reset_audit: pwResetCount, control_panel_audit: ctrlCount, settings_audit: settingsAuditCount, server_keys_audit: serverKeysAuditCount, permissions: permCount } });
+    return res.json({ ok: true, counts: { admins: adminCount, admins_audit: auditCount, login_audit: loginCount, password_reset_audit: pwResetCount, control_panel_audit: ctrlCount, settings_audit: settingsAuditCount, server_keys_audit: serverKeysAuditCount, permissions: permCount }, sessions_revoked: mode === 'overwrite' ? revokedSessions : 0 });
   } catch (err) {
     await client.query('ROLLBACK');
     // Re-enable triggers in case of failure

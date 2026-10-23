@@ -37,8 +37,13 @@ describe('AdminPanel integration', () => {
   const AdminPanelPage = (await import('../pages/AdminPanelPage.jsx')).default;
   render(<AdminPanelPage />);
 
-    // Wait for the account card to render by finding the element that displays the account name
-    const displayNode = await screen.findByText('Jane Doe', { selector: '.account-display' });
+    // The display name now renders inside a child <span> of .account-display
+    // (alongside the online/offline indicator), so an exact-string matcher
+    // scoped to .account-display no longer resolves. Find the name, then walk
+    // up to the card.
+    const displayNode = await screen.findByText('Jane Doe');
+    const info = displayNode.closest('.account-info') || displayNode.closest('.account-display');
+    expect(info).toBeTruthy();
     const card = displayNode.closest('.account-card');
     expect(card).toBeTruthy();
 

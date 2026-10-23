@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { FaCog, FaPlus, FaTrash, FaCopy, FaSave, FaCheck, FaFileCode, FaShieldAlt, FaServer, FaSearch, FaUser, FaDownload } from 'react-icons/fa';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext.jsx';
+import SubscriptionToast from '../components/SubscriptionToast.jsx';
 import axios from 'axios';
 import { getBackendOrigin } from '../lib/backendOrigin';
 import './JsonGeneratorPage.css';
 
 const JsonGeneratorPage = () => {
   const { token } = useAuth();
+  const { show: showToast } = useToast();
   // Top menu settings
   const [groupName, setGroupName] = useState('VChannel-Premium');
   const [unlim, setUnlim] = useState(false);
@@ -910,7 +913,30 @@ const JsonGeneratorPage = () => {
 
   const [serverSaveStatus, setServerSaveStatus] = useState('');
   const [serverSaveMsg, setServerSaveMsg] = useState('');
-  const [subUrls, setSubUrls] = useState(null); // { base: '', raw: '', v2ray: '' }
+  const [subUrls, setSubUrls] = useState(null); // { base: '' }
+  const [copiedSub, setCopiedSub] = useState(false);
+
+  const handleCopySubUrl = async () => {
+    if (!subUrls?.base) return;
+    try {
+      await navigator.clipboard.writeText(subUrls.base);
+      setCopiedSub(true);
+      setTimeout(() => setCopiedSub(false), 2000);
+    } catch {
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = subUrls.base;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setCopiedSub(true);
+        setTimeout(() => setCopiedSub(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy sub url', err);
+      }
+    }
+  };
 
   const saveToServer = async () => {
     if (!generatedJson.trim()) return;
@@ -962,22 +988,33 @@ const JsonGeneratorPage = () => {
 
       // Build subscription URLs from the JSON file token
       const jsonToken = res.data.token || res.data.filename;
+      let calculatedBase = res.data.subscriptionUrl || '';
       if (jsonToken) {
-        const ksConfig = await axios.get(`${backendOrigin}/api/keyserver/config`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        const ksPort = ksConfig.data.port || 8088;
-        const ksKey = ksConfig.data.secretKey || '';
-        const rawDomain = ksConfig.data.publicDomain || '';
-        const normDomain = rawDomain
-          ? (rawDomain.match(/^https?:\/\//) ? rawDomain : `http://${rawDomain}`).replace(/\/+$/, '')
-          : '';
-        const baseHost = normDomain || `http://${window.location.hostname}:${ksPort}`;
-        const base = `${baseHost}/sub/${jsonToken}?key=${ksKey}`;
-        setSubUrls({
-          base,
-          raw: `${base}&format=raw`,
-          v2ray: `${base}&format=v2ray`
+        try {
+          const ksConfig = await axios.get(`${backendOrigin}/api/keyserver/config`, {
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const ksPort = ksConfig.data.port || 8088;
+          const ksKey = ksConfig.data.secretKey || '';
+          const rawDomain = ksConfig.data.publicDomain || '';
+          const normDomain = rawDomain
+            ? (rawDomain.match(/^https?:\/\//) ? rawDomain : `http://${rawDomain}`).replace(/\/+$/, '')
+            : '';
+          const baseHost = normDomain || `http://${window.location.hostname}:${ksPort}`;
+          calculatedBase = `${baseHost}/sub/${jsonToken}?key=${ksKey}`;
+          setSubUrls({
+            base: calculatedBase,
+          });
+        } catch (_) {
+          if (!calculatedBase) {
+            calculatedBase = `http://${window.location.hostname}:8088/sub/${jsonToken}`;
+          }
+        }
+        showToast({
+          variant: 'success',
+          title: 'Subscription Link Ready',
+          message: <SubscriptionToast url={calculatedBase} filename={res.data.filename} />,
+          duration: 12000
         });
       }
 
@@ -1589,19 +1626,15 @@ const JsonGeneratorPage = () => {
           {subUrls && (
             <div className="sub-urls-panel">
               <div className="sub-url-row">
-                <span className="sub-url-label" title="Base64 proxy URI list — use with V2Box / V2RayNG / any standard subscription client">📋 Sub URL:</span>
+                <span className="sub-url-label" title="Subscription link">📋 Sub URL:</span>
                 <input type="text" className="sub-url-input" value={subUrls.base} readOnly onClick={e => e.target.select()} />
-                <button className="btn-copy-url" onClick={() => navigator.clipboard.writeText(subUrls.base)} title="Copy — paste into V2Box or V2RayNG 'Add Subscription'"><FaCopy /></button>
-              </div>
-              <div className="sub-url-row">
-                <span className="sub-url-label" title="Proxy-only sing-box JSON — use with V2Box or NekoBox native sing-box subscription">📦 Raw URL:</span>
-                <input type="text" className="sub-url-input" value={subUrls.raw} readOnly onClick={e => e.target.select()} />
-                <button className="btn-copy-url" onClick={() => navigator.clipboard.writeText(subUrls.raw)} title="Copy — paste into V2Box 'Add sing-box Subscription'"><FaCopy /></button>
-              </div>
-              <div className="sub-url-row">
-                <span className="sub-url-label" title="Full V2Ray/Xray JSON config — use with V2RayNG 'import v2ray json from clipboard'">⚙️ V2Ray URL:</span>
-                <input type="text" className="sub-url-input" value={subUrls.v2ray} readOnly onClick={e => e.target.select()} />
-                <button className="btn-copy-url" onClick={() => navigator.clipboard.writeText(subUrls.v2ray)} title="Copy — fetch and import in V2RayNG 'import v2ray json from clipboard'"><FaCopy /></button>
+                <button
+                  className={`btn-copy-url ${copiedSub ? 'copied' : ''}`}
+                  onClick={handleCopySubUrl}
+                  title={copiedSub ? 'Copied to clipboard!' : 'Copy Subscription URL'}
+                >
+                  {copiedSub ? <><FaCheck /> Copied!</> : <><FaCopy /></>}
+                </button>
               </div>
             </div>
           )}

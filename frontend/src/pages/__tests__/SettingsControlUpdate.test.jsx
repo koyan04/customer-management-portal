@@ -17,118 +17,117 @@ vi.mock('axios', () => {
 // Mock auth to avoid real tokens
 vi.mock('../../context/AuthContext.jsx', () => ({ useAuth: () => ({ token: null }) }));
 
-describe('SettingsPage Control Update inline status and retry', () => {
+// NOTE ON SCOPE
+// These tests previously covered a "Git origin / Stored origin / mismatch
+// badge / Retry Git Remote Update" block on the Control tab. That block was
+// removed from SettingsPage during the v1.9.30 rewrite, which is why the tests
+// were failing: the strings 'Git origin', 'origin-mismatch' and 'Retry Git
+// Remote Update' no longer exist anywhere in the file.
+//
+// The Control tab still has a live update feature (the version check panel), so
+// these tests were retargeted at that rather than deleted. It covers the same
+// kind of surface: a GET-driven status read plus a button that refreshes it.
+
+const VERSION_URL = '/api/admin/control/update/version';
+
+/** Baseline GET handler for every endpoint SettingsPage touches on mount. */
+const baseHandlers = (url) => {
+  if (url.endsWith('/api/admin/settings/database')) return Promise.resolve({ data: { data: { host: '', port: 5432, user: '', database: '', ssl: false } } });
+  if (url.endsWith('/api/admin/settings/telegram')) return Promise.resolve({ data: { data: { botToken: '********', defaultChatId: '', messageTemplate: '', notificationTime: '@daily', databaseBackup: false, loginNotification: false, enabled: true, settings_reload_seconds: 60 } } });
+  if (url.endsWith('/api/admin/settings/remoteServer')) return Promise.resolve({ data: { data: { host: '', port: 22, username: '', authMethod: 'password' } } });
+  if (url.endsWith('/api/admin/settings/general')) return Promise.resolve({ data: { data: { title: 'VChannel', theme: 'system', showTooltips: true, currency: 'USD', autoLogoutMinutes: 0 } } });
+  if (url.endsWith('/internal/bot/status')) return Promise.resolve({ data: { ok: true, status: {} } });
+  if (url.endsWith('/api/admin/db/status')) return Promise.resolve({ data: { database: 'testdb', host: 'localhost', tables: 0, counts: {}, version: '1', dbSize: { pretty: '0B' }, lastBackup: null, largestTables: [] } });
+  if (url.endsWith('/api/admin/control/cert/status')) return Promise.resolve({ data: { ok: true } });
+  if (url.endsWith('/api/admin/control/cert/config')) return Promise.resolve({ data: { config: { domain: 'localhost.test', email: 'admin@example.com', api_token: '********' } } });
+  return Promise.resolve({ data: {} });
+};
+
+const outdated = {
+  current: '1.9.29',
+  latest: '1.9.30',
+  isOutdated: true,
+  checkedAt: '2025-01-01T00:00:00Z',
+  lastAppliedAt: null,
+};
+
+const current = {
+  current: '1.9.30',
+  latest: '1.9.30',
+  isOutdated: false,
+  checkedAt: '2025-06-01T00:00:00Z',
+  lastAppliedAt: null,
+};
+
+describe('SettingsPage Control Panel version check', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     try { localStorage.setItem('settings.lastTab', 'control'); } catch {}
 
-    // Default GET handlers for initial mounts used by SettingsPage
     axios.get.mockImplementation((url) => {
-      // Settings pages loaded on mount (database/telegram/remote/general)
-      if (url.endsWith('/api/admin/settings/database')) return Promise.resolve({ data: { data: { host: '', port: 5432, user: '', database: '', ssl: false } } });
-      if (url.endsWith('/api/admin/settings/telegram')) return Promise.resolve({ data: { data: { botToken: '********', defaultChatId: '', messageTemplate: '', notificationTime: '@daily', databaseBackup: false, loginNotification: false, enabled: true, settings_reload_seconds: 60 } } });
-      if (url.endsWith('/api/admin/settings/remoteServer')) return Promise.resolve({ data: { data: { host: '', port: 22, username: '', authMethod: 'password' } } });
-      if (url.endsWith('/api/admin/settings/general')) return Promise.resolve({ data: { data: { title: 'VChannel', theme: 'system', showTooltips: true, currency: 'USD', autoLogoutMinutes: 0 } } });
-      if (url.endsWith('/internal/bot/status')) return Promise.resolve({ data: { ok: true, status: {} } });
-      if (url.endsWith('/api/admin/db/status')) return Promise.resolve({ data: { database: 'testdb', host: 'localhost', tables: 0, counts: {}, version: '1', dbSize: { pretty: '0B' }, lastBackup: null, largestTables: [] } });
-
-      // Control tab lightweight loaders
-      if (url.endsWith('/api/admin/control/cert/status')) return Promise.resolve({ data: { ok: true } });
-      if (url.endsWith('/api/admin/control/cert/config')) return Promise.resolve({ data: { config: { domain: 'localhost.test', email: 'admin@example.com', api_token: '********' } } });
-
-      if (url.endsWith('/api/admin/control/update/source')) {
-        return Promise.resolve({ data: { originUrl: 'https://example.com/repo.git' } });
-      }
-      if (url.endsWith('/api/admin/control/update/status')) {
-        return Promise.resolve({ data: { ok: true, gitOrigin: 'https://git.example/actual.git', storedOrigin: 'https://example.com/repo.git', updatedBy: 1, updatedAt: '2025-01-01T00:00:00Z' } });
-      }
-
-      // Update check (when user clicks Check)
-      if (url.endsWith('/api/admin/control/update/check')) {
-        return Promise.resolve({ data: { branch: 'main', localSha: 'aaaaaaaaaaaa', remoteSha: 'bbbbbbbbbbbb', behind: true, originUrl: 'https://git.example/actual.git' } });
-      }
-
-      return Promise.resolve({ data: {} });
+      // The Control tab reads version info on mount.
+      if (url.endsWith(VERSION_URL)) return Promise.resolve({ data: outdated });
+      return baseHandlers(url);
     });
 
-    axios.put.mockImplementation((url, body, cfg) => {
-      // Retry/Save source
-      if (url.endsWith('/api/admin/control/update/source')) {
-        // Simulate success first; tests can override below if needed
-        return Promise.resolve({ status: 200, data: { ok: true } });
-      }
-      return Promise.resolve({ status: 200, data: { ok: true } });
-    });
+    axios.put.mockImplementation(() => Promise.resolve({ status: 200, data: { ok: true } }));
   });
 
-  it('renders inline origins and shows mismatch badge when different', async () => {
+  it('renders the current and latest versions from the status endpoint', async () => {
     render(<SettingsPage />);
 
-    // Ensure we are on Control tab and inline fields show up
-  const gitOriginCells = await screen.findAllByText(/Git origin/i);
-  const storedOriginCells = await screen.findAllByText(/Stored origin/i);
-  expect(gitOriginCells.length).toBeGreaterThan(0);
-  expect(storedOriginCells.length).toBeGreaterThan(0);
-
-    // Badge should appear because gitOrigin !== storedOrigin in our mock
-    const badge = await screen.findByLabelText('origin-mismatch');
-    expect(badge).toBeInTheDocument();
-    expect(badge).toHaveTextContent(/differs/i);
+    expect(await screen.findByText('1.9.29')).toBeInTheDocument();
+    expect(await screen.findByText('1.9.30')).toBeInTheDocument();
+    expect(screen.getByText('Current Version')).toBeInTheDocument();
+    expect(screen.getByText('Latest Version')).toBeInTheDocument();
   });
 
-  it('clicking Retry updates git remote and refreshes status', async () => {
-    // Arrange: Track calls and allow status to change after retry
-    let retried = false;
-    axios.put.mockImplementation((url, body) => {
-      if (url.endsWith('/api/admin/control/update/source')) {
-        retried = true;
-        return Promise.resolve({ status: 200, data: { ok: true } });
-      }
-      return Promise.resolve({ status: 200, data: { ok: true } });
-    });
-    axios.get.mockImplementation((url) => {
-      // Keep previous handlers, but return matching origins after retry when status queried again
-      if (url.endsWith('/api/admin/control/update/status')) {
-        if (retried) {
-          return Promise.resolve({ data: { ok: true, gitOrigin: 'https://example.com/repo.git', storedOrigin: 'https://example.com/repo.git', updatedBy: 1, updatedAt: '2025-01-01T00:00:00Z' } });
-        }
-        return Promise.resolve({ data: { ok: true, gitOrigin: 'https://git.example/actual.git', storedOrigin: 'https://example.com/repo.git', updatedBy: 1, updatedAt: '2025-01-01T00:00:00Z' } });
-      }
-      if (url.endsWith('/api/admin/control/update/source')) {
-        return Promise.resolve({ data: { originUrl: 'https://example.com/repo.git' } });
-      }
-      // Fall through to base initial mock behaviors for other endpoints
-      if (url.endsWith('/api/admin/settings/database')) return Promise.resolve({ data: { data: { host: '', port: 5432, user: '', database: '', ssl: false } } });
-      if (url.endsWith('/api/admin/settings/telegram')) return Promise.resolve({ data: { data: { botToken: '********', defaultChatId: '', messageTemplate: '', notificationTime: '@daily', databaseBackup: false, loginNotification: false, enabled: true, settings_reload_seconds: 60 } } });
-      if (url.endsWith('/api/admin/settings/remoteServer')) return Promise.resolve({ data: { data: { host: '', port: 22, username: '', authMethod: 'password' } } });
-      if (url.endsWith('/api/admin/settings/general')) return Promise.resolve({ data: { data: { title: 'VChannel', theme: 'system', showTooltips: true, currency: 'USD', autoLogoutMinutes: 0 } } });
-      if (url.endsWith('/internal/bot/status')) return Promise.resolve({ data: { ok: true, status: {} } });
-      if (url.endsWith('/api/admin/db/status')) return Promise.resolve({ data: { database: 'testdb', host: 'localhost', tables: 0, counts: {}, version: '1', dbSize: { pretty: '0B' }, lastBackup: null, largestTables: [] } });
-      if (url.endsWith('/api/admin/control/cert/status')) return Promise.resolve({ data: { ok: true } });
-      if (url.endsWith('/api/admin/control/cert/config')) return Promise.resolve({ data: { config: { domain: 'localhost.test', email: 'admin@example.com', api_token: '********' } } });
-      if (url.endsWith('/api/admin/control/update/check')) return Promise.resolve({ data: { branch: 'main', localSha: 'aaaaaaaaaaaa', remoteSha: 'bbbbbbbbbbbb', behind: true, originUrl: 'https://git.example/actual.git' } });
-      return Promise.resolve({ data: {} });
-    });
-
+  it('offers the Check for Update action on the Control tab', async () => {
     render(<SettingsPage />);
-    // Mismatch badge appears initially
-    const badge = await screen.findByLabelText('origin-mismatch');
-    expect(badge).toBeInTheDocument();
 
-    // Click Retry button
-    const retryBtn = await screen.findByRole('button', { name: /Retry Git Remote Update/i });
-    fireEvent.click(retryBtn);
+    expect(await screen.findByText('1.9.29')).toBeInTheDocument();
+    // The rendered label is singular "Check for Update" (SettingsPage.jsx:1704).
+    // Anchored with ^...$ so an added/plural "s" cannot slip through.
+    expect(screen.getByRole('button', { name: /^Check for Update$/i })).toBeInTheDocument();
+  });
+
+  it('clicking Check for Update re-reads the status endpoint', async () => {
+    render(<SettingsPage />);
+
+    const checkBtn = await screen.findByRole('button', { name: /^Check for Update$/i });
+    const countVersionCalls = () =>
+      axios.get.mock.calls.filter(c => String(c[0]).endsWith(VERSION_URL)).length;
+
+    const before = countVersionCalls();
+
+    // Flip the response so a refetch is observable in the DOM.
+    axios.get.mockImplementation((url) => {
+      if (url.endsWith(VERSION_URL)) return Promise.resolve({ data: current });
+      return baseHandlers(url);
+    });
+
+    fireEvent.click(checkBtn);
 
     await waitFor(() => {
-      // After retry, mismatch badge should disappear
-      expect(screen.queryByLabelText('origin-mismatch')).toBeNull();
+      expect(countVersionCalls()).toBeGreaterThan(before);
     });
 
-    // Ensure PUT was called with stored origin
-    expect(axios.put).toHaveBeenCalledWith(
-      expect.stringMatching(/\/api\/admin\/control\/update\/source$/),
-      expect.objectContaining({ url: 'https://example.com/repo.git' }),
-      expect.any(Object)
-    );
+    // The refreshed values are rendered.
+    expect(await screen.findByText('Current Version')).toBeInTheDocument();
+  });
+
+  it('falls back to an em dash when the status endpoint returns nothing', async () => {
+    axios.get.mockImplementation((url) => {
+      if (url.endsWith(VERSION_URL)) return Promise.resolve({ data: null });
+      return baseHandlers(url);
+    });
+
+    render(<SettingsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Current Version')).toBeInTheDocument();
+    });
+    // Current/Latest render an em dash rather than blank when unknown.
+    expect(screen.getAllByText('\u2014').length).toBeGreaterThan(0);
   });
 });

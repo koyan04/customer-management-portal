@@ -63,8 +63,18 @@ backend/public/uploads/*
 backend/public/logos/*
 !backend/public/logos/.gitkeep
 
+# Ignore built frontend assets copied to backend/public (built on deploy)
+backend/public/assets/
+backend/public/fonts/
+backend/public/index.html
+backend/public/vite.svg
+
 # Ignore runtime token map data
 backend/data/token_map.json
 
 # Local release draft notes (permanent notes live on GitHub Releases & RELEASE_NOTES.md)
 release-notes-*.md
+
+# Local-only engineering walkthrough / change log (never pushed)
+MEMORY.md
+**/MEMORY.md

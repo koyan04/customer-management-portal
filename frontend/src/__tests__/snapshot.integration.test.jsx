@@ -15,8 +15,10 @@ describe('Snapshot integration (download only)', () => {
 
 	it('downloads Telegram snapshot (JSON) and shows confirmation (merged)', async () => {
 		render(<SettingsPage />);
-		// Navigate to Database tab if not default; default is 'database'
-		const btn = await screen.findByRole('button', { name: /Download Telegram backup \(JSON\)/i });
+		// Backup/restore controls live on the Database tab (the default tab).
+		// The button was relabelled from "Download Telegram backup (JSON)" to
+		// "Telegram snapshot" during the settings rewrite.
+		const btn = await screen.findByRole('button', { name: /Telegram snapshot/i });
 		await userEvent.click(btn);
 		await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Download started/i));
 		// NOTE: Upload flow covered in SettingsSnapshot.msw.test.jsx; keeping only download here.

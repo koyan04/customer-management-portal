@@ -77,7 +77,10 @@ describe('SettingsPage restore uploads', () => {
       return { data: { data: {} } };
     });
     render(<SettingsPage />);
-    const btn = await screen.findByRole('button', { name: /Download Telegram backup \(JSON\)/i });
+    // The download controls moved to the DATABASE tab and the button was
+    // relabelled from "Download Telegram backup (JSON)" to "Telegram snapshot".
+    // It now defaults to the database tab, so no tab switch is needed.
+    const btn = await screen.findByRole('button', { name: /Telegram snapshot/i });
     const createElSpy = vi.spyOn(document, 'createElement');
     createElSpy.mockImplementation((tag) => {
       const el = document.createElementNS('http://www.w3.org/1999/xhtml', tag);

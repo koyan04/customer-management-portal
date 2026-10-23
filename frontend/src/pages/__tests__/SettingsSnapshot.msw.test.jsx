@@ -23,7 +23,9 @@ describe('SettingsPage with MSW handlers (snapshot)', () => {
     );
 
     render(<SettingsPage />);
-    const btn = await screen.findByRole('button', { name: /Download Telegram backup \(JSON\)/i });
+    // Relabelled from "Download Telegram backup (JSON)" to "Telegram snapshot"
+    // during the settings rewrite; the control now lives on the Database tab.
+    const btn = await screen.findByRole('button', { name: /Telegram snapshot/i });
     fireEvent.click(btn);
 
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(/Download started/i));

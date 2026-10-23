@@ -72,33 +72,33 @@ pool.on('connect', async (client) => {
   }
 });
 
-// Also set Node.js process timezone if configured (for JavaScript Date operations)
-// This needs to be done as early as possible for maximum effect
-(async () => {
-  try {
-    // Use a temporary client just to fetch the timezone setting
-    const tempClient = await pool.connect();
+if (process.env.NODE_ENV !== 'test') {
+  (async () => {
     try {
-      const r = await tempClient.query("SELECT data FROM app_settings WHERE settings_key = 'general'");
-      const data = r.rows && r.rows[0] ? (r.rows[0].data || {}) : {};
-      const tz = data.timezone;
-      if (tz && tz !== 'auto' && typeof tz === 'string' && tz.trim() !== '') {
-        const tzValue = tz.trim();
-        process.env.TZ = tzValue;
-        console.log('[db] Set Node.js TZ environment variable to: %s', tzValue);
-        console.log('[db] IMPORTANT: Timezone must be a valid IANA name (e.g., "Asia/Yangon" for Myanmar, "Asia/Dhaka" for Bangladesh)');
-        console.log('[db] Current time in configured timezone: %s', new Date().toString());
-      } else {
-        console.log('[db] Using system timezone (no custom timezone configured)');
+      // Use a temporary client just to fetch the timezone setting
+      const tempClient = await pool.connect();
+      try {
+        const r = await tempClient.query("SELECT data FROM app_settings WHERE settings_key = 'general'");
+        const data = r.rows && r.rows[0] ? (r.rows[0].data || {}) : {};
+        const tz = data.timezone;
+        if (tz && tz !== 'auto' && typeof tz === 'string' && tz.trim() !== '') {
+          const tzValue = tz.trim();
+          process.env.TZ = tzValue;
+          console.log('[db] Set Node.js TZ environment variable to: %s', tzValue);
+          console.log('[db] IMPORTANT: Timezone must be a valid IANA name (e.g., "Asia/Yangon" for Myanmar, "Asia/Dhaka" for Bangladesh)');
+          console.log('[db] Current time in configured timezone: %s', new Date().toString());
+        } else {
+          console.log('[db] Using system timezone (no custom timezone configured)');
+        }
+      } finally {
+        tempClient.release();
       }
-    } finally {
-      tempClient.release();
+    } catch (e) {
+      // Non-fatal - just log and continue
+      console.warn('[db] Could not load timezone at startup:', e.message);
     }
-  } catch (e) {
-    // Non-fatal - just log and continue
-    console.warn('[db] Could not load timezone at startup:', e.message);
-  }
-})();
+  })();
+}
 
 // Expose a safe shutdown helper on the pool so tests and other runners can close it.
 pool.shutdown = async function shutdown() {

@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { FaServer, FaKey, FaCopy, FaTrash, FaPlay, FaStop, FaSync, FaSave, FaEye, FaEyeSlash, FaFolder, FaDownload, FaCog, FaSearch, FaChevronLeft, FaChevronRight, FaAngleDoubleLeft, FaAngleDoubleRight, FaCloudDownloadAlt, FaCloudUploadAlt, FaCheckSquare, FaRegSquare, FaExclamationTriangle, FaBars, FaLink, FaFileImport, FaSortUp, FaSortDown, FaSort } from 'react-icons/fa';
+import { FaServer, FaKey, FaCopy, FaTrash, FaPlay, FaStop, FaSync, FaSave, FaEye, FaEyeSlash, FaFolder, FaDownload, FaCog, FaSearch, FaChevronLeft, FaChevronRight, FaAngleDoubleLeft, FaAngleDoubleRight, FaCloudDownloadAlt, FaCloudUploadAlt, FaCheckSquare, FaRegSquare, FaExclamationTriangle, FaBars, FaLink, FaFileImport, FaSortUp, FaSortDown, FaSort, FaExchangeAlt } from 'react-icons/fa';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext.jsx';
 import axios from 'axios';
 import { getBackendOrigin } from '../lib/backendOrigin';
 import './KeyManagerPage.css';
 
 const KeyManagerPage = () => {
   const { token, user } = useAuth();
+  const { show: showToast } = useToast();
   const role = user?.user?.role || user?.role;
   const isAdmin = role === 'ADMIN';
   const backendOrigin = getBackendOrigin();
@@ -49,6 +51,16 @@ const KeyManagerPage = () => {
   const importInputRef = useRef(null);
   const [restoreModal, setRestoreModal] = useState(null); // null | { backup, filename }
   const [copyModal, setCopyModal] = useState(null);   // null | keyEntry
+
+  // Key converter (rename token | yaml<->json)
+  const [convertModal, setConvertModal] = useState(null); // null | { mode }
+  const [convertSource, setConvertSource] = useState('');
+  const [convertTarget, setConvertTarget] = useState('');
+  const [convertNewToken, setConvertNewToken] = useState('');
+  const [convertConflict, setConvertConflict] = useState(null); // server 409 payload
+  const [convertWarnings, setConvertWarnings] = useState([]);
+  const [convertBusy, setConvertBusy] = useState(false);
+  const [convertSearch, setConvertSearch] = useState('');
 
   // Selection for batch delete
   const [selectedKeys, setSelectedKeys] = useState(new Set());
@@ -198,13 +210,27 @@ const KeyManagerPage = () => {
     const formatParam = format ? `&format=${format}` : '';
     const url = `${baseHost}/sub/${id}?key=${secretKey}${formatParam}`;
     navigator.clipboard.writeText(url).then(() => {
-      showFeedback('URL copied to clipboard');
+      showToast({ variant: 'success', title: 'Copied', message: 'Subscription URL copied to clipboard' });
     }).catch(() => {
-      showFeedback('Failed to copy', 'error');
+      showToast({ variant: 'error', title: 'Copy failed', message: 'Could not copy to clipboard' });
     });
   };
 
-  const openCopyModal = (keyEntry) => setCopyModal({ ...keyEntry, prefersLightTheme: resolveLightTheme() });
+  // .json files have a single, universally-working format (base64 proxy URIs),
+  // so there is nothing to choose and the modal is skipped entirely. Only Clash
+  // YAML needs a choice, because a raw YAML profile is not accepted by
+  // non-Clash clients.
+  const isYamlKey = (keyEntry) => /\.(ya?ml)$/i.test(keyEntry?.filename || '');
+  const isPlainTextKey = (keyEntry) => /\.txt$/i.test(keyEntry?.filename || '');
+
+  const openCopyModal = (keyEntry) => {
+    // Single-format file types: copy immediately, no menu.
+    if (!isYamlKey(keyEntry)) {
+      copySubUrl(keyEntry);
+      return;
+    }
+    setCopyModal({ ...keyEntry, prefersLightTheme: resolveLightTheme() });
+  };
 
   // Build URL for display
   const buildSubUrl = (keyEntry) => {
@@ -321,6 +347,179 @@ const KeyManagerPage = () => {
         err?.response?.data?.error ||
         err?.response?.data?.msg;
       showFeedback(backendMsg || 'Restore failed', 'error');
+    }
+  };
+
+  // ─── Key converter ───
+
+  const CONVERT_MODES = [
+    { id: 'rename', label: 'Key Rename', emoji: '\u{1F511}', desc: 'Re-point a subscription URL to a new token' },
+    { id: 'yaml-to-json', label: 'YAML \u2192 JSON', emoji: '\u{1F5C4}\uFE0F', desc: 'Clash YAML profile to sing-box JSON' },
+    { id: 'json-to-yaml', label: 'JSON \u2192 YAML', emoji: '\u{1F4DD}', desc: 'sing-box JSON profile to Clash YAML' },
+  ];
+
+  // Files eligible for each mode, so the dropdown never offers a source the
+  // backend would reject (e.g. json-to-yaml needs a .json source).
+  const filesForMode = useCallback((mode) => {
+    if (mode === 'rename') return keys;
+    if (mode === 'yaml-to-json') return keys.filter(k => /\.(ya?ml)$/i.test(k.filename));
+    if (mode === 'json-to-yaml') return keys.filter(k => /\.json$/i.test(k.filename) && !k.filename.endsWith('.meta.json'));
+    return keys;
+  }, [keys]);
+
+  // Subsequence match so "cangz" finds "vchannel-config-cangz-01.yaml".
+  // A plain substring search is too strict for these generated names, which
+  // are long and share a common prefix.
+  const fuzzyMatch = (haystack, needle) => {
+    let i = 0;
+    for (const ch of haystack) {
+      if (ch === needle[i]) i++;
+      if (i === needle.length) return true;
+    }
+    return needle.length === 0;
+  };
+
+  // Ranked source list for the current mode. Every substring hit is kept (so
+  // the usual behaviour is preserved) and fuzzy hits are appended after, so a
+  // search never silently hides an exact match.
+  const visibleConvertFiles = useMemo(() => {
+    const pool = filesForMode(convertModal?.mode);
+    const q = convertSearch.trim().toLowerCase();
+    if (!q) return pool;
+
+    const stripExt = (f) => f.filename.replace(/\.(ya?ml|json|txt)$/i, '').toLowerCase();
+    const starts = [];
+    const contains = [];
+    const fuzzy = [];
+
+    for (const f of pool) {
+      const name = f.filename.toLowerCase();
+      const base = stripExt(f);
+      if (name.startsWith(q) || base.startsWith(q)) starts.push(f);
+      else if (name.includes(q) || base.includes(q)) contains.push(f);
+      else if (fuzzyMatch(base, q)) fuzzy.push(f);
+    }
+    return [...starts, ...contains, ...fuzzy];
+  }, [filesForMode, convertModal?.mode, convertSearch]);
+
+  const openConvertModal = (mode = 'rename') => {
+    setConvertModal({ mode });
+    setConvertSource('');
+    setConvertTarget('');
+    setConvertNewToken('');
+    setConvertConflict(null);
+    setConvertWarnings([]);
+    setConvertBusy(false);
+    setConvertSearch('');
+  };
+
+  const closeConvertModal = () => {
+    if (convertBusy) return; // don't let a half-finished write be abandoned
+    setConvertModal(null);
+    setConvertConflict(null);
+    setConvertWarnings([]);
+    setConvertSearch('');
+  };
+
+  // Default destination name when converting, derived from the source.
+  const suggestTarget = (mode, source) => {
+    if (!source) return '';
+    if (mode === 'rename') return source;
+    const base = source.replace(/\.(ya?ml|json|txt)$/i, '');
+    return mode === 'yaml-to-json' ? `${base}.json` : `${base}.yaml`;
+  };
+
+  const handleConvert = async (overwrite = false) => {
+    if (!convertModal) return;
+    const { mode } = convertModal;
+
+    if (!convertSource) {
+      showToast({ variant: 'error', title: 'No file selected', message: 'Choose a source file first' });
+      return;
+    }
+    if (mode === 'rename') {
+      const t = convertNewToken.trim();
+      if (!/^[0-9a-fA-F]{32}$/.test(t)) {
+        showToast({
+          variant: 'error',
+          title: 'Invalid token',
+          message: 'A key must be exactly 32 hexadecimal characters',
+        });
+        return;
+      }
+    }
+
+    setConvertBusy(true);
+    try {
+      const payload = { mode, filename: convertSource, overwrite };
+      if (mode === 'rename') {
+        payload.newToken = convertNewToken.trim().toLowerCase();
+      } else {
+        payload.newFilename = (convertTarget || '').trim();
+      }
+
+      const res = await axios.post(`${backendOrigin}/api/keyserver/convert`, payload, { headers });
+      const d = res.data || {};
+
+      setConvertConflict(null);
+
+      if (mode === 'rename') {
+        showToast({
+          variant: 'success',
+          title: 'Key renamed',
+          message: d.oldToken
+            ? `${convertSource} now uses token ${String(d.newToken).slice(0, 8)}\u2026. Old link no longer works.`
+            : `${convertSource} now uses token ${String(d.newToken).slice(0, 8)}\u2026`,
+          duration: 6000,
+        });
+      } else {
+        showToast({
+          variant: 'success',
+          title: 'Converted',
+          message: `${d.sourceFilename} \u2192 ${d.filename} (${d.proxyCount} node${d.proxyCount === 1 ? '' : 's'})${d.metaCopied ? ' \u00b7 limits kept' : ''}`,
+        });
+      }
+
+      // Surface anything lossy (dropped groups/rules, unsupported types) so
+      // the operator is never surprised by a silently degraded profile.
+      if (d.warnings && d.warnings.length) {
+        setConvertWarnings(d.warnings);
+        showToast({
+          variant: 'info',
+          title: 'Converted with warnings',
+          message: d.warnings[0] + (d.warnings.length > 1 ? ` (+${d.warnings.length - 1} more)` : ''),
+          duration: 7000,
+        });
+      }
+
+      setConvertModal(null);
+      setConvertWarnings([]);
+      setConvertSearch('');
+      fetchKeys();
+    } catch (err) {
+      const status = err?.response?.status;
+      const data = err?.response?.data || {};
+
+      // 409 = the destination already exists (or the token is taken). Keep the
+      // modal open and make the operator confirm the overwrite explicitly.
+      if (status === 409) {
+        setConvertConflict({ ...data, status });
+        showToast({
+          variant: 'error',
+          title: data.error ? 'Conflict' : 'Already exists',
+          message: data.hint || 'Confirm the overwrite to continue',
+        });
+        return;
+      }
+
+      showToast({
+        variant: 'error',
+        title: mode === 'rename' ? 'Rename failed' : 'Conversion failed',
+        message: data.error || data.details || err?.message || 'Unknown error',
+        duration: 6000,
+      });
+    } finally {
+      setConvertBusy(false);
     }
   };
 
@@ -655,6 +854,9 @@ const KeyManagerPage = () => {
         <div className="km-keys-header">
           <h3 className="km-section-title"><FaKey /> Key List</h3>
           <div className="km-keys-header-actions">
+            <button className="km-btn km-btn-convert" onClick={() => openConvertModal('rename')} title="Convert keys, rename tokens, or change format">
+              <FaExchangeAlt /> Convert
+            </button>
             <button className="km-btn km-btn-import" onClick={() => importInputRef.current?.click()} title="Import key files">
               <FaFileImport /> Import
             </button>
@@ -942,30 +1144,261 @@ const KeyManagerPage = () => {
             </div>
             <div className="km-modal-body km-copy-body">
               <p className="km-copy-filename">{copyModal.filename}</p>
-              <p className="km-copy-hint">Choose the format to copy:</p>
+              <p className="km-copy-hint">
+                {isPlainTextKey(copyModal)
+                  ? 'Plain-text proxy list — copy and import directly.'
+                  : 'Choose the format to copy:'}
+              </p>
               <div className="km-copy-options">
-                {copyModal.filename.endsWith('.txt') ? (
+                {isPlainTextKey(copyModal) ? (
                   <button className="km-copy-option km-copy-option--v2box" onClick={() => { copySubUrl(copyModal); setCopyModal(null); }}>
-                    <span className="km-copy-opt-label">V2Box Subscription</span>
+                    <span className="km-copy-opt-label">Proxy URI List</span>
                     <span className="km-copy-opt-desc">Plain-text proxy URI list (//profile headers)</span>
                   </button>
                 ) : (
                   <>
+                    {/* Option 1 is the existing, unchanged raw Clash YAML
+                        (no ?format=). Existing links keep working exactly as
+                        before, so this must stay first. */}
                     <button className="km-copy-option km-copy-option--base64" onClick={() => { copySubUrl(copyModal); setCopyModal(null); }}>
-                      <span className="km-copy-opt-label">Default (Base64 URIs)</span>
-                      <span className="km-copy-opt-desc">Subscription URL — all proxies, works with V2Box, Hiddify, Nekoray</span>
+                      <span className="km-copy-opt-label">Clash (default)</span>
+                      <span className="km-copy-opt-desc">Raw Clash YAML profile — works with all Clash / Clash Meta clients</span>
                     </button>
-                    <button className="km-copy-option km-copy-option--singbox" onClick={() => { copySubUrl(copyModal, 'raw'); setCopyModal(null); }}>
-                      <span className="km-copy-opt-label">Sing-box JSON</span>
-                      <span className="km-copy-opt-desc">Download raw sing-box config for sing-box / Hiddify import</span>
-                    </button>
-                    <button className="km-copy-option km-copy-option--v2ray" onClick={() => { copySubUrl(copyModal, 'v2ray'); setCopyModal(null); }}>
-                      <span className="km-copy-opt-label">V2Ray / Xray JSON</span>
-                      <span className="km-copy-opt-desc">Download V2Ray config with all servers — for V2Box / V2RayNG import</span>
+                    <button className="km-copy-option km-copy-option--singbox" onClick={() => { copySubUrl(copyModal, 'singbox'); setCopyModal(null); }}>
+                      <span className="km-copy-opt-label">Hiddify Compatible</span>
+                      <span className="km-copy-opt-desc">sing-box JSON — keeps Auto Switch / Failover groups</span>
                     </button>
                   </>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {convertModal && (
+        <div className="km-modal-overlay" onClick={closeConvertModal}>
+          <div className="km-modal km-convert-modal" onClick={e => e.stopPropagation()}>
+            <div className="km-modal-header">
+              <h4><FaExchangeAlt /> Key Converter</h4>
+              <button className="km-btn km-btn-sm km-btn-close" onClick={closeConvertModal} disabled={convertBusy}>✕</button>
+            </div>
+
+            <div className="km-modal-body km-convert-body">
+              {/* Mode picker */}
+              <div className="km-convert-modes">
+                {CONVERT_MODES.map(m => (
+                  <button
+                    key={m.id}
+                    className={`km-convert-mode ${convertModal.mode === m.id ? 'active' : ''}`}
+                    onClick={() => {
+                      setConvertModal({ mode: m.id });
+                      setConvertSource('');
+                      setConvertTarget('');
+                      setConvertNewToken('');
+                      setConvertConflict(null);
+                      setConvertSearch('');
+                    }}
+                    disabled={convertBusy}
+                  >
+                    <span className="km-convert-mode-emoji">{m.emoji}</span>
+                    <span className="km-convert-mode-label">{m.label}</span>
+                    <span className="km-convert-mode-desc">{m.desc}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Source picker: searchable, because the key list runs to hundreds of files */}
+              <div className="km-field-row">
+                <label className="km-label">Source file</label>
+                <div className="km-convert-picker">
+                  {convertSource ? (
+                    <>
+                      <div className="km-convert-chosen">
+                        <FaKey className="km-convert-chosen-icon" />
+                        <span className="km-convert-chosen-name">{convertSource}</span>
+                        <span className="km-convert-chosen-size">
+                          {formatSize(keys.find(k => k.filename === convertSource)?.size || 0)}
+                        </span>
+                        <button
+                          className="km-convert-chosen-clear"
+                          onClick={() => { setConvertSource(''); setConvertTarget(''); setConvertConflict(null); }}
+                          disabled={convertBusy}
+                          title="Clear selection"
+                        >✕</button>
+                      </div>
+                      <button
+                        className="km-convert-change"
+                        onClick={() => setConvertSearch('')}
+                        disabled={convertBusy}
+                      >
+                        <FaSearch /> Change file
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <div className="km-search-input-wrap km-convert-search-wrap">
+                        <FaSearch className="km-search-icon" />
+                        <input
+                          type="text"
+                          className="km-input km-search-input km-convert-search"
+                          placeholder={convertModal.mode === 'json-to-yaml' ? 'Search .json profiles...' : 'Search keys by name...'}
+                          value={convertSearch}
+                          onChange={e => { setConvertSearch(e.target.value); setConvertConflict(null); }}
+                          spellCheck={false}
+                          autoFocus
+                          disabled={convertBusy}
+                        />
+                        {convertSearch && (
+                          <button className="km-search-clear" onClick={() => setConvertSearch('')} title="Clear">✕</button>
+                        )}
+                      </div>
+                      <div className="km-convert-results" role="listbox" aria-label="Matching key files">
+                        {visibleConvertFiles.length === 0 ? (
+                          <div className="km-convert-no-results">
+                            {filesForMode(convertModal.mode).length === 0
+                              ? (convertModal.mode === 'yaml-to-json'
+                                ? 'No .yaml/.yml files found in the key list.'
+                                : convertModal.mode === 'json-to-yaml'
+                                  ? 'No .json profile files found in the key list.'
+                                  : 'No key files available.')
+                              : `No files match "${convertSearch.trim()}".`}
+                          </div>
+                        ) : (
+                          <>
+                            {convertSearch.trim() && (
+                              <div className="km-convert-result-count">
+                                {visibleConvertFiles.length} of {filesForMode(convertModal.mode).length} match
+                              </div>
+                            )}
+                            {visibleConvertFiles.slice(0, 100).map(k => (
+                              <button
+                                key={k.filename}
+                                className="km-convert-result"
+                                onClick={() => {
+                                  setConvertSource(k.filename);
+                                  if (convertModal.mode !== 'rename') setConvertTarget(suggestTarget(convertModal.mode, k.filename));
+                                  setConvertSearch('');
+                                  setConvertConflict(null);
+                                }}
+                                disabled={convertBusy}
+                                role="option"
+                                aria-selected={false}
+                              >
+                                <FaFileImport className="km-convert-result-icon" />
+                                <span className="km-convert-result-name">{k.filename}</span>
+                                <span className="km-convert-result-meta">{formatSize(k.size)}</span>
+                              </button>
+                            ))}
+                            {visibleConvertFiles.length > 100 && (
+                              <div className="km-convert-result-count">
+                                Refine your search — {visibleConvertFiles.length - 100} more not shown.
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Rename inputs */}
+              {convertModal.mode === 'rename' && (
+                <div className="km-field-row">
+                  <label className="km-label">New key (32 hex characters)</label>
+                  <div className="km-key-input-group">
+                    <FaKey className="km-folder-icon" />
+                    <input
+                      type="text"
+                      className="km-input km-input-key"
+                      placeholder="e.g. 338184141cfac8a5ce12bb5bfcccc580"
+                      value={convertNewToken}
+                      onChange={e => { setConvertNewToken(e.target.value); setConvertConflict(null); }}
+                      spellCheck={false}
+                      maxLength={32}
+                      disabled={convertBusy}
+                    />
+                    <button
+                      className="km-btn km-btn-sm"
+                      title="Generate a random key"
+                      onClick={() => {
+                        const arr = new Uint8Array(16);
+                        crypto.getRandomValues(arr);
+                        setConvertNewToken(Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join(''));
+                        setConvertConflict(null);
+                      }}
+                      disabled={convertBusy}
+                    >
+                      <FaSync /> Generate
+                    </button>
+                  </div>
+                  <div className="km-field-hint">
+                    The old subscription URL stops working immediately. Existing clients must be given the new link.
+                  </div>
+                </div>
+              )}
+
+              {/* Format conversion inputs */}
+              {convertModal.mode !== 'rename' && (
+                <div className="km-field-row">
+                  <label className="km-label">
+                    Output file {convertConflict ? '(exists \u2014 confirm overwrite)' : ''}
+                  </label>
+                  <input
+                    type="text"
+                    className="km-input km-input-dir"
+                    value={convertTarget}
+                    onChange={e => { setConvertTarget(e.target.value); setConvertConflict(null); }}
+                    placeholder={convertModal.mode === 'yaml-to-json' ? 'name.json' : 'name.yaml'}
+                    spellCheck={false}
+                    disabled={convertBusy}
+                  />
+                  <div className="km-field-hint">
+                    Creates a new file. The source is left untouched. Subscription limits (expiry / data cap) are carried over.
+                  </div>
+                </div>
+              )}
+
+              {/* Overwrite confirmation */}
+              {convertConflict && (
+                <div className="km-convert-conflict" role="alert">
+                  <FaExclamationTriangle />
+                  <div>
+                    <strong>{convertConflict.error}</strong>
+                    {convertConflict.existingSize != null && (
+                      <div className="km-convert-conflict-meta">
+                        Existing file is {formatSize(convertConflict.existingSize)} and will be replaced.
+                      </div>
+                    )}
+                    {convertConflict.hint && <div className="km-convert-conflict-meta">{convertConflict.hint}</div>}
+                  </div>
+                </div>
+              )}
+
+              {/* Warnings from the last successful conversion */}
+              {convertWarnings.length > 0 && (
+                <div className="km-convert-warnings">
+                  {convertWarnings.map((w, i) => <div key={i}>{w}</div>)}
+                </div>
+              )}
+            </div>
+
+            <div className="km-modal-footer km-convert-footer">
+              <button className="km-btn" onClick={closeConvertModal} disabled={convertBusy}>Cancel</button>
+              {convertConflict ? (
+                <button className="km-btn km-btn-danger" onClick={() => handleConvert(true)} disabled={convertBusy}>
+                  <FaExclamationTriangle /> {convertBusy ? 'Overwriting\u2026' : 'Confirm Overwrite'}
+                </button>
+              ) : (
+                <button
+                  className="km-btn km-btn-convert-go"
+                  onClick={() => handleConvert(false)}
+                  disabled={convertBusy || !convertSource}
+                >
+                  {convertBusy ? 'Working\u2026' : <><FaExchangeAlt /> Convert</>}
+                </button>
+              )}
             </div>
           </div>
         </div>

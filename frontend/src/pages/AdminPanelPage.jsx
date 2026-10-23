@@ -11,7 +11,7 @@ import { getBackendOrigin } from '../lib/backendOrigin';
 import TopProgressBar from '../components/TopProgressBar.jsx';
 
 function AdminPanelPage() {
-  const { token, user } = useAuth();
+  const { token, user, logout } = useAuth();
   const [loading, setLoading] = useState(true);
   const [logsModal, setLogsModal] = useState({ open: false, account: null, logs: [], loading: false });
   const [accounts, setAccounts] = useState([]);
@@ -300,6 +300,15 @@ function AdminPanelPage() {
 
   const handleAdminRestore = async () => {
     if (!restoreFile) return;
+    // Overwrite is destructive and now ends the operator's own session too, so
+    // make that explicit before anything is sent to the server.
+    if (restoreMode === 'overwrite') {
+      const ok = window.confirm(
+        'Overwrite replaces EVERY admin account, including your own, and signs everyone out.\n\n'
+        + 'Accounts not present in the backup will be removed. Continue?'
+      );
+      if (!ok) return;
+    }
     setRestoreBusy(true);
     setRestoreResult(null);
     setRestoreError(null);
@@ -313,6 +322,18 @@ function AdminPanelPage() {
       });
       setRestoreResult(res.data);
       reload();
+      // An overwrite revokes every session, including this one. Without this the
+      // operator stays on a page whose token is already dead and the next
+      // request fails with "Token revoked".
+      if (restoreMode === 'overwrite') {
+        const revoked = res.data?.sessions_revoked;
+        alert(
+          'Admins restored (overwrite). All accounts were replaced'
+          + (revoked ? ` and ${revoked} session(s) were signed out.` : '.')
+          + '\n\nPlease sign in again.'
+        );
+        logout();
+      }
     } catch (err) {
       console.error('Admin restore failed:', err);
       setRestoreError(err.response?.data?.msg || err.message || 'Restore failed');
@@ -690,13 +711,45 @@ function AdminPanelPage() {
                   </thead>
                   <tbody>
                     {logsModal.logs.map((log, idx) => {
-                      // Format action name from CREATE_ACCOUNT -> Create Account
+                      // Render the real intent, not the raw enum.
+                      //
+                      // The generic CREATE_ACCOUNT -> "Create Account" rule
+                      // mangles some actions: TOGGLE_ENABLED became "Toggled
+                      // Enabled" (nonsense), and every enable/disable pair looked
+                      // identical because the action name did not say WHICH
+                      // direction happened. The direction now comes from the
+                      // before/after state recorded in the audit row.
+                      const ACTION_LABELS = {
+                        TOGGLE_ENABLED: 'Change Enabled',
+                        ENABLE: 'Enable',
+                        DISABLE: 'Disable',
+                        QUICK_RENEW: 'Quick Renew',
+                        DELETE: 'Delete',
+                        CREATE_ACCOUNT: 'Create Account',
+                        UPDATE_ACCOUNT: 'Update Account',
+                        CERT_STATUS: 'Certificate Status',
+                        BACKUP: 'Backup',
+                        RESTORE: 'Restore',
+                      };
                       const formatAction = (action) => {
                         if (!action) return 'Unknown';
+                        if (ACTION_LABELS[action]) return ACTION_LABELS[action];
                         return action
                           .split('_')
                           .map(word => word.charAt(0) + word.slice(1).toLowerCase())
                           .join(' ');
+                      };
+
+                      // For a status toggle, show Enable vs Disable based on the
+                      // value that was actually written, not the verb used.
+                      const actionWithDirection = (log) => {
+                        if (log.action !== 'TOGGLE_ENABLED') return formatAction(log.action);
+                        const after = log.after_data;
+                        const before = log.before_data;
+                        let next = null;
+                        if (after && typeof after === 'object' && 'enabled' in after) next = after.enabled;
+                        else if (before && typeof before === 'object' && 'enabled' in before) next = before.enabled;
+                        return next === true ? 'Enable' : next === false ? 'Disable' : 'Change Enabled';
                       };
                       
                       // Format date as DD/MM/YYYY (H:MM AM/PM)
@@ -715,7 +768,7 @@ function AdminPanelPage() {
                       return (
                         <tr key={log.id || idx} style={{ borderBottom: '1px solid #eee' }}>
                           <td style={{ padding: '0.5rem', fontWeight: '500' }}>
-                            {formatAction(log.action)}
+                            {actionWithDirection(log)}
                           </td>
                           <td style={{ padding: '0.5rem' }}>
                             {log.object || '—'}
@@ -777,7 +830,7 @@ function AdminPanelPage() {
           </div>
           <p style={{ margin: 0, fontSize: '0.82rem', opacity: 0.65 }}>
             <strong>Merge</strong>: adds new accounts & logs, updates existing profiles (keeps existing passwords).<br/>
-            <strong>Overwrite</strong>: replaces all accounts & logs (your own account is protected).
+            <strong>Overwrite</strong>: replaces every account & log, including your own — passwords and roles come from the backup. Everyone is signed out when it finishes.
           </p>
           {restoreResult && (
             <div className="success-toast" role="status" style={{ padding: '0.6rem 1rem', borderRadius: '6px', background: '#d4edda', color: '#155724', fontSize: '0.9rem' }}>

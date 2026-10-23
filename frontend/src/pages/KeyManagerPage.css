@@ -758,6 +758,374 @@
   margin-left: auto;
 }
 
+/* ─── Key Converter ─── */
+.km-btn-convert {
+  background: rgba(156, 39, 176, 0.15);
+  border-color: rgba(156, 39, 176, 0.4);
+  color: #ce93d8;
+}
+.km-btn-convert:hover {
+  background: rgba(156, 39, 176, 0.25);
+}
+
+.km-btn-convert-go {
+  background: rgba(0, 191, 165, 0.15);
+  border-color: rgba(0, 191, 165, 0.45);
+  color: #4dd0c1;
+}
+.km-btn-convert-go:hover:not(:disabled) {
+  background: rgba(0, 191, 165, 0.28);
+}
+
+.km-btn-danger {
+  background: rgba(244, 67, 54, 0.18);
+  border-color: rgba(244, 67, 54, 0.5);
+  color: #ef9a9a;
+}
+.km-btn-danger:hover:not(:disabled) {
+  background: rgba(244, 67, 54, 0.3);
+}
+
+.km-convert-modal {
+  max-width: 640px;
+}
+
+.km-convert-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* Mode selector */
+.km-convert-modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.5rem;
+}
+
+.km-convert-mode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.7rem 0.75rem;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  cursor: pointer;
+  text-align: left;
+  color: #d0ebe5;
+  font-family: inherit;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.km-convert-mode:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(0, 191, 165, 0.35);
+}
+.km-convert-mode.active {
+  background: rgba(0, 191, 165, 0.14);
+  border-color: rgba(0, 191, 165, 0.55);
+}
+.km-convert-mode:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.km-convert-mode-emoji {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+.km-convert-mode-label {
+  font-weight: 700;
+  font-size: 0.85rem;
+  font-family: 'Fira Code', 'Consolas', monospace;
+}
+.km-convert-mode-desc {
+  font-size: 0.7rem;
+  opacity: 0.6;
+  line-height: 1.35;
+}
+
+/* ─── Searchable source picker ─── */
+.km-convert-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.km-convert-search-wrap {
+  min-width: 0;
+}
+
+.km-convert-search {
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 0.82rem;
+}
+
+/* Scrollable result list. Capped so a 281-file list cannot push the modal
+   buttons off screen. */
+.km-convert-results {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.km-convert-result {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.65rem;
+  background: none;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  color: #d0ebe5;
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.km-convert-result:last-child {
+  border-bottom: none;
+}
+.km-convert-result:hover:not(:disabled) {
+  background: rgba(0, 191, 165, 0.14);
+}
+.km-convert-result:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.km-convert-result-icon {
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 0.72rem;
+}
+
+.km-convert-result-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.km-convert-result-meta {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  opacity: 0.5;
+}
+
+.km-convert-result-count,
+.km-convert-no-results {
+  padding: 0.5rem 0.65rem;
+  font-size: 0.74rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-style: italic;
+}
+
+/* Selected-file chip */
+.km-convert-chosen {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  background: rgba(0, 191, 165, 0.12);
+  border: 1px solid rgba(0, 191, 165, 0.4);
+  border-radius: 8px;
+}
+
+.km-convert-chosen-icon {
+  flex-shrink: 0;
+  color: #4dd0c1;
+  font-size: 0.8rem;
+}
+
+.km-convert-chosen-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #4dd0c1;
+  font-family: 'Fira Code', 'Consolas', monospace;
+  font-size: 0.8rem;
+}
+
+.km-convert-chosen-size {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  opacity: 0.6;
+}
+
+.km-convert-chosen-clear {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+  font-size: 0.8rem;
+  padding: 0.1rem 0.3rem;
+  line-height: 1;
+  border-radius: 4px;
+}
+.km-convert-chosen-clear:hover:not(:disabled) {
+  color: #f44336;
+  background: rgba(244, 67, 54, 0.12);
+}
+.km-convert-chosen-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.km-convert-change {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0.15rem 0.2rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 4px;
+}
+.km-convert-change:hover:not(:disabled) {
+  color: #4dd0c1;
+}
+.km-convert-change:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Overwrite / conflict banner */
+.km-convert-conflict {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.7rem 0.85rem;
+  background: rgba(255, 152, 0, 0.12);
+  border: 1px solid rgba(255, 152, 0, 0.45);
+  border-radius: 8px;
+  color: #ffcc80;
+  font-size: 0.82rem;
+}
+.km-convert-conflict svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.km-convert-conflict strong {
+  display: block;
+  color: #ffe0b2;
+}
+.km-convert-conflict-meta {
+  margin-top: 0.25rem;
+  opacity: 0.8;
+  font-size: 0.76rem;
+}
+
+/* Non-fatal conversion warnings */
+.km-convert-warnings {
+  padding: 0.7rem 0.85rem;
+  background: rgba(33, 150, 243, 0.1);
+  border: 1px solid rgba(33, 150, 243, 0.35);
+  border-radius: 8px;
+  color: #90caf9;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+.km-convert-warnings > div + div {
+  margin-top: 0.3rem;
+}
+
+.km-convert-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  padding: 0.85rem 1.25rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+body.theme-light .km-btn-convert {
+  background: rgba(156, 39, 176, 0.1);
+  border-color: rgba(156, 39, 176, 0.3);
+  color: #7b1fa2;
+}
+body.theme-light .km-btn-convert:hover {
+  background: rgba(156, 39, 176, 0.18);
+}
+
+body.theme-light .km-convert-mode {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.1);
+  color: #333;
+}
+body.theme-light .km-convert-mode:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 150, 136, 0.4);
+}
+body.theme-light .km-convert-mode.active {
+  background: rgba(0, 191, 165, 0.12);
+  border-color: rgba(0, 150, 136, 0.5);
+}
+
+body.theme-light .km-convert-results {
+  background: rgba(0, 0, 0, 0.02);
+  border-color: rgba(0, 0, 0, 0.12);
+}
+
+body.theme-light .km-convert-result {
+  color: #333;
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+body.theme-light .km-convert-result:hover:not(:disabled) {
+  background: rgba(0, 191, 165, 0.12);
+}
+body.theme-light .km-convert-result-icon {
+  color: rgba(0, 0, 0, 0.35);
+}
+
+body.theme-light .km-convert-result-count,
+body.theme-light .km-convert-no-results {
+  color: rgba(0, 0, 0, 0.5);
+}
+
+body.theme-light .km-convert-chosen {
+  background: rgba(0, 150, 136, 0.1);
+  border-color: rgba(0, 150, 136, 0.4);
+}
+body.theme-light .km-convert-chosen-name,
+body.theme-light .km-convert-chosen-icon {
+  color: #00796b;
+}
+
+body.theme-light .km-convert-change {
+  color: rgba(0, 0, 0, 0.55);
+}
+body.theme-light .km-convert-change:hover:not(:disabled) {
+  color: #00796b;
+}
+
+body.theme-light .km-convert-conflict {
+  background: rgba(255, 152, 0, 0.12);
+  border-color: rgba(255, 152, 0, 0.4);
+  color: #a15c00;
+}
+body.theme-light .km-convert-conflict strong {
+  color: #8a4f00;
+}
+
+body.theme-light .km-convert-warnings {
+  background: rgba(33, 150, 243, 0.08);
+  border-color: rgba(33, 150, 243, 0.3);
+  color: #1565c0;
+}
+
 /* ─── Pagination ─── */
 .km-pagination {
   display: flex;
@@ -1664,6 +2032,46 @@ body.theme-light .km-btn-restore-overwrite:hover {
   .km-restore-desc {
     margin-left: 0;
     font-size: 0.72rem;
+  }
+
+  /* Key converter mobile */
+  .km-convert-modal {
+    max-width: 95%;
+  }
+
+  .km-convert-modes {
+    grid-template-columns: 1fr;
+  }
+
+  .km-convert-mode {
+    flex-direction: row;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.6rem 0.7rem;
+  }
+
+  .km-convert-mode-emoji {
+    font-size: 1rem;
+  }
+
+  .km-convert-mode-desc {
+    display: none;
+  }
+
+  .km-convert-footer {
+    padding: 0.7rem 0.9rem;
+  }
+
+  .km-convert-footer .km-btn {
+    flex: 1;
+  }
+
+  .km-convert-results {
+    max-height: 150px;
+  }
+
+  .km-convert-result {
+    padding: 0.5rem 0.6rem;
   }
 
   /* Feedback mobile */

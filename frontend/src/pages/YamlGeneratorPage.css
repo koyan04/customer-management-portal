@@ -716,10 +716,18 @@
   color: #00bcd4;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.2s;
+  transition: all 0.2s;
 }
 .btn-copy-url:hover {
   background: rgba(0, 188, 212, 0.35);
+}
+.btn-copy-url.copied {
+  background: rgba(74, 222, 128, 0.22);
+  border-color: rgba(74, 222, 128, 0.5);
+  color: #4ade80;
+}
+.btn-copy-url.copied:hover {
+  background: rgba(74, 222, 128, 0.32);
 }
 
 .btn-secondary {

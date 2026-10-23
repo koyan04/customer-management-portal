@@ -28,24 +28,30 @@ export function Toast({ open, onClose, title, message, variant = 'success', dura
             color: palette.color,
             border: `1px solid ${palette.border}`,
             borderRadius: 10,
-            padding: '10px 14px',
-            boxShadow: '0 12px 28px rgba(0,0,0,0.25), inset 0 1px rgba(255,255,255,0.06)'
+            padding: '12px 16px',
+            maxWidth: 'min(92vw, 460px)',
+            boxShadow: '0 12px 28px rgba(0,0,0,0.25), inset 0 1px rgba(255,255,255,0.06)',
+            wordBreak: 'break-word'
           }}
           role="status" aria-live="polite"
         >
-          {title && <div style={{ fontWeight: 800, marginBottom: 4 }}>{title}</div>}
-          {message && <div style={{ opacity: 0.96 }}>{message}</div>}
-          <button
-            onClick={onClose}
-            style={{
-              marginLeft: 10, marginTop: 8,
-              background: 'transparent', color: palette.color,
-              border: '1px solid rgba(255,255,255,0.15)', borderRadius: 6,
-              padding: '4px 8px', cursor: 'pointer'
-            }}
-          >
-            Close
-          </button>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '12px' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {title && <div style={{ fontWeight: 800, marginBottom: 4 }}>{title}</div>}
+              {message && <div style={{ opacity: 0.96 }}>{message}</div>}
+            </div>
+            <button
+              onClick={onClose}
+              style={{
+                background: 'transparent', color: palette.color,
+                border: '1px solid rgba(255,255,255,0.2)', borderRadius: 6,
+                padding: '3px 8px', cursor: 'pointer', fontSize: '0.78rem',
+                flexShrink: 0, marginTop: '2px'
+              }}
+            >
+              Close
+            </button>
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

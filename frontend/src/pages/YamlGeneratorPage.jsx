@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { FaCog, FaPlus, FaTrash, FaCopy, FaSave, FaCheck, FaFileCode, FaShieldAlt, FaServer, FaSearch, FaUser, FaDownload } from 'react-icons/fa';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext.jsx';
+import SubscriptionToast from '../components/SubscriptionToast.jsx';
 import axios from 'axios';
 import { getBackendOrigin } from '../lib/backendOrigin';
 import './YamlGeneratorPage.css';
@@ -68,6 +70,31 @@ export function normalizeTrojanNode(nodeObj = {}) {
 
 const YamlGeneratorPage = () => {
   const { token } = useAuth();
+  const { show: showToast } = useToast();
+  const [subUrl, setSubUrl] = useState('');
+  const [copiedSub, setCopiedSub] = useState(false);
+
+  const handleCopySubUrl = async () => {
+    if (!subUrl) return;
+    try {
+      await navigator.clipboard.writeText(subUrl);
+      setCopiedSub(true);
+      setTimeout(() => setCopiedSub(false), 2000);
+    } catch {
+      try {
+        const textArea = document.createElement('textarea');
+        textArea.value = subUrl;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setCopiedSub(true);
+        setTimeout(() => setCopiedSub(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy sub url', err);
+      }
+    }
+  };
   // Top menu settings
   const [groupName, setGroupName] = useState('VChannel-Premium');
   const [unlim, setUnlim] = useState(false);
@@ -772,7 +799,7 @@ const YamlGeneratorPage = () => {
     if (typeof v === 'number') return String(v);
     if (typeof v === 'string') {
       // Quote strings that contain special chars or look like other YAML types
-      if (/[:{}\[\],#&*!|>'"%@`\s]/.test(v) || v === 'true' || v === 'false' || v === 'null' || v === '') {
+      if (/[:{}[\]#&*!|>'"%@`\s]/.test(v) || v === 'true' || v === 'false' || v === 'null' || v === '') {
         return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
       }
       return v;
@@ -1196,6 +1223,35 @@ const YamlGeneratorPage = () => {
       setServerSaveStatus('saved');
       setServerSaveMsg(`Saved as ${res.data.filename}`);
       setTimeout(() => { setServerSaveStatus(''); setServerSaveMsg(''); }, 3000);
+
+      // Resolve subscription URL
+      const fileToken = res.data.token || res.data.filename;
+      let calculatedSubUrl = res.data.subscriptionUrl || '';
+      try {
+        const ksConfig = await axios.get(`${backendOrigin}/api/keyserver/config`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const ksPort = ksConfig.data.port || 8088;
+        const ksKey = ksConfig.data.secretKey || '';
+        const rawDomain = ksConfig.data.publicDomain || '';
+        const normDomain = rawDomain
+          ? (rawDomain.match(/^https?:\/\//) ? rawDomain : `http://${rawDomain}`).replace(/\/+$/, '')
+          : '';
+        const baseHost = normDomain || `http://${window.location.hostname}:${ksPort}`;
+        calculatedSubUrl = `${baseHost}/sub/${fileToken}?key=${ksKey}`;
+      } catch (_) {
+        if (!calculatedSubUrl) {
+          calculatedSubUrl = `http://${window.location.hostname}:8088/sub/${fileToken}`;
+        }
+      }
+
+      setSubUrl(calculatedSubUrl);
+      showToast({
+        variant: 'success',
+        title: 'Subscription Link Ready',
+        message: <SubscriptionToast url={calculatedSubUrl} filename={res.data.filename} />,
+        duration: 12000
+      });
     } catch (err) {
       setServerSaveStatus('error');
       setServerSaveMsg(err.response?.data?.error || 'Failed to save to server');
@@ -1714,6 +1770,21 @@ const YamlGeneratorPage = () => {
               </span>
             )}
           </div>
+          {subUrl && (
+            <div className="sub-urls-panel" style={{ marginBottom: '1rem' }}>
+              <div className="sub-url-row">
+                <span className="sub-url-label" title="Clash subscription link">📋 Sub URL:</span>
+                <input type="text" className="sub-url-input" value={subUrl} readOnly onClick={e => e.target.select()} />
+                <button
+                  className={`btn-copy-url ${copiedSub ? 'copied' : ''}`}
+                  onClick={handleCopySubUrl}
+                  title={copiedSub ? 'Copied to clipboard!' : 'Copy subscription URL'}
+                >
+                  {copiedSub ? <><FaCheck /> Copied!</> : <><FaCopy /></>}
+                </button>
+              </div>
+            </div>
+          )}
           <textarea
             value={generatedYaml}
             readOnly

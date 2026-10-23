@@ -4,6 +4,27 @@
 
 ---
 
+cmp ver 1.9.31
+
+Subscription toast delivery, generator UI polish, and key format conversion.
+
+**Generator & Subscription Delivery**
+- Subscription Link Toast: Saving to server from either the YAML or JSON generator now displays a clean in-app toast notification with instant one-click copy and feedback.
+- Copy Feedback: Clicking the copy button next to the Sub URL input in both YAML and JSON generator pages now provides clear visual confirmation displaying `Copied!` with checkmark feedback for 2 seconds.
+- JSON Generator Streamlined: Removed redundant Raw and V2Ray links from the in-page subscription URL panel in JSON Generator, providing a unified `Sub URL` row.
+- Sub URL Calculation: Enhanced `POST /api/keyserver/keys` to calculate and return the canonical `subscriptionUrl` immediately upon save.
+
+**Key Format Converter & Key Manager**
+- Config Converter: Added bidirectional conversion between Clash YAML and sing-box JSON via `backend/utils/configConverter.js` and `POST /api/keyserver/convert`.
+- Conversion Modes: Supports `rename` (token rotation), `yaml-to-json`, and `json-to-yaml` while preserving subscription metadata (.meta.json).
+- Key Manager UI: Added Key Conversion dialog to Key Manager page with auto-token generation and format switching.
+
+**Backend & Test Reliability**
+- Full Test Suite Coverage: Added Jest tests for config converter, convert routes, proxy groups, and YAML formatting (8 test suites, 153 tests passing).
+- DB Startup Cleanliness: Guarded background timezone initialization in `backend/db.js` so test runs don't leak unhandled Postgres connections or hang.
+
+---
+
 cmp ver 1.9.30
 
 Security, media persistence, and Telegram bot UX hardening.
