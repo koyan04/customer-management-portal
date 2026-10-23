@@ -5,6 +5,7 @@ import { useToast } from '../context/ToastContext.jsx';
 import axios from 'axios';
 import { getBackendOrigin } from '../lib/backendOrigin';
 import './KeyManagerPage.css';
+import { copyToClipboard } from '../lib/clipboard';
 
 const KeyManagerPage = () => {
   const { token, user } = useAuth();
@@ -67,6 +68,7 @@ const KeyManagerPage = () => {
 
   // Mobile action menu
   const [openMenu, setOpenMenu] = useState(null); // null | { filename, x, y }
+  const menuRef = useRef(null);
 
   const headers = { Authorization: `Bearer ${token}` };
 
@@ -201,7 +203,7 @@ const KeyManagerPage = () => {
   };
 
   // Copy subscription URL using token (hides real filename) and optional public domain
-  const copySubUrl = (keyEntry, format = null) => {
+  const copySubUrl = async (keyEntry, format = null) => {
     const id = keyEntry.token || keyEntry.filename;
     const normDomain = publicDomain
       ? (publicDomain.match(/^https?:\/\//) ? publicDomain : `http://${publicDomain}`).replace(/\/+$/, '')
@@ -209,11 +211,12 @@ const KeyManagerPage = () => {
     const baseHost = normDomain || `http://${window.location.hostname}:${port}`;
     const formatParam = format ? `&format=${format}` : '';
     const url = `${baseHost}/sub/${id}?key=${secretKey}${formatParam}`;
-    navigator.clipboard.writeText(url).then(() => {
+    const success = await copyToClipboard(url);
+    if (success) {
       showToast({ variant: 'success', title: 'Copied', message: 'Subscription URL copied to clipboard' });
-    }).catch(() => {
+    } else {
       showToast({ variant: 'error', title: 'Copy failed', message: 'Could not copy to clipboard' });
-    });
+    }
   };
 
   // .json files have a single, universally-working format (base64 proxy URIs),
@@ -605,7 +608,12 @@ const KeyManagerPage = () => {
   // Close mobile menu on outside click
   useEffect(() => {
     if (!openMenu) return;
-    const handler = () => setOpenMenu(null);
+    const handler = (e) => {
+      if (menuRef.current && menuRef.current.contains(e.target)) {
+        return;
+      }
+      setOpenMenu(null);
+    };
     document.addEventListener('pointerdown', handler);
     return () => document.removeEventListener('pointerdown', handler);
   }, [openMenu]);
@@ -1009,8 +1017,16 @@ const KeyManagerPage = () => {
                           <FaTrash />
                         </button>
                       </div>
-                      {/* Mobile hamburger menu */}
+                      {/* Mobile quick copy & menu */}
                       <div className="km-actions-mobile">
+                        <button
+                          type="button"
+                          className="km-btn km-btn-sm km-btn-copy km-mobile-quick-copy"
+                          onClick={(e) => { e.stopPropagation(); openCopyModal(k); }}
+                          title="Copy subscription URL"
+                        >
+                          <FaCopy />
+                        </button>
                         <button
                           type="button"
                           className="km-btn km-btn-sm km-btn-menu"
@@ -1021,17 +1037,35 @@ const KeyManagerPage = () => {
                         </button>
                         {openMenu && openMenu.filename === k.filename && (
                           <div
+                            ref={menuRef}
                             className={`km-popup-menu ${openMenu.prefersLightTheme ? 'km-ui-light' : 'km-ui-dark'}`}
+                            onPointerDown={e => e.stopPropagation()}
+                            onTouchStart={e => e.stopPropagation()}
                             onMouseDown={e => e.stopPropagation()}
                             onClick={e => e.stopPropagation()}
                           >
-                            <button type="button" className="km-popup-item" onMouseDown={e => e.stopPropagation()} onClick={() => { openCopyModal(k); closeMenu(); }}>
+                            <button
+                              type="button"
+                              className="km-popup-item"
+                              onPointerDown={e => e.stopPropagation()}
+                              onClick={() => { openCopyModal(k); closeMenu(); }}
+                            >
                               <FaLink /> Copy URL
                             </button>
-                            <button type="button" className="km-popup-item" onMouseDown={e => e.stopPropagation()} onClick={() => { handlePreview(k.filename); closeMenu(); }}>
+                            <button
+                              type="button"
+                              className="km-popup-item"
+                              onPointerDown={e => e.stopPropagation()}
+                              onClick={() => { handlePreview(k.filename); closeMenu(); }}
+                            >
                               <FaEye /> Preview
                             </button>
-                            <button type="button" className="km-popup-item km-popup-item-danger" onMouseDown={e => e.stopPropagation()} onClick={() => { handleDeleteKey(k.filename); closeMenu(); }}>
+                            <button
+                              type="button"
+                              className="km-popup-item km-popup-item-danger"
+                              onPointerDown={e => e.stopPropagation()}
+                              onClick={() => { handleDeleteKey(k.filename); closeMenu(); }}
+                            >
                               <FaTrash /> Delete
                             </button>
                           </div>
@@ -1115,9 +1149,13 @@ const KeyManagerPage = () => {
                 <button className="km-btn km-btn-sm" onClick={() => handleDownload(previewFile)} title="Download">
                   <FaDownload />
                 </button>
-                <button className="km-btn km-btn-sm" onClick={() => {
-                  navigator.clipboard.writeText(previewContent);
-                  showFeedback('Content copied');
+                <button className="km-btn km-btn-sm" onClick={async () => {
+                  const success = await copyToClipboard(previewContent);
+                  if (success) {
+                    showFeedback('Content copied');
+                  } else {
+                    showToast({ variant: 'error', title: 'Copy failed', message: 'Could not copy content' });
+                  }
                 }} title="Copy content">
                   <FaCopy />
                 </button>

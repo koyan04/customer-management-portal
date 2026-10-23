@@ -6,6 +6,7 @@ import { useToast } from '../context/ToastContext.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import ConfirmModal from '../components/ConfirmModal.jsx';
 import { getBackendOrigin } from '../lib/backendOrigin';
+import { copyToClipboard } from '../lib/clipboard';
 
 function KeyManagementInner() {
   const { id } = useParams(); // server id
@@ -229,12 +230,10 @@ function KeyManagementInner() {
   };
 
   const doCopyGenerated = async () => {
-    try {
-      await navigator.clipboard.writeText(genKey || '');
-      // show a confirmation toast when copy succeeds
+    const success = await copyToClipboard(genKey || '');
+    if (success) {
       showToast({ variant: 'success', title: 'Copied', message: 'Generated key copied to clipboard' });
-    } catch (e) {
-      console.debug('clipboard write failed', e);
+    } else {
       showToast({ variant: 'error', title: 'Copy failed', message: 'Could not copy key to clipboard' });
     }
   };
@@ -280,7 +279,7 @@ function KeyManagementInner() {
   const { show: showToast } = useToast();
 
   const doCopy = async (keyString) => {
-    try { await navigator.clipboard.writeText(keyString || ''); return true; } catch (e) { console.debug('copy failed', e); return false; }
+    return await copyToClipboard(keyString || '');
   };
 
   
@@ -370,7 +369,14 @@ function KeyManagementInner() {
                     <button className="btn" title="Show key" onClick={() => openBox(k)}><FaKey /></button>
                     {(k.generated_key || k.original_key) ? (
                       <>
-                        <button className="btn" title="Copy key" onClick={async () => { await doCopy(k.generated_key || k.original_key); showToast({ variant: 'success', title: 'Copied', message: 'Key copied to clipboard' }); }}><FaCopy /></button>
+                        <button className="btn" title="Copy key" onClick={async () => {
+                          const success = await doCopy(k.generated_key || k.original_key);
+                          if (success) {
+                            showToast({ variant: 'success', title: 'Copied', message: 'Key copied to clipboard' });
+                          } else {
+                            showToast({ variant: 'error', title: 'Copy failed', message: 'Could not copy key to clipboard' });
+                          }
+                        }}><FaCopy /></button>
                         <button className="btn btn-danger" title="Delete key" onClick={() => { setKeyToDelete(k); setDeleteConfirmOpen(true); }}><FaTrash /></button>
                       </>
                     ) : (

@@ -1957,7 +1957,9 @@ body.theme-light .km-btn-restore-overwrite:hover {
   }
 
   .km-actions-mobile {
-    display: inline-block;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
     position: relative;
   }
 

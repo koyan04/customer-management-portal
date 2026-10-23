@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { FaCopy, FaCheck } from 'react-icons/fa';
+import { copyToClipboard } from '../lib/clipboard';
 
 export function SubscriptionToast({ url, filename, onCopySuccess }) {
   const [copied, setCopied] = useState(false);
@@ -7,26 +8,11 @@ export function SubscriptionToast({ url, filename, onCopySuccess }) {
   const handleCopy = async (e) => {
     e?.stopPropagation?.();
     if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
+    const success = await copyToClipboard(url);
+    if (success) {
       setCopied(true);
       if (onCopySuccess) onCopySuccess();
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy subscription URL:', err);
-      try {
-        const textArea = document.createElement('textarea');
-        textArea.value = url;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-        setCopied(true);
-        if (onCopySuccess) onCopySuccess();
-        setTimeout(() => setCopied(false), 2000);
-      } catch (e2) {
-        console.error('Fallback copy failed', e2);
-      }
     }
   };
 

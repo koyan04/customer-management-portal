@@ -6,6 +6,7 @@ import SubscriptionToast from '../components/SubscriptionToast.jsx';
 import axios from 'axios';
 import { getBackendOrigin } from '../lib/backendOrigin';
 import './JsonGeneratorPage.css';
+import { copyToClipboard as copyToClipboardHelper } from '../lib/clipboard';
 
 const JsonGeneratorPage = () => {
   const { token } = useAuth();
@@ -878,10 +879,12 @@ const JsonGeneratorPage = () => {
       dohEnabled, dohServer, fakeDNS, tlsFragment, fragmentLength, fragmentInterval,
       ssPrefix, ssPrefixValue]);
 
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(generatedJson);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const copyToClipboard = async () => {
+    const success = await copyToClipboardHelper(generatedJson);
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
   };
 
   const getCombinedFilename = () => {
@@ -918,23 +921,10 @@ const JsonGeneratorPage = () => {
 
   const handleCopySubUrl = async () => {
     if (!subUrls?.base) return;
-    try {
-      await navigator.clipboard.writeText(subUrls.base);
+    const success = await copyToClipboardHelper(subUrls.base);
+    if (success) {
       setCopiedSub(true);
       setTimeout(() => setCopiedSub(false), 2000);
-    } catch {
-      try {
-        const textArea = document.createElement('textarea');
-        textArea.value = subUrls.base;
-        document.body.appendChild(textArea);
-        textArea.select();
-        document.execCommand('copy');
-        document.body.removeChild(textArea);
-        setCopiedSub(true);
-        setTimeout(() => setCopiedSub(false), 2000);
-      } catch (err) {
-        console.error('Failed to copy sub url', err);
-      }
     }
   };
 
