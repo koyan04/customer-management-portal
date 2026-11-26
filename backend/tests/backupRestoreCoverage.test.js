@@ -65,9 +65,9 @@ const PLACEHOLDER = '$2b$10$PLACEHOLDERPLACEHOLDERPLACEHOLDERuIvqJwQoak';
     check('GET /backup/snapshot includes media', /media:\s*mediaRes/.test(snapBlock));
     check('GET /backup/snapshot includes server_admin_permissions', /server_admin_permissions/.test(snapBlock));
     check('GET /backup/snapshot selects avatar_data', /avatar_data/.test(snapBlock));
-    check('GET /backup/snapshot never exports password_hash',
-      !/password_hash/.test(snapBlock.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')),
-      'snapshot payload references password_hash');
+    check('GET /backup/snapshot includes password_hash for full admin restore',
+      /password_hash/.test(snapBlock.replace(/\/\/[^\n]*/g, '').replace(/\/\*[\s\S]*?\*\//g, '')),
+      'snapshot payload missing password_hash');
     // config
     const cfgBlock = src.slice(src.indexOf("router.get('/backup/config'"), src.indexOf("router.post('/restore/config'"));
     check('GET /backup/config includes media', /media:\s*media\s*\|\|\s*\[\]/.test(cfgBlock) || /media:\s*media/.test(cfgBlock));
@@ -89,7 +89,7 @@ const PLACEHOLDER = '$2b$10$PLACEHOLDERPLACEHOLDERPLACEHOLDERuIvqJwQoak';
     const restoreSnapshot = src.slice(src.indexOf("router.post('/restore/snapshot'"));
     check('POST /restore/snapshot restores media', /INSERT INTO media/.test(restoreSnapshot));
     check('POST /restore/snapshot honours restore_admins', /wantsAdmins/.test(restoreSnapshot));
-    check('POST /restore/snapshot revokes sessions', /DELETE FROM refresh_tokens/.test(restoreSnapshot));
+    check('POST /restore/snapshot revokes sessions', /overwriteAdminsAndRevokeSessions/.test(restoreSnapshot) && /DELETE FROM refresh_tokens/.test(src));
     check('POST /restore/snapshot guards empty admins', /refusing to overwrite the admin team/.test(restoreSnapshot));
     const restoreCfg = src.slice(src.indexOf("router.post('/restore/config'"), src.indexOf("router.get('/backup/db'"));
     check('POST /restore/config restores media', /INSERT INTO media/.test(restoreCfg));

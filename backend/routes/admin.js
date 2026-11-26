@@ -44,8 +44,10 @@ function fixExpireDate(val) {
   return val;
 }
 
-// Key server config helpers (for including in main backups)
+// Key server config & token map helpers (for including in main backups)
+const { isZipBuffer, parseKeyBackupZip, extractDatabaseSnapshotFromZip } = require('../utils/keyBackupZip');
 const KEYSERVER_CONFIG_PATH = path.join(__dirname, '..', 'data', 'keyserver.json');
+const KEYSERVER_TOKEN_MAP_PATH = path.join(__dirname, '..', 'data', 'token_map.json');
 function loadKeyserverConfig() {
   try {
     if (fs.existsSync(KEYSERVER_CONFIG_PATH)) {
@@ -61,6 +63,168 @@ function saveKeyserverConfig(config) {
     fs.writeFileSync(KEYSERVER_CONFIG_PATH, JSON.stringify(config, null, 2));
   } catch (e) { console.warn('Failed to save keyserver config:', e && e.message ? e.message : e); }
 }
+function loadKeyserverTokenMap() {
+  try {
+    if (fs.existsSync(KEYSERVER_TOKEN_MAP_PATH)) {
+      const raw = JSON.parse(fs.readFileSync(KEYSERVER_TOKEN_MAP_PATH, 'utf-8'));
+      if (raw && typeof raw === 'object') return { byToken: raw.byToken || {}, byFile: raw.byFile || {} };
+    }
+  } catch (_) {}
+  return null;
+}
+function saveKeyserverTokenMap(tokenMap) {
+  try {
+    if (!tokenMap || typeof tokenMap !== 'object') return;
+    const dataDir = path.join(__dirname, '..', 'data');
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(KEYSERVER_TOKEN_MAP_PATH, JSON.stringify({
+      byToken: tokenMap.byToken || {},
+      byFile: tokenMap.byFile || {},
+    }, null, 2));
+  } catch (e) { console.warn('Failed to save keyserver token_map:', e && e.message ? e.message : e); }
+}
+
+// Shared helper: overwrite all admin users + permissions from backup data and revoke all sessions.
+async function overwriteAdminsAndRevokeSessions(client, { admins, serverAdminPerms, viewerPerms, req }) {
+  const VALID_ROLES = ['ADMIN', 'VIEWER', 'SERVER_ADMIN'];
+  const list = Array.isArray(admins) ? admins.filter(a => a && a.username) : [];
+  if (list.length === 0) return null;
+
+  const existing = await client.query('SELECT id, username, password_hash FROM admins');
+  const byUsername = new Map((existing.rows || []).map(r => [String(r.username || '').toLowerCase(), r]));
+  const oldIdToNewId = new Map();
+  let updated = 0;
+  let created = 0;
+  let deleted = 0;
+
+  try { await client.query('ALTER TABLE app_settings DISABLE TRIGGER trg_app_settings_enforce_general_updated_by'); } catch (_) {}
+  try { await client.query('ALTER TABLE admins DISABLE TRIGGER admins_audit_trigger'); } catch (_) {}
+
+  try {
+    for (const a of list) {
+      const role = VALID_ROLES.includes(a.role) ? a.role : 'VIEWER';
+      const uname = String(a.username);
+      const key = uname.toLowerCase();
+      const prior = byUsername.get(key);
+      const hasValidHash = a.password_hash && /^\$2[aby]\$\d{2}\$/.test(String(a.password_hash));
+      const incomingAvatarData = mediaStore.toDataUri(a.avatar_data, null)
+        || (a.avatar_url && String(a.avatar_url).startsWith('data:') ? a.avatar_url : null);
+      const resolvedAvatarData = incomingAvatarData || null;
+      const resolvedAvatarUrl = resolvedAvatarData ? null : (a.avatar_url || null);
+
+      if (prior) {
+        const nextHash = hasValidHash ? String(a.password_hash) : prior.password_hash;
+        await client.query(
+          `UPDATE admins
+              SET display_name = $1, password_hash = $2, role = $3,
+                  avatar_data = $4, avatar_url = $5, last_seen = COALESCE($6, last_seen), updated_at = now()
+            WHERE id = $7`,
+          [a.display_name || uname, nextHash, role, resolvedAvatarData, resolvedAvatarUrl, a.last_seen || null, prior.id]
+        );
+        if (a.id != null) oldIdToNewId.set(Number(a.id), prior.id);
+        updated++;
+      } else {
+        const nextHash = hasValidHash
+          ? String(a.password_hash)
+          : await bcrypt.hash(require('crypto').randomBytes(24).toString('base64url'), 10);
+        const ins = await client.query(
+          `INSERT INTO admins (display_name, username, password_hash, role, avatar_data, avatar_url, created_at, updated_at, last_seen)
+           VALUES ($1,$2,$3,$4,$5,$6, COALESCE($7, now()), COALESCE($8, now()), $9) RETURNING id`,
+          [a.display_name || uname, uname, nextHash, role, resolvedAvatarData, resolvedAvatarUrl, a.created_at || null, a.updated_at || null, a.last_seen || null]
+        );
+        const newId = ins.rows[0].id;
+        byUsername.set(key, { id: newId, username: uname });
+        if (a.id != null) oldIdToNewId.set(Number(a.id), newId);
+        created++;
+      }
+    }
+
+    // Delete accounts absent from backup so the admin team matches the backup exactly.
+    const keep = new Set(list.map(a => String(a.username || '').toLowerCase()));
+    const toDelete = (existing.rows || []).filter(r => !keep.has(String(r.username || '').toLowerCase()));
+    if (toDelete.length > 0) {
+      try { await client.query('UPDATE app_settings SET updated_by = NULL WHERE updated_by = ANY($1::int[])', [toDelete.map(r => r.id)]); } catch (_) {}
+      for (const r of toDelete) {
+        try {
+          await client.query('DELETE FROM admins WHERE id = $1', [r.id]);
+          deleted++;
+        } catch (_) {}
+      }
+    }
+
+    // Replace server_admin_permissions using remapped admin IDs.
+    if (Array.isArray(serverAdminPerms)) {
+      try {
+        await client.query('DELETE FROM server_admin_permissions');
+        for (const p of serverAdminPerms) {
+          const mappedId = oldIdToNewId.get(Number(p.admin_id)) || p.admin_id;
+          if (!mappedId || !p.server_id) continue;
+          await client.query(
+            'INSERT INTO server_admin_permissions (admin_id, server_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+            [mappedId, p.server_id]
+          );
+        }
+      } catch (e) {
+        console.warn('server_admin_permissions restore skipped:', e && e.message ? e.message : e);
+      }
+    }
+
+    // Replace viewer_server_permissions using remapped admin IDs.
+    if (Array.isArray(viewerPerms)) {
+      try {
+        try { await client.query('DELETE FROM viewer_server_permissions'); } catch (_) { await client.query('DELETE FROM editor_server_permissions'); }
+        for (const p of viewerPerms) {
+          const mappedId = oldIdToNewId.get(Number(p.editor_id)) || p.editor_id;
+          if (!mappedId || !p.server_id) continue;
+          try {
+            await client.query('INSERT INTO viewer_server_permissions (editor_id, server_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [mappedId, p.server_id]);
+          } catch (_) {
+            await client.query('INSERT INTO editor_server_permissions (editor_id, server_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [mappedId, p.server_id]);
+          }
+        }
+      } catch (e) {
+        console.warn('viewer_server_permissions restore skipped:', e && e.message ? e.message : e);
+      }
+    }
+
+    try { await client.query("SELECT setval('admins_id_seq', COALESCE((SELECT MAX(id) FROM admins), 1))"); } catch (_) {}
+  } finally {
+    try { await client.query('ALTER TABLE admins ENABLE TRIGGER admins_audit_trigger'); } catch (_) {}
+    try { await client.query('ALTER TABLE app_settings ENABLE TRIGGER trg_app_settings_enforce_general_updated_by'); } catch (_) {}
+  }
+
+  // Revoke ALL active sessions (refresh tokens, active_sessions, and current caller JWT jti).
+  try {
+    await client.query(
+      `INSERT INTO invalidated_tokens (jti, admin_id, reason)
+       SELECT 'restore-' || t.token_hash, t.admin_id, 'admins_restored'
+         FROM refresh_tokens t
+        WHERE t.admin_id IS NOT NULL
+       ON CONFLICT (jti) DO NOTHING`
+    );
+  } catch (_) {}
+  try { await client.query('DELETE FROM refresh_tokens'); } catch (_) {}
+  try {
+    await client.query(
+      `INSERT INTO invalidated_tokens (jti, admin_id, reason)
+       SELECT s.token_jti, s.admin_id, 'admins_restored'
+         FROM active_sessions s
+        WHERE s.token_jti IS NOT NULL
+       ON CONFLICT (jti) DO NOTHING`
+    );
+  } catch (_) {}
+  try { await client.query('DELETE FROM active_sessions'); } catch (_) {}
+  if (req && req.tokenPayload && req.tokenPayload.jti) {
+    try {
+      await client.query(
+        `INSERT INTO invalidated_tokens (jti, admin_id, reason) VALUES ($1, $2, 'admins_restored') ON CONFLICT (jti) DO NOTHING`,
+        [req.tokenPayload.jti, req.user && req.user.id ? req.user.id : null]
+      );
+    } catch (_) {}
+  }
+
+  return { updated, created, deleted, sessions_revoked: true };
+}
 
 const uploadsPath = path.join(__dirname, '..', 'public', 'uploads');
 const logosPath = path.join(__dirname, '..', 'public', 'logos'); // Persistent logo storage
@@ -70,7 +234,8 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsPath),
   filename: (req, file, cb) => cb(null, Date.now() + '-' + Math.round(Math.random()*1e9) + path.extname(file.originalname))
 });
-const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5MB (images/logos/avatars)
+const uploadBackup = multer({ storage, limits: { fileSize: 200 * 1024 * 1024 } }); // 200MB (DB/snapshot/ZIP backups)
 
 // --- PUBLIC: read-only access to selected app settings (e.g., general)
 router.get('/public/settings/:key', async (req, res) => {
@@ -2008,16 +2173,22 @@ router.get('/backup/config', authenticateToken, isAdmin, async (req, res) => {
     } catch (_) {}
     // Include avatar_data and media blobs so a config backup restores branding
     // and profile pictures too, not just settings and role assignments.
-    const [admins, settings, media] = await Promise.all([
-      pool.query('SELECT id, display_name, username, role, avatar_url, avatar_data, created_at FROM admins ORDER BY id'),
+    const [admins, settings, media, serverAdminPerms] = await Promise.all([
+      pool.query('SELECT id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen FROM admins ORDER BY id'),
       pool.query('SELECT settings_key, data, updated_at FROM app_settings ORDER BY settings_key'),
-      mediaStore.listMedia(pool).catch(() => [])
+      mediaStore.listMedia(pool).catch(() => []),
+      pool.query('SELECT admin_id, server_id FROM server_admin_permissions').catch(() => ({ rows: [] })),
     ]);
+    let viewerPerms = [];
+    try { const r = await pool.query('SELECT editor_id, server_id FROM viewer_server_permissions'); viewerPerms = r.rows || []; }
+    catch (_) { try { const r2 = await pool.query('SELECT editor_id, server_id FROM editor_server_permissions'); viewerPerms = r2.rows || []; } catch (__) {} }
     const payload = {
       type: 'config-backup-v1',
       createdAt: new Date().toISOString(),
       // avatar_data carries the image; avatar_url is kept only for old clients.
       admins: admins.rows || [],
+      server_admin_permissions: serverAdminPerms.rows || [],
+      viewer_server_permissions: viewerPerms,
       app_settings: (settings.rows || []).map(r => ({ settings_key: r.settings_key, data: maskSecrets(r.settings_key, r.data), updated_at: r.updated_at })),
       media: media || [],
     };
@@ -2032,7 +2203,7 @@ router.get('/backup/config', authenticateToken, isAdmin, async (req, res) => {
 });
 
 // POST restore config (config.json) — merge only, no password changes
-router.post('/restore/config', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
+router.post('/restore/config', authenticateToken, isAdmin, uploadBackup.single('file'), async (req, res) => {
   const parseBody = () => {
     try {
       if (req.file) {
@@ -2076,36 +2247,15 @@ router.post('/restore/config', authenticateToken, isAdmin, upload.single('file')
         try { await warnIfKeyDrop(client, key, current, toStore); } catch (_) {}
       }
     }
-    // merge admins by username (no password updates)
-    // Avatars are restored from avatar_data (the DB copy). New accounts get a
-    // random unusable password rather than the old hard-coded placeholder hash,
-    // so an imported account can never be signed into with a known credential.
-    if (Array.isArray(data.admins)) {
-      const VALID_ROLES = ['ADMIN', 'VIEWER', 'SERVER_ADMIN'];
-      for (const a of data.admins) {
-        const { display_name, username, role, avatar_data } = a;
-        if (!username) continue;
-        const safeRole = VALID_ROLES.includes(role) ? role : 'VIEWER';
-        const existing = await client.query('SELECT id FROM admins WHERE username = $1', [username]);
-        if (existing.rows && existing.rows.length) {
-          // Existing account: refresh profile + role, never the password.
-          await client.query(
-            `UPDATE admins SET display_name = $1, role = $2,
-                    avatar_data = COALESCE($3, avatar_data),
-                    avatar_url = CASE WHEN $3 IS NOT NULL THEN NULL ELSE avatar_url END,
-                    updated_at = now()
-              WHERE username = $4`,
-            [display_name || username, safeRole, avatar_data || null, username]
-          );
-        } else {
-          const tempHash = await bcrypt.hash(require('crypto').randomBytes(24).toString('base64url'), 10);
-          await client.query(
-            `INSERT INTO admins (display_name, username, password_hash, role, avatar_data)
-             VALUES ($1,$2,$3,$4,$5)`,
-            [display_name || username, username, tempHash, safeRole, avatar_data || null]
-          );
-        }
-      }
+    // Overwrite all admin users & revoke sessions when admins are present in config backup
+    let adminsRestored = null;
+    if (Array.isArray(data.admins) && data.admins.length > 0) {
+      adminsRestored = await overwriteAdminsAndRevokeSessions(client, {
+        admins: data.admins,
+        serverAdminPerms: data.server_admin_permissions,
+        viewerPerms: data.viewer_server_permissions,
+        req,
+      });
     }
     // media: logo / favicon blobs, so a config restore brings branding back.
     if (Array.isArray(data.media) && data.media.length > 0) {
@@ -2130,7 +2280,7 @@ router.post('/restore/config', authenticateToken, isAdmin, upload.single('file')
   await client.query('COMMIT');
   // refresh general settings cache after restore
   try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
-  return res.json({ msg: 'Config restored (merge)', admins: data.admins ? data.admins.length : 0, settings: data.app_settings ? data.app_settings.length : 0, media: data.media ? data.media.length : 0 });
+  return res.json({ msg: adminsRestored ? 'Config and admin users restored (overwrite)' : 'Config restored (merge)', sessions_revoked: Boolean(adminsRestored && adminsRestored.sessions_revoked), admins: data.admins ? data.admins.length : 0, admins_restored: adminsRestored, settings: data.app_settings ? data.app_settings.length : 0, media: data.media ? data.media.length : 0 });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('restore config failed:', err);
@@ -2149,7 +2299,7 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
         await pool.query('INSERT INTO settings_audit (admin_id, settings_key, action, before_data, after_data) VALUES ($1,$2,$3,$4,$5)', [req.user && req.user.id ? req.user.id : null, 'backup', 'BACKUP', null, null]);
       }
     } catch (_) {}
-    const admins = await pool.query('SELECT id, display_name, username, role, avatar_url, avatar_data, created_at FROM admins ORDER BY id');
+    const admins = await pool.query('SELECT id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen FROM admins ORDER BY id');
     const servers = await pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers ORDER BY id');
     // permissions tables: prefer new name, fallback to legacy
     let viewerPerms = [];
@@ -2164,6 +2314,7 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
     let snapshotsRows = [];
     try { const sr = await pool.query('SELECT id, month_start::text as month_start, month_end::text as month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC'); snapshotsRows = sr.rows || []; } catch (_) {}
     const keyserverConfig = loadKeyserverConfig();
+    const keyserverTokenMap = loadKeyserverTokenMap();
     // media blobs are part of a full DB backup: the database is the source of
     // truth for branding, so a .db restore must carry logo/favicon with it.
     const mediaRows = await mediaStore.listMedia(pool).catch(() => []);
@@ -2184,6 +2335,7 @@ router.get('/backup/db', authenticateToken, isAdmin, async (req, res) => {
       financial_snapshots: snapshotsRows,
       media: mediaRows,
       keyserver_config: keyserverConfig || null,
+      keyserver_token_map: keyserverTokenMap || null,
     };
     const json = JSON.stringify(payload);
     res.setHeader('Content-Type', 'application/octet-stream');
@@ -2212,13 +2364,17 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
       pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users'),
       pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains').catch(() => ({ rows: [] })),
       pool.query('SELECT id, month_start::text as month_start, month_end::text as month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC').catch(() => ({ rows: [] })),
-      // Admins carry their three roles and their DB-stored avatar so a restore
-      // onto another host reproduces the exact same team, branding included.
-      pool.query('SELECT id, display_name, username, role, avatar_data, created_at, updated_at, last_seen FROM admins ORDER BY id').catch(() => ({ rows: [] })),
+      // Admins carry all fields (including password_hash, role, avatar_data) so a restore
+      // reproduces the exact same team and credentials across hosts.
+      pool.query('SELECT id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen FROM admins ORDER BY id').catch(() => ({ rows: [] })),
       pool.query('SELECT admin_id, server_id FROM server_admin_permissions').catch(() => ({ rows: [] })),
       mediaStore.listMedia(pool).catch(() => [])
     ]);
+    let viewerPerms = [];
+    try { const r = await pool.query('SELECT editor_id, server_id FROM viewer_server_permissions'); viewerPerms = r.rows || []; }
+    catch (_) { try { const r2 = await pool.query('SELECT editor_id, server_id FROM editor_server_permissions'); viewerPerms = r2.rows || []; } catch (__) {} }
     const keyserverConfig = loadKeyserverConfig();
+    const keyserverTokenMap = loadKeyserverTokenMap();
     const payload = {
       created_at: new Date().toISOString(),
       app_settings: settingsRes.rows || [],
@@ -2230,22 +2386,24 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
       })),
       domains: domainsRes.rows || [],
       financial_snapshots: snapshotsRes.rows || [],
-      // NOTE: password_hash is deliberately NOT exported. Snapshot restores can
-      // recreate accounts and roles, but never carry credentials across hosts.
       admins: (adminsRes.rows || []).map(a => ({
         id: a.id,
         display_name: a.display_name,
         username: a.username,
+        password_hash: a.password_hash,
         role: a.role,
+        avatar_url: a.avatar_url,
         avatar_data: a.avatar_data,
         created_at: a.created_at,
         updated_at: a.updated_at,
         last_seen: a.last_seen
       })),
       server_admin_permissions: serverAdminPermsRes.rows || [],
+      viewer_server_permissions: viewerPerms,
       // Logo / favicon blobs (data URIs) keyed by their media key.
       media: mediaRes || [],
-      keyserver_config: keyserverConfig || null
+      keyserver_config: keyserverConfig || null,
+      keyserver_token_map: keyserverTokenMap || null
     };
     const json = JSON.stringify(payload, null, 2);
     res.setHeader('Content-Type', 'application/json');
@@ -2259,18 +2417,33 @@ router.get('/backup/snapshot', authenticateToken, isAdmin, async (req, res) => {
 
 // POST restore snapshot compatible with Telegram bot backup (cmp-backup-*.json)
 // Merge-only, safe subset. Accepts multipart upload (file) or raw JSON body.
-router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
+router.post('/restore/snapshot', authenticateToken, isAdmin, uploadBackup.single('file'), async (req, res) => {
   const tmpUploadPath = req.file && req.file.path ? req.file.path : null;
   try {
-    // Parse JSON from uploaded file or body
+    // Parse JSON or Telegram backup ZIP (cmp-keys-backup-*.zip) from uploaded file or body
     let data = null;
+    let zipKeyBackup = null;
     try {
       if (req.file) {
-        try {
-          if (req.file.buffer) data = JSON.parse(req.file.buffer.toString('utf8'));
-          else if (req.file.path) data = JSON.parse(fs.readFileSync(req.file.path).toString('utf8'));
-        } catch (e) {
-          return res.status(400).json({ msg: 'Invalid JSON' });
+        const rawBuf = req.file.buffer || (req.file.path ? fs.readFileSync(req.file.path) : null);
+        if (!rawBuf) return res.status(400).json({ msg: 'No file data' });
+        const lowerName = String(req.file.originalname || '').toLowerCase();
+        if (isZipBuffer(rawBuf) || lowerName.endsWith('.zip')) {
+          try {
+            data = extractDatabaseSnapshotFromZip(rawBuf);
+            zipKeyBackup = parseKeyBackupZip(rawBuf);
+          } catch (zipErr) {
+            return res.status(400).json({ msg: zipErr.message || 'Invalid backup ZIP archive' });
+          }
+          if (!data) {
+            return res.status(400).json({ msg: 'ZIP archive does not contain database.json (use Key Manager Restore for keys-only archives)' });
+          }
+        } else {
+          try {
+            data = JSON.parse(rawBuf.toString('utf8'));
+          } catch (e) {
+            return res.status(400).json({ msg: 'Invalid JSON' });
+          }
         }
       } else if (req.body && typeof req.body === 'object') {
         data = req.body;
@@ -2279,13 +2452,12 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       return res.status(400).json({ msg: 'Invalid JSON' });
     }
 
-    // "Restore Admins" is opt-in. When enabled the incoming `admins` array
-    // REPLACES the current team (display names, roles, avatars) rather than
-    // being merged, and every existing session is revoked so the people who
-    // were removed lose access immediately.
-    const wantsAdmins =
-      String((req.body && req.body.restore_admins) || req.query.restore_admins || '') === '1' ||
-      String((req.body && req.body.restore_admins) || '') === 'true';
+    // Overwrite all admin users and revoke active sessions by default whenever
+    // the snapshot includes admins (can be explicitly skipped with restore_admins=0).
+    const rawRestoreAdmins = (req.body && req.body.restore_admins !== undefined) ? req.body.restore_admins : req.query.restore_admins;
+    const explicitlyDisabledAdmins = String(rawRestoreAdmins || '').toLowerCase() === '0' || String(rawRestoreAdmins || '').toLowerCase() === 'false';
+    const explicitlyRequestedAdmins = String(rawRestoreAdmins || '').toLowerCase() === '1' || String(rawRestoreAdmins || '').toLowerCase() === 'true';
+    const wantsAdmins = !explicitlyDisabledAdmins && (explicitlyRequestedAdmins || (Array.isArray(data && data.admins) && data.admins.length > 0));
     let adminsRestored = null;
 
     if (!data || (!Array.isArray(data.app_settings) && !Array.isArray(data.servers) && !Array.isArray(data.server_keys) && !Array.isArray(data.users) && !Array.isArray(data.admins) && !Array.isArray(data.media))) {
@@ -2293,7 +2465,7 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
     }
     // An admin overwrite that carries no accounts would delete the whole team
     // and lock everyone out, so refuse it explicitly.
-    if (wantsAdmins && (!Array.isArray(data.admins) || data.admins.length === 0)) {
+    if (explicitlyRequestedAdmins && (!Array.isArray(data.admins) || data.admins.length === 0)) {
       return res.status(400).json({ msg: 'Snapshot contains no admins; refusing to overwrite the admin team' });
     }
     const client = await pool.connect();
@@ -2398,90 +2570,15 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       }
     }
     
-    // admins: by default merge avatar data only (preserve passwords and other
-    // security data) for existing admins matching by username. When the caller
-    // explicitly ticked "Restore Admins", the team is overwritten instead.
+    // admins: overwrite all admin users and revoke active sessions when enabled (default)
     if (Array.isArray(data.admins) && data.admins.length > 0 && wantsAdmins) {
-      const VALID_ROLES = ['ADMIN', 'VIEWER', 'SERVER_ADMIN'];
-      const existing = await client.query('SELECT id, username, password_hash FROM admins');
-      const byUsername = new Map((existing.rows || []).map(r => [String(r.username || '').toLowerCase(), r]));
-      let restored = 0;
-      let updated = 0;
-      for (const a of data.admins) {
-        if (!a.username) continue;
-        // Only the three supported roles may be restored; anything else would
-        // violate the admins_role_check constraint.
-        const role = VALID_ROLES.includes(a.role) ? a.role : 'VIEWER';
-        const uname = String(a.username);
-        const prior = byUsername.get(uname.toLowerCase());
-        if (prior) {
-          // Keep the EXISTING password so restoring a snapshot can never
-          // silently reset anybody's credentials.
-          await client.query(
-            `UPDATE admins SET display_name = $1, role = $2, avatar_data = $3, avatar_url = NULL, updated_at = now() WHERE id = $4`,
-            [a.display_name || null, role, a.avatar_data || null, prior.id]
-          );
-          updated++;
-        } else {
-          // Brand-new account: it needs a password to be usable. Derive a random
-          // one the operator can reset, rather than shipping a known default.
-          const tempPassword = require('crypto').randomBytes(24).toString('base64url');
-          const tempHash = await bcrypt.hash(tempPassword, 10);
-          const ins = await client.query(
-            `INSERT INTO admins (display_name, username, password_hash, role, avatar_data, created_at)
-             VALUES ($1,$2,$3,$4,$5, COALESCE($6, now())) RETURNING id`,
-            [a.display_name || uname, uname, tempHash, role, a.avatar_data || null, a.created_at || null]
-          );
-          byUsername.set(uname.toLowerCase(), ins.rows[0]);
-          restored++;
-        }
-      }
-      // Server-admin assignments are replaced wholesale to match the new team.
-      try {
-        await client.query('DELETE FROM server_admin_permissions');
-        if (Array.isArray(data.server_admin_permissions)) {
-          for (const p of data.server_admin_permissions) {
-            const adminRow = byUsername.get(String(
-              (data.admins.find(x => x.id === p.admin_id) || {}).username || ''
-            ).toLowerCase());
-            const adminId = p.admin_id || (adminRow && adminRow.id);
-            if (!adminId || !p.server_id) continue;
-            await client.query(
-              'INSERT INTO server_admin_permissions (admin_id, server_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
-              [adminId, p.server_id]
-            );
-          }
-        }
-      } catch (e) {
-        console.warn('server_admin_permissions restore skipped:', e && e.message ? e.message : e);
-      }
-      // Accounts present before but absent from the snapshot are removed, so
-      // the restored team matches the snapshot exactly.
-      const keep = new Set((data.admins || []).map(a => String(a.username || '').toLowerCase()));
-      for (const r of (existing.rows || [])) {
-        if (!keep.has(String(r.username || '').toLowerCase())) {
-          try { await client.query('DELETE FROM admins WHERE id = $1', [r.id]); } catch (_) {}
-        }
-      }
-      // Revoke every session so removed/changed accounts lose access at once and
-      // the operator is forced to sign in again with the restored team.
-      let revoked = 0;
-      try {
-        const inval = await client.query(
-          `INSERT INTO invalidated_tokens (jti, admin_id, reason)
-           SELECT 'restore-' || md5(random()::text || clock_timestamp()::text || t.jti), t.admin_id, 'admins_restored'
-             FROM (SELECT DISTINCT admin_id FROM refresh_tokens WHERE admin_id IS NOT NULL) t
-           ON CONFLICT DO NOTHING`
-        );
-        revoked = inval.rowCount || 0;
-      } catch (e) {
-        console.warn('token invalidation during admin restore failed:', e && e.message ? e.message : e);
-      }
-      try { await client.query('DELETE FROM refresh_tokens'); } catch (_) {}
-      try { await client.query('DELETE FROM invalidated_tokens'); } catch (_) {}
-      console.log(`[restore/snapshot] admins overwritten: ${updated} updated, ${restored} created, sessions revoked`);
-      // Surface the outcome to the caller.
-      adminsRestored = { updated, created: restored, sessions_revoked: true };
+      adminsRestored = await overwriteAdminsAndRevokeSessions(client, {
+        admins: data.admins,
+        serverAdminPerms: data.server_admin_permissions,
+        viewerPerms: data.viewer_server_permissions,
+        req,
+      });
+      console.log(`[restore/snapshot] admins overwritten: ${adminsRestored.updated} updated, ${adminsRestored.created} created, ${adminsRestored.deleted} deleted, sessions revoked`);
     } else if (Array.isArray(data.admins)) {
       for (const a of data.admins) {
         if (!a.username) continue;
@@ -2536,13 +2633,43 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       }
     }
 
-    // keyserver config: Restore from backup if present
-    if (data.keyserver_config && typeof data.keyserver_config === 'object') {
+    // keyserver config, token_map & key files: Restore from backup (JSON or Telegram ZIP)
+    let keyserverTokenMapRestored = false;
+    let keyserverFilesRestored = 0;
+    const ksConfigToRestore = (zipKeyBackup && zipKeyBackup.config) || data.keyserver_config;
+    if (ksConfigToRestore && typeof ksConfigToRestore === 'object') {
       try {
-        saveKeyserverConfig(data.keyserver_config);
+        saveKeyserverConfig(ksConfigToRestore);
         console.log('Restored keyserver config');
       } catch (e) {
         console.warn('Could not restore keyserver config:', e.message);
+      }
+    }
+    const ksTokenMapToRestore = (zipKeyBackup && zipKeyBackup.tokenMap) || data.keyserver_token_map;
+    if (ksTokenMapToRestore && typeof ksTokenMapToRestore === 'object') {
+      try {
+        saveKeyserverTokenMap(ksTokenMapToRestore);
+        keyserverTokenMapRestored = true;
+        console.log('Restored keyserver token_map');
+      } catch (e) {
+        console.warn('Could not restore keyserver token_map:', e.message);
+      }
+    }
+    if (zipKeyBackup && Array.isArray(zipKeyBackup.files) && zipKeyBackup.files.length > 0) {
+      try {
+        const activeKsConfig = loadKeyserverConfig() || {};
+        const ksConfigDir = activeKsConfig.configDir || '/srv/cmp/configs';
+        if (!fs.existsSync(ksConfigDir)) fs.mkdirSync(ksConfigDir, { recursive: true });
+        for (const f of zipKeyBackup.files) {
+          if (!f || !f.filename || typeof f.content !== 'string') continue;
+          const safeName = path.basename(f.filename);
+          if (!/\.(ya?ml|json|txt)$/i.test(safeName)) continue;
+          fs.writeFileSync(path.join(ksConfigDir, safeName), f.content, 'utf8');
+          keyserverFilesRestored++;
+        }
+        console.log(`Restored ${keyserverFilesRestored} keyserver key files from ZIP`);
+      } catch (e) {
+        console.warn('Could not restore keyserver key files from ZIP:', e.message);
       }
     }
 
@@ -2630,7 +2757,7 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
     await client.query('COMMIT');
     // refresh general settings cache after snapshot restore
     try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
-    return res.json({ msg: 'Snapshot restored (overwrite)', counts: {
+    return res.json({ msg: 'Snapshot restored (overwrite)', sessions_revoked: Boolean(adminsRestored && adminsRestored.sessions_revoked), counts: {
       settings: Array.isArray(data.app_settings) ? data.app_settings.length : 0,
       servers: Array.isArray(data.servers) ? data.servers.length : 0,
       server_keys: Array.isArray(data.server_keys) ? data.server_keys.length : 0,
@@ -2641,7 +2768,9 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
       media_restored: Array.isArray(data.media) ? data.media.length : 0,
       domains: Array.isArray(data.domains) ? data.domains.length : 0,
       financial_snapshots: snapshotCount,
-      keyserver_config: data.keyserver_config ? true : false,
+      keyserver_config: ksConfigToRestore ? true : false,
+      keyserver_token_map: keyserverTokenMapRestored,
+      keyserver_files: keyserverFilesRestored,
     }});
     } catch (err) {
       await client.query('ROLLBACK');
@@ -2662,11 +2791,11 @@ router.post('/restore/snapshot', authenticateToken, isAdmin, upload.single('file
 });
 
 // POST restore DB (.db) — merge only, safe subset
-router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
+router.post('/restore/db', authenticateToken, isAdmin, uploadBackup.single('file'), async (req, res) => {
   const tmpUploadPath = req.file && req.file.path ? req.file.path : null;
   try {
     if (!req.file) return res.status(400).json({ msg: 'No file uploaded' });
-    if (req.file.size > 5 * 1024 * 1024) return res.status(413).json({ msg: 'File too large' });
+    if (req.file.size > 200 * 1024 * 1024) return res.status(413).json({ msg: 'File too large' });
     let payload;
     let buf = null;
     try {
@@ -2761,35 +2890,16 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           );
         }
       }
-      // admins (merge, no passwords)
-      // Roles are validated against the three supported values and avatars are
-      // restored from the DB copy. New accounts get a random unusable password
-      // instead of the old hard-coded placeholder hash.
-      if (Array.isArray(payload.admins)) {
-        const VALID_ROLES = ['ADMIN', 'VIEWER', 'SERVER_ADMIN'];
-        for (const a of payload.admins) {
-          const { display_name, username, role, avatar_data } = a;
-          if (!username) continue;
-          const safeRole = VALID_ROLES.includes(role) ? role : 'VIEWER';
-          const existing = await client.query('SELECT id FROM admins WHERE username = $1', [username]);
-          if (existing.rows && existing.rows.length) {
-            await client.query(
-              `UPDATE admins SET display_name = $1, role = $2,
-                      avatar_data = COALESCE($3, avatar_data),
-                      avatar_url = CASE WHEN $3 IS NOT NULL THEN NULL ELSE avatar_url END,
-                      updated_at = now()
-                WHERE username = $4`,
-              [display_name || username, safeRole, avatar_data || null, username]
-            );
-          } else {
-            const tempHash = await bcrypt.hash(require('crypto').randomBytes(24).toString('base64url'), 10);
-            await client.query(
-              `INSERT INTO admins (display_name, username, password_hash, role, avatar_data)
-               VALUES ($1,$2,$3,$4,$5)`,
-              [display_name || username, username, tempHash, safeRole, avatar_data || null]
-            );
-          }
-        }
+      // admins: overwrite all admin users and revoke active sessions
+      let adminsRestored = null;
+      if (Array.isArray(payload.admins) && payload.admins.length > 0) {
+        adminsRestored = await overwriteAdminsAndRevokeSessions(client, {
+          admins: payload.admins,
+          serverAdminPerms: payload.server_admin_permissions,
+          viewerPerms: payload.viewer_server_permissions,
+          req,
+        });
+        console.log(`[restore/db] admins overwritten: ${adminsRestored.updated} updated, ${adminsRestored.created} created, ${adminsRestored.deleted} deleted, sessions revoked`);
       }
       // media: logo / favicon blobs must come back with a full DB restore.
       if (Array.isArray(payload.media) && payload.media.length > 0) {
@@ -2911,7 +3021,7 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
         }
         console.log(`Restored ${snapshotCount} financial snapshots (db backup)`);
       }
-      // keyserver config: Restore from backup if present
+      // keyserver config & token_map: Restore from backup if present
       if (payload.keyserver_config && typeof payload.keyserver_config === 'object') {
         try {
           saveKeyserverConfig(payload.keyserver_config);
@@ -2920,10 +3030,18 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           console.warn('Could not restore keyserver config:', e.message);
         }
       }
+      if (payload.keyserver_token_map && typeof payload.keyserver_token_map === 'object') {
+        try {
+          saveKeyserverTokenMap(payload.keyserver_token_map);
+          console.log('Restored keyserver token_map');
+        } catch (e) {
+          console.warn('Could not restore keyserver token_map:', e.message);
+        }
+      }
       await client.query('COMMIT');
       // refresh general settings cache after DB restore
       try { const settingsCache = require('../lib/settingsCache'); await settingsCache.loadGeneral(); } catch (_) {}
-      return res.json({ msg: 'Database restored (overwrite)',
+      return res.json({ msg: 'Database restored (overwrite)', sessions_revoked: Boolean(adminsRestored && adminsRestored.sessions_revoked),
         counts: {
           servers: payload.servers ? payload.servers.length : 0,
           server_keys: payload.server_keys ? payload.server_keys.length : 0,
@@ -2936,6 +3054,7 @@ router.post('/restore/db', authenticateToken, isAdmin, upload.single('file'), as
           media: payload.media ? payload.media.length : 0,
           financial_snapshots: snapshotCount,
           keyserver_config: payload.keyserver_config ? true : false,
+          keyserver_token_map: payload.keyserver_token_map ? true : false,
         }
       });
     } catch (err) {
@@ -3992,7 +4111,7 @@ router.get('/backup/admins', authenticateToken, isAdmin, async (req, res) => {
 });
 
 // ── Admin-specific restore ────────────────────────────────────────────────────
-router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file'), async (req, res) => {
+router.post('/restore/admins', authenticateToken, isAdmin, uploadBackup.single('file'), async (req, res) => {
   const tmpUploadPath = req.file && req.file.path ? req.file.path : null;
   const client = await pool.connect();
   try {
@@ -4206,6 +4325,15 @@ router.post('/restore/admins', authenticateToken, isAdmin, upload.single('file')
         console.warn('[restore/admins] access-token revocation skipped:', e && e.message ? e.message : e);
       }
       try { await client.query('DELETE FROM active_sessions'); } catch (_) {}
+      if (req && req.tokenPayload && req.tokenPayload.jti) {
+        try {
+          await client.query(
+            `INSERT INTO invalidated_tokens (jti, admin_id, reason) VALUES ($1, $2, 'admins_restored') ON CONFLICT (jti) DO NOTHING`,
+            [req.tokenPayload.jti, req.user && req.user.id ? req.user.id : null]
+          );
+          revokedSessions++;
+        } catch (_) {}
+      }
       console.log(`[restore/admins] overwrite complete: ${adminCount} admins, ${revokedSessions} sessions revoked`);
     }
 

@@ -114,7 +114,7 @@ export default function SettingsPage() {
   const [restoreFileSnapshot, setRestoreFileSnapshot] = useState(null);
   // Opt-in: overwrite the admin team (display names, roles, avatars) and force
   // everyone to sign in again. Off by default because it is destructive.
-  const [restoreAdmins, setRestoreAdmins] = useState(false);
+  const [restoreAdmins, setRestoreAdmins] = useState(true);
   const [restoreInProgress, setRestoreInProgress] = useState(false);
   const [restoreProgress, setRestoreProgress] = useState(0);
   const [restoreMessage, setRestoreMessage] = useState('');
@@ -704,7 +704,7 @@ export default function SettingsPage() {
     try {
       const form = new FormData();
       form.append('file', file, file.name);
-      if (doRestoreAdmins) form.append('restore_admins', '1');
+      if (isSnapshot) form.append('restore_admins', doRestoreAdmins ? '1' : '0');
       const config = { headers: { ...authHeaders } };
       // Only include onUploadProgress when the XHR upload API is available (some test envs lack it)
       try {
@@ -724,8 +724,9 @@ export default function SettingsPage() {
       // When the admin team was overwritten every session was revoked server
       // side, so the current JWT is dead. Send the user to the login screen
       // instead of reloading into a broken authenticated shell.
-      if (doRestoreAdmins) {
-        setRestoreMessage(`${msg} — admins restored. Please sign in again.`);
+      const sessionsRevoked = Boolean(res?.data?.sessions_revoked || res?.data?.counts?.admins?.sessions_revoked || doRestoreAdmins);
+      if (sessionsRevoked) {
+        setRestoreMessage(`${msg} — admin users overwritten. Logging out...`);
         try {
           localStorage.removeItem('token');
           localStorage.removeItem('user');
@@ -1296,11 +1297,11 @@ export default function SettingsPage() {
               </label>
               <label className="full">
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.3rem' }}>
-                  <span>Restore Telegram Snapshot (JSON)</span>
-                  <FaInfoCircle title="Restore from a Telegram bot backup snapshot (JSON). This restores user/server data the bot exported. The page will reload after restore." style={{ opacity: 0.6, cursor: 'help', fontSize: '0.9em' }} />
+                  <span>Restore Telegram Snapshot (JSON / ZIP)</span>
+                  <FaInfoCircle title="Restore from a Telegram bot backup snapshot (.json or cmp-keys-backup-*.zip). Uploading a .zip restores both the database and keyserver config, token map, and key files in one step. The page will reload after restore." style={{ opacity: 0.6, cursor: 'help', fontSize: '0.9em' }} />
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <input aria-label="Restore Telegram Snapshot (JSON)" type="file" accept="application/json,.json" onChange={(e) => { const f = e.target.files?.[0]; if (f) setRestoreFileSnapshot(f); e.target.value = ''; }} />
+                  <input aria-label="Restore Telegram Snapshot (JSON)" type="file" accept="application/json,.json,.zip,application/zip" onChange={(e) => { const f = e.target.files?.[0]; if (f) setRestoreFileSnapshot(f); e.target.value = ''; }} />
                   <button className="btn primary" disabled={!restoreFileSnapshot || restoreInProgress} onClick={() => startRestore(backendOrigin + '/api/admin/restore/snapshot', restoreFileSnapshot)}>Restore</button>
                   {restoreFileSnapshot && <small style={{ opacity: 0.85 }}>{restoreFileSnapshot.name}</small>}
                 </div>
@@ -1319,7 +1320,7 @@ export default function SettingsPage() {
                     <small style={{ opacity: 0.8 }}>
                       Overwrite all admin accounts with the snapshot&rsquo;s accounts, roles and profile pictures.
                       Admin accounts missing from the snapshot are deleted, and <strong>everyone is logged out</strong> and must sign in again.
-                      Existing passwords are kept for accounts that already exist.
+                      All admin accounts, roles, passwords, permissions, and profile pictures are overwritten from the backup.
                     </small>
                   </span>
                 </label>

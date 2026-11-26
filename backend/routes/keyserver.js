@@ -4,7 +4,63 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { exec } = require('child_process');
+const multer = require('multer');
 const { authenticateToken, isAdmin, isAdminOrServerAdmin } = require('../middleware/authMiddleware');
+const { isZipBuffer, parseKeyBackupZip } = require('../utils/keyBackupZip');
+
+const uploadBackup = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 200 * 1024 * 1024 },
+});
+
+const maybeUploadBackup = (req, res, next) => {
+  if (req.is('multipart/form-data')) {
+    return uploadBackup.single('file')(req, res, (err) => {
+      if (err) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(413).json({ error: 'Restore file is too large (max 200 MB)' });
+        }
+        return res.status(400).json({ error: err.message || 'Failed to upload backup file' });
+      }
+      return next();
+    });
+  }
+  return next();
+};
+
+const parseUploadedBackupFile = (file) => {
+  if (!file || !Buffer.isBuffer(file.buffer)) {
+    const err = new Error('No backup file uploaded');
+    err.statusCode = 400;
+    throw err;
+  }
+  const lowerName = String(file.originalname || '').toLowerCase();
+  const isZip = isZipBuffer(file.buffer) || lowerName.endsWith('.zip');
+  if (isZip) {
+    try {
+      const backup = parseKeyBackupZip(file.buffer);
+      return { backup, sourceFormat: 'zip' };
+    } catch (zipErr) {
+      const err = new Error(zipErr.message || 'Invalid backup ZIP file');
+      err.statusCode = 400;
+      throw err;
+    }
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(file.buffer.toString('utf8'));
+  } catch (_) {
+    const err = new Error('Invalid backup file - not valid JSON or ZIP');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!parsed || typeof parsed !== 'object' || !parsed.version) {
+    const err = new Error('Invalid backup file format');
+    err.statusCode = 400;
+    throw err;
+  }
+  return { backup: parsed, sourceFormat: 'json' };
+};
 
 // Key server config file path
 const CONFIG_PATH = path.join(__dirname, '..', 'data', 'keyserver.json');
@@ -1016,7 +1072,7 @@ router.get('/backup', authenticateToken, isAdmin, (req, res) => {
     const files = [];
     if (fs.existsSync(configDir)) {
       const entries = fs.readdirSync(configDir)
-        .filter(f => (f.endsWith('.yaml') || f.endsWith('.yml') || f.endsWith('.json') || f.endsWith('.txt')) && !f.endsWith('.meta.json'));
+        .filter(f => f.endsWith('.yaml') || f.endsWith('.yml') || f.endsWith('.json') || f.endsWith('.txt'));
       for (const filename of entries) {
         const filePath = path.join(configDir, filename);
         const stats = fs.statSync(filePath);
@@ -1049,19 +1105,55 @@ router.get('/backup', authenticateToken, isAdmin, (req, res) => {
   }
 });
 
-// POST /api/keyserver/restore - Restore config + key files from a backup JSON bundle
-// body.mode: 'merge' (default) = only write new files, skip existing | 'overwrite' = replace everything
-router.post('/restore', authenticateToken, isAdmin, (req, res) => {
+// POST /api/keyserver/restore/inspect - Inspect a .zip or .json backup before restoring
+router.post('/restore/inspect', authenticateToken, isAdmin, maybeUploadBackup, (req, res) => {
   try {
-    const backup = req.body.backup || req.body;
-    const mode = (req.body.mode || 'merge').toLowerCase(); // merge | overwrite
+    let backup;
+    let sourceFormat = 'json';
+    if (req.file) {
+      const parsed = parseUploadedBackupFile(req.file);
+      backup = parsed.backup;
+      sourceFormat = parsed.sourceFormat;
+    } else {
+      backup = req.body && (req.body.backup || req.body);
+      if (!backup || typeof backup !== 'object' || !backup.version) {
+        return res.status(400).json({ error: 'Invalid backup file format' });
+      }
+    }
+
+    return res.json({
+      version: backup.version,
+      createdAt: backup.createdAt || backup.created_at || null,
+      hasConfig: Boolean(backup.config && typeof backup.config === 'object'),
+      hasTokenMap: Boolean(backup.tokenMap && typeof backup.tokenMap === 'object'),
+      fileCount: Array.isArray(backup.files) ? backup.files.length : 0,
+      hasDatabaseSnapshot: Boolean(backup.hasDatabaseSnapshot),
+      sourceFormat,
+    });
+  } catch (err) {
+    return res.status(err.statusCode || 500).json({ error: err.message });
+  }
+});
+
+// POST /api/keyserver/restore - Restore config + key files from a backup JSON bundle or Telegram backup ZIP
+// body.mode: 'merge' (default) = only write new files, skip existing | 'overwrite' = replace everything
+router.post('/restore', authenticateToken, isAdmin, maybeUploadBackup, (req, res) => {
+  try {
+    let backup;
+    if (req.file) {
+      const parsed = parseUploadedBackupFile(req.file);
+      backup = parsed.backup;
+    } else {
+      backup = req.body.backup || req.body;
+    }
+    const mode = String((req.body && req.body.mode) || 'merge').toLowerCase(); // merge | overwrite
 
     // Validate backup structure
     if (!backup || typeof backup !== 'object' || !backup.version) {
       return res.status(400).json({ error: 'Invalid backup file format' });
     }
 
-    const results = { configRestored: false, filesRestored: 0, filesSkipped: 0, filesOverwritten: 0, errors: [] };
+    const results = { configRestored: false, tokenMapRestored: false, tokensRestored: 0, filesRestored: 0, filesSkipped: 0, filesOverwritten: 0, errors: [] };
 
     // Restore config
     if (backup.config && typeof backup.config === 'object') {
@@ -1105,6 +1197,8 @@ router.post('/restore', authenticateToken, isAdmin, (req, res) => {
         };
         saveTokenMap(merged);
       }
+      results.tokenMapRestored = true;
+      results.tokensRestored = Object.keys(backup.tokenMap.byToken || {}).length;
     }
 
     // Restore key files
@@ -1156,11 +1250,11 @@ router.post('/restore', authenticateToken, isAdmin, (req, res) => {
 
     const modeLabel = mode === 'overwrite' ? 'Overwrite' : 'Merge';
     res.json({
-      message: `${modeLabel} restore complete. Config: ${results.configRestored ? 'yes' : 'no'}, Files: ${results.filesRestored} restored, ${results.filesSkipped} skipped.`,
+      message: `${modeLabel} restore complete. Config: ${results.configRestored ? 'yes' : 'no'}, Tokens: ${results.tokensRestored}, Files: ${results.filesRestored} restored, ${results.filesSkipped} skipped.`,
       ...results,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(err.statusCode || 500).json({ error: err.message });
   }
 });
 

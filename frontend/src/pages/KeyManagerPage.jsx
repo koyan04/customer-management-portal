@@ -305,37 +305,77 @@ const KeyManagerPage = () => {
     }
   };
 
-  // Restore – upload JSON bundle (opens modal for merge/overwrite choice)
+  // Restore – upload JSON bundle or Telegram backup ZIP (opens modal for merge/overwrite choice)
   const handleRestoreFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     e.target.value = '';
 
+    const lowerName = (file.name || '').toLowerCase();
+    const isZip = lowerName.endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed';
+
     try {
+      if (isZip) {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await axios.post(`${backendOrigin}/api/keyserver/restore/inspect`, formData, { headers });
+        setRestoreModal({ isZip: true, file, filename: file.name, summary: res.data });
+        return;
+      }
+
       const text = await file.text();
       let backup;
       try {
         backup = JSON.parse(text);
       } catch {
-        return showFeedback('Invalid backup file \u2013 not valid JSON', 'error');
+        return showFeedback('Invalid backup file \u2013 not valid JSON or ZIP', 'error');
       }
       if (!backup.version || !Array.isArray(backup.files)) {
         return showFeedback('Invalid backup file format', 'error');
       }
       // Open restore modal
-      setRestoreModal({ backup, filename: file.name });
+      setRestoreModal({
+        isZip: false,
+        backup,
+        filename: file.name,
+        summary: {
+          createdAt: backup.createdAt || null,
+          hasConfig: Boolean(backup.config),
+          hasTokenMap: Boolean(backup.tokenMap),
+          fileCount: backup.files.length,
+          hasDatabaseSnapshot: false,
+          sourceFormat: 'json',
+        },
+      });
     } catch (err) {
-      showFeedback('Failed to read backup file', 'error');
+      const status = err?.response?.status;
+      if (status === 413) {
+        showFeedback('Restore file is too large for server upload limit', 'error');
+        return;
+      }
+      const backendMsg =
+        (typeof err?.response?.data === 'string' && err.response.data) ||
+        err?.response?.data?.error ||
+        err?.response?.data?.msg;
+      showFeedback(backendMsg || 'Failed to read backup file', 'error');
     }
   };
 
   // Execute restore with chosen mode
   const executeRestore = async (mode) => {
     if (!restoreModal) return;
-    const { backup } = restoreModal;
+    const { isZip, file, backup } = restoreModal;
     setRestoreModal(null);
     try {
-      const res = await axios.post(`${backendOrigin}/api/keyserver/restore`, { backup, mode }, { headers });
+      let res;
+      if (isZip && file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('mode', mode);
+        res = await axios.post(`${backendOrigin}/api/keyserver/restore`, formData, { headers });
+      } else {
+        res = await axios.post(`${backendOrigin}/api/keyserver/restore`, { backup, mode }, { headers });
+      }
       showFeedback(res.data.message);
       fetchConfig();
       fetchKeys();
@@ -879,13 +919,13 @@ const KeyManagerPage = () => {
             <button className="km-btn km-btn-backup" onClick={handleBackup} title="Backup config & keys">
               <FaCloudDownloadAlt /> Backup
             </button>
-            <button className="km-btn km-btn-restore" onClick={() => restoreInputRef.current?.click()} title="Restore from backup">
+            <button className="km-btn km-btn-restore" onClick={() => restoreInputRef.current?.click()} title="Restore from backup (.json or .zip)">
               <FaCloudUploadAlt /> Restore
             </button>
             <input
               type="file"
               ref={restoreInputRef}
-              accept=".json"
+              accept=".json,.zip,application/json,application/zip"
               style={{ display: 'none' }}
               onChange={handleRestoreFile}
             />
@@ -1452,9 +1492,15 @@ const KeyManagerPage = () => {
             <div className="km-modal-body km-restore-body">
               <div className="km-restore-info">
                 <p><strong>File:</strong> {restoreModal.filename}</p>
-                <p><strong>Date:</strong> {restoreModal.backup.createdAt ? new Date(restoreModal.backup.createdAt).toLocaleString() : 'Unknown'}</p>
-                <p><strong>Config:</strong> {restoreModal.backup.config ? 'Included' : 'Not included'}</p>
-                <p><strong>Files:</strong> {restoreModal.backup.files.length} key file(s)</p>
+                <p><strong>Date:</strong> {restoreModal.summary?.createdAt ? new Date(restoreModal.summary.createdAt).toLocaleString() : 'Unknown'}</p>
+                <p><strong>Config:</strong> {restoreModal.summary?.hasConfig ? 'Included' : 'Not included'}</p>
+                <p><strong>Token Map:</strong> {restoreModal.summary?.hasTokenMap ? 'Included' : 'Not included'}</p>
+                <p><strong>Files:</strong> {restoreModal.summary?.fileCount ?? 0} key file(s)</p>
+                {restoreModal.summary?.hasDatabaseSnapshot && (
+                  <p style={{ fontSize: '0.82rem', opacity: 0.8, marginTop: '6px' }}>
+                    Restores keyserver config, token map, and key files (database.json can be restored from Settings).
+                  </p>
+                )}
               </div>
               <div className="km-restore-options">
                 <h5>Choose restore mode:</h5>

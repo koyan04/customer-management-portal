@@ -4,6 +4,29 @@
 
 ---
 
+cmp ver 1.9.32
+
+Full Telegram ZIP restore, unified backup/restore reliability, complete admin data export/overwrite with session revocation, and mobile key copy fixes.
+
+**Key Manager Backup & Restore**
+- Telegram ZIP Restore: Added pure-Node ZIP parser (`backend/utils/keyBackupZip.js`) and `POST /api/keyserver/restore/inspect` so Key Manager can directly inspect and restore Telegram `cmp-keys-backup-*.zip` archives as well as `.json` bundles.
+- Companion Metadata Included: `GET /api/keyserver/backup` now includes `.meta.json` files (used for `subscription-userinfo` data limit and expiry headers) alongside `.yaml`/`.yml`/`.json`/`.txt` key files, `config`, and `tokenMap`.
+- Restore Summary: `POST /api/keyserver/restore` reports restored token counts and supports both Merge and Overwrite modes cleanly.
+
+**Settings & Telegram Backup/Restore**
+- Single-File ZIP Snapshot Restore: `POST /api/admin/restore/snapshot` and the Settings page now accept both `.json` and Telegram `cmp-keys-backup-*.zip` archives — restoring `database.json` plus `keyserver/config.json`, `keyserver/token_map.json`, and `keyserver/keys/*` in one step.
+- Token Map Preservation: `GET /api/admin/backup/snapshot`, `GET /api/admin/backup/db`, and Telegram bot `createBackupSnapshot()` now include `keyserver_token_map`, and restore endpoints write it back so existing subscription URLs never break.
+- Upload Limit Alignment: Raised multer backup upload limits on `/restore/snapshot`, `/restore/db`, `/restore/config`, and `/restore/admins` from 5 MB to 200 MB.
+
+**Full Admin Backup, Overwrite & Session Revocation**
+- Complete Admin Data Export: All backup endpoints (`snapshot`, `db`, `config`, `admins`, and Telegram bot snapshot) now export full admin fields (`id`, `display_name`, `username`, `password_hash`, `role`, `avatar_url`, `avatar_data`, `created_at`, `updated_at`, `last_seen`) plus `server_admin_permissions` and `viewer_server_permissions`.
+- Overwrite & Auto-Logout on Restore: Unified `overwriteAdminsAndRevokeSessions` helper overwrites all admin users and remaps server permissions on restore, revokes all `refresh_tokens`, `active_sessions`, and the caller's active JWT `jti` in `invalidated_tokens`, and automatically logs out the current session in the UI (`SettingsPage.jsx`).
+
+**Mobile UX**
+- Mobile Keys Copy & Menu: Fixed key copy functions and `pointerdown` menu dismissal in mobile view.
+
+---
+
 cmp ver 1.9.31
 
 Subscription toast delivery, generator UI polish, and key format conversion.

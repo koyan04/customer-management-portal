@@ -117,16 +117,12 @@ describe('restore admins: sessions are actually revoked', () => {
   });
 
   test('KEEPS the revocation rows (deleting them would undo the logout)', () => {
-    // This is the bug in /restore/snapshot: it inserts revocations and then
-    // deletes the whole table, throwing the list away. Compare against the
-    // snapshot route to prove the two now differ.
     const code = body.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '');
     expect(code).not.toMatch(/DELETE FROM invalidated_tokens/);
-    // ...and confirm the snapshot route really does still do it, so this test
-    // is not passing vacuously.
+    // Snapshot and DB restore also keep invalidated_tokens intact so logout sticks.
     const snapStart = ADMIN_JS.indexOf("router.post('/restore/snapshot'");
     const snap = snapStart >= 0 ? ADMIN_JS.slice(snapStart, ADMIN_JS.indexOf("router.post('/restore/admins'")) : '';
-    expect(snap.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')).toMatch(/DELETE FROM invalidated_tokens/);
+    expect(snap.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')).not.toMatch(/DELETE FROM invalidated_tokens/);
   });
 
   test('reports the revoked count back to the caller', () => {

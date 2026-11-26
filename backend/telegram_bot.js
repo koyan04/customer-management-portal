@@ -1405,14 +1405,21 @@ async function createBackupSnapshot() {
       const sap = await pool.query('SELECT admin_id, server_id FROM server_admin_permissions');
       serverAdminPerms = sap.rows || [];
     } catch (_) {}
-    // Fetch app settings, servers, server_keys, users, admins (with avatars),
+    let viewerPerms = [];
+    try {
+      const vp = await pool.query('SELECT editor_id, server_id FROM viewer_server_permissions');
+      viewerPerms = vp.rows || [];
+    } catch (_) {
+      try { const vp2 = await pool.query('SELECT editor_id, server_id FROM editor_server_permissions'); viewerPerms = vp2.rows || []; } catch (__) {}
+    }
+    // Fetch app settings, servers, server_keys, users, admins (full data + avatars),
     // domains, financial snapshots and the media blobs (logo / favicon).
     const [settingsRes, serversRes, serverKeysRes, usersRes, adminsRes, domainsRes, snapshotsRes, mediaRes] = await Promise.all([
       pool.query('SELECT * FROM app_settings'),
       pool.query('SELECT id, server_name, ip_address, domain_name, owner, service_type, api_key, display_pos, created_at FROM servers'),
       pool.query('SELECT id, server_id, username, description, original_key, generated_key, created_at FROM server_keys'),
       pool.query('SELECT id, server_id, account_name, service_type, contact, expire_date, total_devices, data_limit_gb, remark, display_pos, enabled, created_at FROM users'),
-      pool.query('SELECT id, display_name, username, role, avatar_url, avatar_data, created_at FROM admins'),
+      pool.query('SELECT id, display_name, username, password_hash, role, avatar_url, avatar_data, created_at, updated_at, last_seen FROM admins ORDER BY id'),
       pool.query('SELECT id, domain, server, service, unlimited, created_at, updated_at FROM domains').catch(() => ({ rows: [] })),
       pool.query('SELECT id, month_start::text as month_start, month_end::text as month_end, server_id, mini_count, basic_count, unlimited_count, price_mini_cents, price_basic_cents, price_unlimited_cents, revenue_cents, created_at, created_by, notes FROM monthly_financial_snapshots ORDER BY month_start ASC').catch(() => ({ rows: [] })),
       // Logo / favicon blobs live in the DB, so they must be part of the backup.
@@ -1442,12 +1449,14 @@ async function createBackupSnapshot() {
       })),
       admins: adminsRes.rows || [],
       server_admin_permissions: serverAdminPerms,
+      viewer_server_permissions: viewerPerms,
       domains: domainsRes.rows || [],
       financial_snapshots: snapshotsRes.rows || [],
       // Logo / favicon images, stored in the DB as data URIs.
       media: mediaRes || [],
       keyserver_config: keyserverConfig || null,
-      note: 'Logos, favicons and admin avatars are embedded as base64 data URIs, so no separate media backup is needed. Password hashes are never included.'
+      keyserver_token_map: _loadTokenMapSafe() || null,
+      note: 'Logos, favicons and admin avatars are embedded as base64 data URIs, and all admin accounts (including bcrypt password hashes and server permissions) are included for full restore.'
     };
     await fs.promises.writeFile(outPath, JSON.stringify(payload, null, 2), 'utf8');
     return outPath;
